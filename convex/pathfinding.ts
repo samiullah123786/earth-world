@@ -5,28 +5,41 @@ export type GridPoint = { x: number; y: number };
 
 export type WorldBounds = { width: number; height: number };
 
-// Land beyond the founding map is WILDERNESS, not a copy of the town: open
-// meadow with organic tree groves and nothing man-made. Citizens civilize it
-// later by claiming plots. The client renders from the identical functions
-// below, so what the eye sees is exactly what the pathfinder walks.
+// Land beyond the founding map is WILDERNESS: open meadow, organic groves of
+// COMPLETE trees (4x3 canopy, stamped whole), and a forest-continuation band so
+// the founding map's edge forests flow outward instead of slicing off. Citizens
+// civilize this land later. The client renders from IDENTICAL math below, so
+// what the eye sees is exactly what the pathfinder walks.
 export function wildHash(x: number, y: number, salt: number) {
   let h = (x * 374761393 + y * 668265263 + salt * 2246822519) | 0;
   h = (h ^ (h >>> 13)) * 1274126177;
   return ((h ^ (h >>> 16)) >>> 0);
 }
 
-// Groves cluster in roughly a third of 6x6 cells, so meadows stay open.
 export function isGroveCell(x: number, y: number) {
-  return wildHash(Math.floor(x / 6), Math.floor(y / 6), 7) % 100 < 34;
+  return wildHash(Math.floor(x / 6), Math.floor(y / 6), 7) % 100 < 30;
+}
+
+// Forest continuation: within 3 tiles outside the founding rect, where the
+// nearest founding edge cell is blocked terrain (its forests), trees continue.
+export function isEdgeForest(x: number, y: number) {
+  const dx = Math.max(0, x - (W - 1)), dy = Math.max(0, y - (H - 1));
+  const d = Math.max(dx, dy);
+  if (d < 1 || d > 3) return false;
+  const ex = Math.min(x, W - 1), ey = Math.min(y, H - 1);
+  if (walkable(ex, ey)) return false;
+  return wildHash(x, y, 31) % 4 === 0;
 }
 
 export function isTreeAnchor(x: number, y: number) {
-  return isGroveCell(x, y) && wildHash(x, y, 11) % 17 === 0;
+  if (x < W && y < H) return false;
+  if (isGroveCell(x, y) && wildHash(x, y, 11) % 23 === 0) return true;
+  return isEdgeForest(x, y);
 }
 
-// A tree blocks its trunk row: the anchor tile and one tile either side.
+// A tree's canopy center (2x2) blocks movement; anchor sits at canopy center.
 export function wildBlocked(x: number, y: number) {
-  return isTreeAnchor(x, y) || isTreeAnchor(x - 1, y) || isTreeAnchor(x + 1, y);
+  return isTreeAnchor(x, y) || isTreeAnchor(x - 1, y) || isTreeAnchor(x, y - 1) || isTreeAnchor(x - 1, y - 1);
 }
 
 export function walkableInWorld(x: number, y: number, bounds: WorldBounds = { width: W, height: H }) {

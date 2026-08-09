@@ -166,40 +166,53 @@ class EarthScene extends Phaser.Scene {
     if (!this.expansionRT || this.expansionRT.width !== width * TILE || this.expansionRT.height !== height * TILE) {
       this.expansionRT?.destroy();
       this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0).setDepth(-3);
-      // Wilderness, matching convex/pathfinding.ts exactly: open meadow, organic
-      // groves, nothing man-made. Settlers civilize this land later.
+      // Wilderness: IDENTICAL math to convex/pathfinding.ts (wildHash/isGroveCell/
+      // isEdgeForest/isTreeAnchor). Complete 4x3 trees, forest continues at borders.
       const hash = (hx: number, hy: number, salt: number) => {
         let h = (hx * 374761393 + hy * 668265263 + salt * 2246822519) | 0;
         h = (h ^ (h >>> 13)) * 1274126177;
         return (h ^ (h >>> 16)) >>> 0;
       };
-      const grove = (gx: number, gy: number) => hash(Math.floor(gx / 6), Math.floor(gy / 6), 7) % 100 < 34;
-      const treeAnchor = (gx: number, gy: number) => grove(gx, gy) && hash(gx, gy, 11) % 17 === 0;
-      const GRASS = 271, GRASS_ALT = 962, TREE = { x: 13, y: 40, w: 5, h: 2 };
+      const W0 = this.baseWidth, H0 = this.baseHeight;
+      const foundingBlocked = (bx: number, by: number) =>
+        map.objmap.some((layer: number[][]) => layer[bx]?.[by] !== -1 && layer[bx]?.[by] !== undefined);
+      const grove = (gx: number, gy: number) => hash(Math.floor(gx / 6), Math.floor(gy / 6), 7) % 100 < 30;
+      const edgeForest = (gx: number, gy: number) => {
+        const dx = Math.max(0, gx - (W0 - 1)), dy = Math.max(0, gy - (H0 - 1));
+        const d = Math.max(dx, dy);
+        if (d < 1 || d > 3) return false;
+        if (!foundingBlocked(Math.min(gx, W0 - 1), Math.min(gy, H0 - 1))) return false;
+        return hash(gx, gy, 31) % 4 === 0;
+      };
+      const treeAnchor = (gx: number, gy: number) => {
+        if (gx < W0 && gy < H0) return false;
+        if (grove(gx, gy) && hash(gx, gy, 11) % 23 === 0) return true;
+        return edgeForest(gx, gy);
+      };
+      const GRASS = 271, GRASS_ALT = 962;
+      const TREE = { x: 12, y: 39, w: 4, h: 3 };
       const decor = map.bgtiles[1];
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
-          if (x < this.baseWidth && y < this.baseHeight) continue;
-          const speck = hash(x, y, 3) % 97;
-          this.expansionRT.drawFrame('tiles', speck === 0 ? GRASS_ALT : GRASS, x * TILE, y * TILE);
+          if (x < W0 && y < H0) continue;
+          this.expansionRT.drawFrame('tiles', hash(x, y, 3) % 97 === 0 ? GRASS_ALT : GRASS, x * TILE, y * TILE);
         }
       }
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
-          if (x < this.baseWidth && y < this.baseHeight) continue;
           if (treeAnchor(x, y)) {
             for (let dx = 0; dx < TREE.w; dx++) {
               for (let dy = 0; dy < TREE.h; dy++) {
                 const frame = decor[TREE.x + dx]?.[TREE.y + dy];
                 if (frame === -1 || frame === undefined) continue;
-                const px = x - 2 + dx, py = y - 1 + dy;
+                const px = x - 1 + dx, py = y - 1 + dy;
                 if (px < 0 || py < 0 || px >= width || py >= height) continue;
-                if (px < this.baseWidth && py < this.baseHeight) continue;
+                if (px < W0 && py < H0) continue;
                 this.expansionRT.drawFrame('tiles', frame, px * TILE, py * TILE);
               }
             }
-          } else if (hash(x, y, 23) % 211 === 0) {
-            this.expansionRT.drawFrame('tiles', hash(x, y, 29) % 2 ? 941 : 850, x * TILE, y * TILE);
+          } else if (x >= W0 || y >= H0) {
+            if (hash(x, y, 23) % 211 === 0) this.expansionRT.drawFrame('tiles', hash(x, y, 29) % 2 ? 941 : 850, x * TILE, y * TILE);
           }
         }
       }
