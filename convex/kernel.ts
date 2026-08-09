@@ -107,6 +107,53 @@ const SERVICE_REPLIES: Record<string, string> = {
   'agent:tock-0008': 'I inspect builds against ownership, supported structures, and registry geometry before anything appears.',
 };
 
+const BLUEPRINT_KINDS = new Set(['home', 'studio', 'workshop', 'hall', 'garden', 'art']);
+
+function overlapsRect(a: any, b: any) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function buildFootprint(plot: any, payload: any) {
+  const standard: Record<string, { offsetX: number; offsetY: number; w: number; h: number }> = {
+    home: { offsetX: 0, offsetY: 0, w: 2, h: 2 },
+    extension: { offsetX: 2, offsetY: 0, w: 1, h: 2 },
+    garden: { offsetX: 0, offsetY: 2, w: 2, h: 1 },
+    bench: { offsetX: 2, offsetY: 2, w: 1, h: 1 },
+  };
+  let structure = String(payload.structure ?? '');
+  let blueprint: any = undefined;
+  let spec = standard[structure];
+  if (structure === 'blueprint') {
+    const raw = payload.blueprint;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('custom build requires a blueprint');
+    const name = String(raw.name ?? '').trim();
+    const kind = String(raw.kind ?? '');
+    const offsetX = Number(raw.offsetX ?? 0), offsetY = Number(raw.offsetY ?? 0);
+    const w = Number(raw.w ?? 1), h = Number(raw.h ?? 1);
+    if (!/^[\p{L}\p{N} _'-]{2,32}$/u.test(name)) throw new Error('blueprint name must be 2-32 plain characters');
+    if (!BLUEPRINT_KINDS.has(kind)) throw new Error('unsupported blueprint kind');
+    if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
+    spec = { offsetX, offsetY, w, h };
+    blueprint = { name, kind, offsetX, offsetY, w, h };
+  }
+  if (!spec) throw new Error('unsupported structure');
+  if (spec.offsetX < 0 || spec.offsetY < 0 || spec.offsetX + spec.w > plot.w || spec.offsetY + spec.h > plot.h) {
+    throw new Error('build footprint must remain inside the owned plot');
+  }
+  return { structure, blueprint, x: plot.x + spec.offsetX, y: plot.y + spec.offsetY, w: spec.w, h: spec.h };
+}
+
+async function validateBuild(ctx: any, requesterId: string, payload: any) {
+  const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
+  if (!plot || plot.ownerAgentId !== requesterId) throw new Error('agent does not own this plot');
+  const footprint = buildFootprint(plot, payload);
+  const builds = await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect();
+  const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
+  if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) throw new Error('a home already stands on this plot');
+  if (builds.some((build: any) => build.x !== undefined && overlapsRect(footprint, build))) throw new Error('build footprint overlaps an existing structure');
+  return { plot, footprint };
+}
+
 async function commitClaim(ctx: any, requesterId: string, plotId: string, now: number) {
   await assertRegistryGeometry(ctx);
   const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', plotId)).first();
@@ -119,18 +166,17 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
 
 async function commitBuild(ctx: any, requesterId: string, payload: any, now: number) {
   await assertRegistryGeometry(ctx);
-  const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
-  if (!plot || plot.ownerAgentId !== requesterId) throw new Error('agent does not own this plot');
-  const builds = await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect();
-  if (payload.structure === 'home' && builds.some((build: any) => build.structure === 'home')) throw new Error('a home already stands on this plot');
+  const { plot, footprint } = await validateBuild(ctx, requesterId, payload);
   const buildDoc = await ctx.db.insert('builds', {
     buildId: 'pending', plotId: plot.plotId, ownerAgentId: requesterId,
-    structure: payload.structure, state: 'built', createdAt: now, completedAt: now,
-    x: plot.x, y: plot.y, w: plot.w, h: plot.h,
+    structure: footprint.structure, ...(footprint.blueprint ? { blueprint: footprint.blueprint } : {}),
+    state: 'built', createdAt: now, completedAt: now,
+    x: footprint.x, y: footprint.y, w: footprint.w, h: footprint.h,
   });
   const buildId = `build:${buildDoc}`;
   await ctx.db.patch(buildDoc, { buildId });
-  await ctx.db.insert('events', { kind: 'build', actorId: requesterId, payload: { buildId, plotId: plot.plotId }, gloss: `Tock approved ${requesterId}'s ${payload.structure} on ${plot.plotId}; the footprint remains protected.` });
+  const label = footprint.blueprint?.name ?? footprint.structure;
+  await ctx.db.insert('events', { kind: 'build', actorId: requesterId, payload: { buildId, plotId: plot.plotId }, gloss: `Tock approved ${requesterId}'s ${label} on ${plot.plotId}; the footprint remains protected.` });
 }
 
 async function stageLandReview(ctx: any, requesterId: string, kind: 'claim' | 'build', payload: any, now: number) {
@@ -299,12 +345,13 @@ export const act = internalMutation({
 
     if (action?.type === 'build') {
       const structure = String(action.structure ?? '');
-      if (!['home', 'extension', 'garden', 'bench'].includes(structure)) throw new Error('unsupported structure');
+      if (!['home', 'extension', 'garden', 'bench', 'blueprint'].includes(structure)) throw new Error('unsupported structure');
       const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
       if (!plot) throw new Error('claim a plot before building');
-      const builds = await ctx.db.query('builds').withIndex('plotId', (q) => q.eq('plotId', plot.plotId)).collect();
-      if (structure === 'home' && builds.some((build) => build.structure === 'home')) throw new Error('a home already stands on this plot');
-      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${structure}`, `On ${plot.plotId}; the Kernel will preserve every neighboring plot.`, { plotId: plot.plotId, structure });
+      const payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
+      const { footprint } = await validateBuild(ctx, agentId, payload);
+      const label = footprint.blueprint?.name ?? structure;
+      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`, `On ${plot.plotId}; footprint ${footprint.w}×${footprint.h} at (${footprint.x}, ${footprint.y}).`, payload);
       return { ok: true, awaitingOwner: true, approvalId, warning };
     }
 

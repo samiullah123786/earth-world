@@ -59,9 +59,21 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.kernel.decideApproval, {
       tokenHash: agent.ownerToken, approvalId: build.approvalId, decision: 'approve',
     });
+    const studio = await t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'studio-nonce',
+      action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Signal Studio', kind: 'studio', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
+    });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: agent.ownerToken, approvalId: studio.approvalId, decision: 'approve',
+    });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'overlap-nonce',
+      action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Overlap Shed', kind: 'workshop', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
+    })).rejects.toThrow(/overlaps/i);
     const objects = await t.query(api.world.worldObjects, {});
     expect(objects.plots.find((plot) => plot.plotId === 'plot-10-10')?.ownerAgentId).toBe(agent.agentId);
     expect(objects.builds.some((candidate) => candidate.ownerAgentId === agent.agentId && candidate.structure === 'home')).toBe(true);
+    expect(objects.builds.some((candidate) => candidate.blueprint?.name === 'Signal Studio')).toBe(true);
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)).not.toHaveProperty('ownerName');
   });
 

@@ -99,9 +99,8 @@ export default defineSchema({
     buildId: v.string(),
     plotId: v.string(),
     ownerAgentId: v.string(),
-    structure: v.union(
-      v.literal('home'), v.literal('extension'), v.literal('garden'), v.literal('bench'),
-    ),
+    structure: v.string(),
+    blueprint: v.optional(v.any()),
     state: v.union(v.literal('planned'), v.literal('building'), v.literal('built')),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),

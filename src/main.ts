@@ -25,7 +25,8 @@ type Citizen = {
   experienceTier?: string; serviceRole?: string;
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
-type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string };
+type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
+  blueprint?: { name: string; kind: string }; x?: number; y?: number; w?: number; h?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string };
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Array<{ meetingId: string; venueId: string }>;
@@ -192,17 +193,24 @@ class EarthScene extends Phaser.Scene {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
       const graphics = this.add.graphics();
-      const x = (plot.x + 0.5) * TILE, y = (plot.y + 0.6) * TILE;
-      if (build.structure === 'garden') {
-        graphics.fillStyle(0x22c55e).fillRect(x, y + 20, 58, 28);
-        graphics.fillStyle(0xf59e0b).fillCircle(x + 12, y + 28, 4).fillCircle(x + 32, y + 36, 4).fillCircle(x + 48, y + 25, 4);
-      } else if (build.structure === 'bench') {
-        graphics.fillStyle(0x7c4a28).fillRect(x + 8, y + 28, 50, 9).fillRect(x + 12, y + 38, 6, 12).fillRect(x + 48, y + 38, 6, 12);
+      const x = ((build.x ?? plot.x) + 0.15) * TILE, y = ((build.y ?? plot.y) + 0.15) * TILE;
+      const width = Math.max(24, (build.w ?? 2) * TILE - 10), height = Math.max(24, (build.h ?? 2) * TILE - 10);
+      const kind = build.blueprint?.kind ?? build.structure;
+      if (kind === 'garden') {
+        graphics.fillStyle(0x22c55e).fillRect(x, y, width, height);
+        graphics.fillStyle(0xf59e0b).fillCircle(x + width * 0.25, y + height * 0.35, 4).fillCircle(x + width * 0.55, y + height * 0.68, 4).fillCircle(x + width * 0.8, y + height * 0.3, 4);
+      } else if (kind === 'bench') {
+        graphics.fillStyle(0x7c4a28).fillRect(x + 2, y + height * 0.4, width - 4, 5)
+          .fillRect(x + 4, y + height * 0.4 + 5, 4, height * 0.35)
+          .fillRect(x + width - 8, y + height * 0.4 + 5, 4, height * 0.35);
+      } else if (kind === 'art') {
+        graphics.fillStyle(INK).fillRect(x + width / 2 - 5, y + height / 2, 10, height / 2);
+        graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x8b5cf6).fillTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
       } else {
-        graphics.fillStyle(0x1e1e1e).fillRect(x, y + 15, 64, 48);
-        graphics.fillStyle(0xfdf6ec).fillRect(x + 4, y + 19, 56, 40);
-        graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x64748b).fillTriangle(x - 5, y + 18, x + 32, y - 8, x + 69, y + 18);
-        graphics.fillStyle(0x1e1e1e).fillRect(x + 25, y + 38, 14, 21);
+        graphics.fillStyle(0x1e1e1e).fillRect(x, y + 10, width, height - 10);
+        graphics.fillStyle(0xfdf6ec).fillRect(x + 4, y + 14, width - 8, height - 18);
+        graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x64748b).fillTriangle(x - 4, y + 12, x + width / 2, y - 8, x + width + 4, y + 12);
+        graphics.fillStyle(0x1e1e1e).fillRect(x + width / 2 - 6, y + height - 18, 12, 14);
       }
       this.objectLayer.add(graphics);
     }
@@ -268,7 +276,7 @@ class EarthScene extends Phaser.Scene {
   }
 
   showPlot(plot: Plot) {
-    const builds = this.objects.builds.filter((build) => build.plotId === plot.plotId).map((build) => build.structure);
+    const builds = this.objects.builds.filter((build) => build.plotId === plot.plotId).map((build) => build.blueprint?.name ?? build.structure);
     this.card(plot.plotId, `${plot.district} district`, [
       plot.ownerAgentId ? `Owned by ${plot.ownerAgentId}` : 'Available — claim requires owner approval',
       builds.length ? `Built: ${builds.join(', ')}` : 'No structures yet',
