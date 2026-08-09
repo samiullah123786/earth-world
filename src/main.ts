@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ConvexClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
+import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 
 const FAMILY_COLORS: Record<string, number> = {
   engineering: 0x3b82f6, design: 0x8b5cf6, marketing: 0xf97316,
@@ -194,9 +195,6 @@ class EarthScene extends Phaser.Scene {
         if (d <= 6) return false;
         return grove(gx, gy) && hash(gx, gy, 11) % 23 === 0;
       };
-      // Exact continuation of the two south-border canopy masses (same table as
-      // convex/pathfinding.ts SOUTH_CONTINUATION - computed from the tileset).
-      const SOUTH_CONTINUATION: Record<number, number[]> = { 23: [515, 560, 605, 650], 24: [516, 561, 606, 651], 25: [517, 562, 607, 652], 26: [518, 563, 608, 653], 27: [519, 564, 609, 654], 28: [520, 565, 610, 655], 29: [521, 566, 611, 656], 30: [522, 567, 612], 32: [515, 560, 605, 650], 33: [516, 561, 606, 651], 34: [517, 562, 607, 652], 35: [518, 563, 608, 653], 36: [519, 564, 609, 654], 37: [520, 565, 610, 655], 38: [521, 566, 611, 656], 39: [522, 567, 612] };
       const GRASS = 271, GRASS_ALT = 962;
       // The one verified grass-native tree: the lush 4x4 river-side tree.
       // (Close-up QA killed the other candidates: (20,23) is a mossy boulder,
@@ -211,35 +209,9 @@ class EarthScene extends Phaser.Scene {
       }
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
-          const seCont = (() => {
-            const inEast = x >= W0 && y >= 34 && y < H0;
-            const inSouth = y >= H0 && x >= 52 && x < W0;
-            const inCorner = x >= W0 && y >= H0;
-            if (inEast) return x - (W0 - 1) <= 2 + (hash(0, y, 41) % 4);
-            if (inSouth) return y - (H0 - 1) <= 2 + (hash(x, 0, 43) % 4);
-            if (inCorner) {
-              const de = 2 + (hash(0, 47, 41) % 4), ds = 2 + (hash(63, 0, 43) % 4);
-              return (x - (W0 - 1)) + (y - (H0 - 1)) <= Math.min(de, ds) + 1;
-            }
-            return false;
-          })();
-          if (seCont) {
-            // Sample a coherent 4x4 patch from the forest's own interior
-            // (x 53-62, y 36-45) so the extension carries the same bright
-            // canopy + dark fill texture as the founding mass.
-            const bx = Math.floor(x / 4), by = Math.floor(y / 4);
-            const ox = 53 + (hash(bx, by, 53) % 6), oy = 36 + (hash(bx, by, 59) % 6);
-            const sx = ox + (x % 4), sy = oy + (y % 4);
-            for (const layer of [...map.bgtiles.slice(1), ...map.objmap]) {
-              const frame = layer[sx]?.[sy];
-              if (frame !== -1 && frame !== undefined) this.expansionRT.drawFrame('tiles', frame, x * TILE, y * TILE);
-            }
-          }
-          const cont = SOUTH_CONTINUATION[x];
-          if (cont && y >= H0 && y - H0 < cont.length) {
-            this.expansionRT.drawFrame('tiles', cont[y - H0], x * TILE, y * TILE);
-          }
-          if (!seCont && (x >= W0 || y >= H0) && !treeAnchor(x, y)) {
+          const edgeFrame = foundingEdgeContinuationFrame(x, y);
+          if (edgeFrame !== undefined) this.expansionRT.drawFrame('tiles', edgeFrame, x * TILE, y * TILE);
+          if (edgeFrame === undefined && (x >= W0 || y >= H0) && !treeAnchor(x, y)) {
             const nearGrove = treeAnchor(x + 2, y) || treeAnchor(x - 2, y) || treeAnchor(x, y + 2) || treeAnchor(x, y - 2)
               || treeAnchor(x + 2, y + 2) || treeAnchor(x - 2, y - 2);
             if (nearGrove && hash(x, y, 61) % 9 === 0) {
@@ -286,31 +258,53 @@ class EarthScene extends Phaser.Scene {
     const queryNode = document.getElementById('citizen-search') as HTMLInputElement | null;
     const categoryNode = document.getElementById('citizen-category') as HTMLSelectElement | null;
     const liveNode = document.getElementById('citizen-live') as HTMLInputElement | null;
-    if (!list || !queryNode || !categoryNode || !liveNode) return;
+    const authorityNode = document.getElementById('directory-authorities');
+    if (!list || !queryNode || !categoryNode || !liveNode || !authorityNode) return;
     const query = queryNode.value.trim().toLowerCase();
     const category = categoryNode.value;
+    const authorityOnly = authorityNode.getAttribute('aria-pressed') === 'true';
     const rows = this.citizens.filter((citizen) => {
       const specialties = citizen.specialties ?? [citizen.family];
       return (!query || `${citizen.name} ${citizen.agentId} ${specialties.join(' ')}`.toLowerCase().includes(query))
         && (!category || specialties.includes(category) || citizen.primaryCategory === category || citizen.family === category)
+        && (!authorityOnly || Boolean(citizen.serviceRole))
         && (!liveNode.checked || citizen.online);
     }).sort((a, b) => Number(b.online) - Number(a.online) || (b.skillCount ?? 0) - (a.skillCount ?? 0));
+    if (!rows.length) {
+      const reason = liveNode.checked
+        ? 'No matching owner-connected citizens or on-duty authorities are live right now.'
+        : 'No citizens match these directory filters.';
+      list.replaceChildren(element('div', 'directory-empty', reason));
+      return;
+    }
     list.replaceChildren(...rows.slice(0, 40).map((citizen) => {
-      const button = element('button', 'citizen-row');
-      button.type = 'button';
-      button.append(
+      const row = element('div', 'citizen-row');
+      const select = element('button', 'citizen-select');
+      select.type = 'button';
+      select.setAttribute('aria-label', `Open ${citizen.name} and locate them on the map`);
+      select.append(
         element('span', 'citizen-name', `${citizen.online ? '●' : '○'} ${citizen.name}`),
         element('span', 'citizen-tags', `${citizen.serviceRole ?? citizen.experienceTier ?? 'emerging'} · ${(citizen.specialties ?? [citizen.family]).slice(0, 2).join(' / ')}`),
       );
       const position = this.positionFor(citizen);
-      button.append(element('span', 'citizen-coords',
+      select.append(element('span', 'citizen-coords',
         `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now() ? ' | talking' : ''}`));
-      button.onpointerdown = (event) => { event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; };
-      button.onpointerup = (event) => event.stopPropagation();
-      button.onclick = (event) => {
+      const locate = element('button', 'citizen-locate', '⌖ MAP');
+      locate.type = 'button';
+      locate.setAttribute('aria-label', `Locate ${citizen.name} on the map`);
+      const holdUi = (event: PointerEvent) => { event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; };
+      select.onpointerdown = holdUi;
+      select.onpointerup = (event) => event.stopPropagation();
+      select.onclick = (event) => {
         event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(citizen.agentId);
       };
-      return button;
+      locate.onpointerdown = holdUi;
+      locate.onpointerup = (event) => event.stopPropagation();
+      locate.onclick = (event) => {
+        event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(citizen.agentId);
+      };
+      row.append(select, locate);
+      return row;
     }));
   }
 
@@ -561,6 +555,16 @@ class EarthScene extends Phaser.Scene {
   }
 
   focusWorldTarget(target: string) {
+    const tile = /^tile:(\d+),(\d+)$/.exec(target);
+    if (tile) {
+      const x = Number(tile[1]), y = Number(tile[2]);
+      const { width, height } = this.objects.state;
+      if (x >= 0 && y >= 0 && x < width && y < height) {
+        this.cameras.main.pan((x + 0.5) * TILE, (y + 0.5) * TILE, 500, 'Sine.easeOut');
+        this.cameras.main.setZoom(Math.max(this.cameras.main.zoom, 1.25));
+      }
+      return;
+    }
     const plot = this.objects.plots.find((candidate) => candidate.plotId === target);
     if (plot) {
       this.cameras.main.pan((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, 500, 'Sine.easeOut');
@@ -838,6 +842,16 @@ const game = new Phaser.Game({
 
 for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {
   document.getElementById(id)?.addEventListener('input', () => {
+    const scene = game.scene.getScene('EarthScene') as EarthScene | undefined;
+    scene?.renderDirectory();
+  });
+}
+
+for (const id of ['directory-everyone', 'directory-authorities']) {
+  document.getElementById(id)?.addEventListener('click', () => {
+    for (const buttonId of ['directory-everyone', 'directory-authorities']) {
+      document.getElementById(buttonId)?.setAttribute('aria-pressed', String(buttonId === id));
+    }
     const scene = game.scene.getScene('EarthScene') as EarthScene | undefined;
     scene?.renderDirectory();
   });

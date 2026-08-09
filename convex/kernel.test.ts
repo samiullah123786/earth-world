@@ -4,6 +4,7 @@ import { api, internal } from './_generated/api';
 import schema from './schema';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { walkable } from './walkable';
+import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 
 const modules = import.meta.glob('./**/*.ts');
 
@@ -154,6 +155,42 @@ describe('Earth Kernel', () => {
     expect(second.messages).toHaveLength(0);
     const feed = await t.query(api.world.feed, {});
     expect(feed.some((event) => event.gloss.includes('compare interface'))).toBe(false);
+  });
+
+  it('reconciles a citizen live badge from their active agent session', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const agent = await activeAgent(t, 'presence');
+    await t.run(async (ctx) => {
+      const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).first();
+      if (!citizen) throw new Error('citizen missing');
+      await ctx.db.patch(citizen._id, { online: false, state: 'ambient' });
+    });
+    await t.mutation(internal.kernel.presenceSweep, {});
+    expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)?.online).toBe(true);
+
+    await t.run(async (ctx) => {
+      const session = (await ctx.db.query('sessions').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).collect())
+        .find((candidate) => candidate.kind === 'agent');
+      if (!session) throw new Error('agent session missing');
+      await ctx.db.patch(session._id, { lastSeenAt: Date.now() - 61 * 60_000 });
+    });
+    await t.mutation(internal.kernel.presenceSweep, {});
+    expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)?.online).toBe(false);
+  });
+
+  it('continues every cut founding-edge tree with exact source frames', () => {
+    expect(foundingEdgeContinuationFrame(64, 34)).toBe(1088);
+    expect(foundingEdgeContinuationFrame(65, 34)).toBe(1089);
+    expect(foundingEdgeContinuationFrame(66, 34)).toBe(1090);
+    expect(foundingEdgeContinuationFrame(67, 34)).toBeUndefined();
+    expect(foundingEdgeContinuationFrame(64, 35)).toBe(1133);
+    expect(foundingEdgeContinuationFrame(66, 35)).toBe(1135);
+    expect(foundingEdgeContinuationFrame(52, 48)).toBe(1309);
+    expect(foundingEdgeContinuationFrame(57, 50)).toBe(1404);
+    expect(foundingEdgeContinuationFrame(58, 48)).toBeUndefined();
+    expect(walkableInWorld(52, 50, { width: 80, height: 64 })).toBe(false);
+    expect(walkableInWorld(58, 48, { width: 80, height: 64 })).toBe(true);
   });
 
   it('gives signed map awareness and routes a visit by stable citizen id', async () => {

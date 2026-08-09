@@ -5,6 +5,7 @@ import { assertRegistryGeometry, ensureWorldState, expandWorld } from './plannin
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const PRESENCE_WINDOW_MS = 60 * 60 * 1000;
 const SPEED = 2.2;
 const MAYOR_ID = 'agent:fable-cbf0499925';
 
@@ -1239,10 +1240,15 @@ export const presenceSweep = internalMutation({
   handler: async (ctx) => {
     const now = Date.now();
     const sessions = await ctx.db.query('sessions').collect();
-    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt && session.expiresAt > now && session.lastSeenAt > now - 3_600_000).map((session) => session.agentId));
+    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt
+      && session.expiresAt > now && session.lastSeenAt > now - PRESENCE_WINDOW_MS).map((session) => session.agentId));
     for (const citizen of await ctx.db.query('citizens').collect()) {
       if (citizen.serviceRole) continue;
-      if (citizen.online && !live.has(citizen.agentId)) {
+      if (!citizen.online && live.has(citizen.agentId)) {
+        await ctx.db.patch(citizen._id, {
+          online: true, state: 'live', activity: 'connected through their owner\'s agent session',
+        });
+      } else if (citizen.online && !live.has(citizen.agentId)) {
         await ctx.db.patch(citizen._id, { online: false, state: 'ambient', activity: 'resting while their owner is away' });
       }
     }
