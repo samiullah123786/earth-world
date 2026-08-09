@@ -20,6 +20,25 @@ function timedRoute(path: Array<{ x: number; y: number }>, now: number) {
   return route;
 }
 
+function currentPosition(citizen: any, now: number) {
+  const route = Array.isArray(citizen.route) ? citizen.route : [];
+  if (route.length) {
+    if (now <= route[0].at) return { x: route[0].x, y: route[0].y };
+    for (let index = 1; index < route.length; index++) {
+      if (now > route[index].at) continue;
+      const previous = route[index - 1];
+      const span = Math.max(1, route[index].at - previous.at);
+      const progress = Math.max(0, Math.min(1, (now - previous.at) / span));
+      return {
+        x: previous.x + (route[index].x - previous.x) * progress,
+        y: previous.y + (route[index].y - previous.y) * progress,
+      };
+    }
+    return { x: route[route.length - 1].x, y: route[route.length - 1].y };
+  }
+  return { x: citizen.tx, y: citizen.ty };
+}
+
 async function rememberVerifiedInsight(ctx: any, learnerId: string, sourceAgentId: string,
   skill: string, conversationId: any, now: number) {
   const normalized = skill.trim().toLowerCase().slice(0, 48);
@@ -60,11 +79,27 @@ export const ambientTick = internalMutation({
     const newlyTalking = new Set<string>();
     for (const conversation of await ctx.db.query('conversations').collect()) {
       if (conversation.state === 'scheduled' && (conversation.startedAt ?? 0) <= now) {
-        await ctx.db.patch(conversation._id, { state: 'active' });
         const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
         const names = conversation.participantNames?.length ? conversation.participantNames : [conversation.aName, conversation.bName];
+        const participants = ids.map((id) => citizens.find((candidate) => candidate.agentId === id));
+        const allLive = participants.every((participant) => participant?.online);
+        const positions = participants.map((participant) => participant ? currentPosition(participant, now) : null);
+        const gathered = positions.every((position, index) => position && positions.every((other, otherIndex) =>
+          otherIndex === index || (other && Math.hypot(position.x - other.x, position.y - other.y) <= 3.5)));
+        if (!allLive || !gathered) {
+          await ctx.db.patch(conversation._id, { state: 'completed', endsAt: now });
+          await ctx.db.insert('events', {
+            kind: 'conversation_cancelled', actorId: conversation.a,
+            payload: { conversationId: conversation._id, reason: allLive ? 'not_gathered' : 'participant_offline' },
+            gloss: allLive
+              ? `${names.join(' and ')} did not gather close enough for their scheduled live conversation. It ended without creating a private letter.`
+              : `A scheduled live conversation between ${names.join(' and ')} ended because a participant went offline. It did not become a private letter.`,
+          });
+          continue;
+        }
+        await ctx.db.patch(conversation._id, { state: 'active' });
         for (let index = 0; index < ids.length; index++) {
-          const participant = citizens.find((candidate) => candidate.agentId === ids[index]);
+          const participant = participants[index];
           if (!participant) continue;
           const otherNames = names.filter((_, otherIndex) => otherIndex !== index).join(' and ');
           await ctx.db.patch(participant._id, {

@@ -63,8 +63,10 @@ export const init = internalMutation({
         await ctx.db.insert('plots', { plotId, x, y, w, h, district });
       }
     }
-    if ((await ctx.db.query('venues').take(1)).length === 0) {
-      for (const venue of SEED_VENUES) await ctx.db.insert('venues', venue);
+    for (const venue of SEED_VENUES) {
+      const existingVenue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', venue.venueId)).first();
+      if (existingVenue) await ctx.db.patch(existingVenue._id, venue);
+      else await ctx.db.insert('venues', venue);
     }
 
     for (const service of SERVICES) {

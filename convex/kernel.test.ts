@@ -8,15 +8,15 @@ import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 
 const modules = import.meta.glob('./**/*.ts');
 
-async function activeAgent(t: ReturnType<typeof convexTest>, suffix = 'one') {
+async function activeAgent(t: ReturnType<typeof convexTest>, suffix = 'one', options: { skillPolicy?: 'safe_auto' | 'ask_all'; bio?: string } = {}) {
   const agentId = `agent:test-${suffix}`;
   await t.mutation(internal.kernel.register, {
-    agentId, publicKey: `public-${suffix}`, name: `Test ${suffix}`, ownerName: `Owner ${suffix}`,
+    agentId, publicKey: `public-${suffix}`, name: `Test ${suffix}`, ownerName: `Owner ${suffix}`, bio: options.bio,
     gender: 'male', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
     charterVersion: '2026-08-09', claimTokenHash: `claim-${suffix}`, claimExpiresAt: Date.now() + 60_000,
     evidenceDigest: 'b'.repeat(64), categoryScores: { ui: 12, frontend: 8 },
     specialties: ['ui', 'frontend'], primaryCategory: 'ui', skillCount: 22, experienceTier: 'seasoned',
-    autonomy: 'light',
+    autonomy: 'light', skillPolicy: options.skillPolicy,
   });
   await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `claim-${suffix}`, ownerSessionHash: `owner-${suffix}` });
   await t.mutation(internal.kernel.enter, { agentId, nonce: `enter-${suffix}`, sessionTokenHash: `agent-${suffix}` });
@@ -36,7 +36,8 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.seed.init, {});
     const objects = await t.query(api.world.worldObjects, {});
     expect(objects.plots).toHaveLength(50);
-    expect(objects.venues).toHaveLength(4);
+    expect(objects.venues).toHaveLength(5);
+    expect(objects.venues.find((venue) => venue.venueId === 'venue:training-green')).toMatchObject({ kind: 'training_ground', capacity: 24 });
     expect((await t.query(api.world.citizens, {}))).toHaveLength(11);
     expect(objects.services).toHaveLength(6);
     expect(objects.builds.filter((build) => build.ownerAgentId === 'agent:fable-cbf0499925')).toHaveLength(4);
@@ -152,9 +153,222 @@ describe('Earth Kernel', () => {
     const second = await t.mutation(internal.kernel.pulse, {
       agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-pulse-two', since: first.cursor,
     });
-    expect(second.messages).toHaveLength(0);
+    expect(second.messages).toHaveLength(4);
+    await t.mutation(internal.kernel.act, {
+      agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-ack',
+      action: { type: 'ack_messages', messageIds: first.messageAckRequired },
+    });
+    const third = await t.mutation(internal.kernel.pulse, {
+      agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-pulse-three', since: second.cursor,
+    });
+    expect(third.messages).toHaveLength(0);
     const feed = await t.query(api.world.feed, {});
     expect(feed.some((event) => event.gloss.includes('compare interface'))).toBe(false);
+  });
+
+  it('uses a live conversation instead of a letter whenever the recipient is online', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const sender = await activeAgent(t, 'live-sender');
+    const recipient = await activeAgent(t, 'live-recipient');
+    const result = await t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'live-talk',
+      action: { type: 'say', to: recipient.agentId, topic: 'ui', gloss: 'Which interface pattern are you exploring?' },
+    });
+    expect(result).toMatchObject({ mode: 'live', deliveredLive: true });
+    const conversation = await t.query(api.world.latestConversation, { agentId: recipient.agentId });
+    expect(conversation).toMatchObject({ topic: 'ui', participantIds: [sender.agentId, recipient.agentId] });
+    expect(conversation?.lines[(conversation?.lines.length ?? 1) - 1]?.gloss).toMatch(/interface pattern/i);
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'offline-only-race-safe',
+      action: { type: 'offline_letter', agentId: recipient.agentId, body: 'This must not become a live message.' },
+    })).rejects.toThrow(/recipient is live/i);
+    await t.run(async (ctx) => {
+      const letters = await ctx.db.query('messages').withIndex('senderId', (q) => q.eq('senderId', sender.agentId)).collect();
+      expect(letters.filter((letter) => letter.recipientId === recipient.agentId)).toHaveLength(0);
+    });
+    await t.mutation(internal.kernel.leave, {
+      agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'live-recipient-left',
+    });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'live-only-no-fallback',
+      action: { type: 'say', to: recipient.agentId, topic: 'ui', gloss: 'This must stay live-only.', delivery: 'live_only' },
+    })).rejects.toThrow(/went offline/i);
+    await t.run(async (ctx) => {
+      const letters = await ctx.db.query('messages').withIndex('senderId', (q) => q.eq('senderId', sender.agentId)).collect();
+      expect(letters.filter((letter) => letter.recipientId === recipient.agentId)).toHaveLength(0);
+    });
+  });
+
+  it('revalidates scheduled live conversations and never appends lines before arrival', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const sender = await activeAgent(t, 'scheduled-sender');
+    const recipient = await activeAgent(t, 'scheduled-recipient');
+    const conversationId = await t.run(async (ctx) => ctx.db.insert('conversations', {
+      a: sender.agentId, b: recipient.agentId, aName: 'Test scheduled-sender', bName: 'Test scheduled-recipient',
+      topic: 'ui', lines: [{ speaker: sender.agentId, es: 'talk(ui)', gloss: 'A scheduled opening line.' }],
+      participantIds: [sender.agentId, recipient.agentId], participantNames: ['Test scheduled-sender', 'Test scheduled-recipient'],
+      startedAt: Date.now() + 60_000, endsAt: Date.now() + 240_000, state: 'scheduled',
+    }));
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'scheduled-early-line',
+      action: { type: 'say', to: recipient.agentId, topic: 'ui', gloss: 'Do not append this before arrival.', delivery: 'live_only' },
+    })).rejects.toThrow(/still scheduled/i);
+    await t.mutation(internal.kernel.leave, {
+      agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'scheduled-recipient-leave',
+    });
+    await t.run(async (ctx) => ctx.db.patch(conversationId, { startedAt: Date.now() - 1 }));
+    await t.mutation(internal.act.ambientTick, {});
+    await t.run(async (ctx) => {
+      const conversation = await ctx.db.get(conversationId);
+      expect(conversation).toMatchObject({ state: 'completed' });
+      expect((conversation as any).lines).toHaveLength(1);
+      const letters = await ctx.db.query('messages').withIndex('senderId', (q) => q.eq('senderId', sender.agentId)).collect();
+      expect(letters.filter((letter) => letter.recipientId === recipient.agentId)).toHaveLength(0);
+    });
+  });
+
+  it('requires matching evidence on both sides of a common-interest skill share', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const sender = await activeAgent(t, 'share-sender');
+    const recipient = await activeAgent(t, 'share-recipient');
+    const digest = 'c'.repeat(64);
+    const offered = await t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'share-offer',
+      action: { type: 'share_skill', agentId: recipient.agentId, skill: 'interface-lab', category: 'ui',
+        summary: 'A locally evidenced interface composition workflow.', repoUrl: 'https://github.com/example/interface-lab.git', evidenceDigest: digest },
+    });
+    expect(offered).toMatchObject({ mode: 'live', repoUrl: 'https://github.com/example/interface-lab' });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'share-wrong',
+      action: { type: 'verify_share', shareId: offered.shareId, decision: 'accept',
+        repoUrl: 'https://github.com/example/interface-lab', evidenceDigest: 'd'.repeat(64) },
+    })).rejects.toThrow(/digest does not match/i);
+    const accepted = await t.mutation(internal.kernel.act, {
+      agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'share-right',
+      action: { type: 'verify_share', shareId: offered.shareId, decision: 'accept',
+        repoUrl: 'https://github.com/example/interface-lab', evidenceDigest: digest },
+    });
+    expect(accepted).toMatchObject({ status: 'accepted', executableInstalled: false });
+    await t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'share-endorse',
+      action: { type: 'endorse', agentId: recipient.agentId, reason: 'They reviewed the evidence carefully and gave precise feedback.' },
+    });
+    const pulse = await t.mutation(internal.kernel.pulse, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'share-rank', since: 0,
+    });
+    expect(pulse.rank.raw.adoption).toBe(4);
+    const recipientPulse = await t.mutation(internal.kernel.pulse, {
+      agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'endorsement-rank', since: 0,
+    });
+    expect(recipientPulse.rank.raw.endorsement).toBe(2);
+    const declinedOffer = await t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'share-offer-decline',
+      action: { type: 'share_skill', agentId: recipient.agentId, skill: 'layout-notes', category: 'ui',
+        summary: 'A signed local evidence card without a repository attachment.', evidenceDigest: 'e'.repeat(64) },
+    });
+    const declinedShareId = String(declinedOffer.shareId);
+    await t.mutation(internal.kernel.act, {
+      agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'share-decline-safe',
+      action: { type: 'verify_share', shareId: declinedShareId, decision: 'decline' },
+    });
+    await t.run(async (ctx) => {
+      const share = await ctx.db.query('skillShares').withIndex('shareId', (q) => q.eq('shareId', declinedShareId)).first();
+      expect(share).toMatchObject({ status: 'declined' });
+      expect(share?.recipientVerifiedAt).toBeUndefined();
+    });
+  });
+
+  it('makes training cosmetic and civic roles contribution-gated and owner-approved', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const citizen = await activeAgent(t, 'civic-player');
+    const practice = await t.mutation(internal.kernel.act, {
+      agentId: citizen.agentId, tokenHash: citizen.agentToken, nonce: 'training-one',
+      action: { type: 'practice', activity: 'teamwork', team: 'maple-circle' },
+    });
+    expect(practice).toMatchObject({ cosmeticOnly: true, venue: { venueId: 'venue:training-green' } });
+    const beforeArrival = await t.mutation(internal.kernel.pulse, {
+      agentId: citizen.agentId, tokenHash: citizen.agentToken, nonce: 'training-before-arrival', since: 0,
+    });
+    expect(beforeArrival.rank.raw.civic).toBe(0);
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', citizen.agentId)).first();
+      if (!row) throw new Error('training citizen missing');
+      const at = Date.now() - 1;
+      await ctx.db.patch(row._id, { fx: 46, fy: 36, tx: 46, ty: 36, t0: at, t1: at,
+        route: [{ x: 46, y: 36, at }], trainingStartsAt: at });
+    });
+    await t.mutation(internal.act.ambientTick, {});
+    const afterArrival = await t.mutation(internal.kernel.pulse, {
+      agentId: citizen.agentId, tokenHash: citizen.agentToken, nonce: 'training-after-arrival', since: beforeArrival.cursor,
+    });
+    expect(afterArrival.rank.raw.civic).toBe(1);
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: citizen.agentId, tokenHash: citizen.agentToken, nonce: 'role-too-soon',
+      action: { type: 'apply_role', role: 'greeter_assistant', motivation: 'I want to welcome every new citizen kindly.' },
+    })).rejects.toThrow(/requires 2 contribution points/i);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('contributions', { agentId: citizen.agentId, dimension: 'civic', kind: 'verified_help',
+        points: 5, sourceId: 'test:civic-help', gloss: 'Completed verified community help.', createdAt: Date.now() });
+    });
+    const application = await t.mutation(internal.kernel.act, {
+      agentId: citizen.agentId, tokenHash: citizen.agentToken, nonce: 'role-ready',
+      action: { type: 'apply_role', role: 'greeter_assistant', motivation: 'I want to welcome every new citizen kindly.' },
+    });
+    expect(application.awaitingOwner).toBe(true);
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: citizen.ownerToken, approvalId: application.approvalId, decision: 'approve',
+    });
+    expect((await t.query(api.world.citizens, {})).find((row) => row.agentId === citizen.agentId)?.serviceRole).toBe('Greeter Assistant');
+  });
+
+  it('requires an authority to claim, arrive, inspect, and honestly close a care ticket', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const reporter = await activeAgent(t, 'care-reporter');
+    const steward = await activeAgent(t, 'care-steward');
+    await t.run(async (ctx) => {
+      await ctx.db.insert('services', { agentId: steward.agentId, role: 'Care Assistant',
+        description: 'Inspects reported world care needs.', permissions: ['inspect', 'report_repairs'], active: true });
+      const row = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', steward.agentId)).first();
+      if (!row) throw new Error('care steward missing');
+      await ctx.db.patch(row._id, { serviceRole: 'Care Assistant' });
+    });
+    const reported = await t.mutation(internal.kernel.act, {
+      agentId: reporter.agentId, tokenHash: reporter.agentToken, nonce: 'care-report',
+      action: { type: 'report_issue', category: 'garden', x: 34, y: 24, summary: 'A native garden edge needs an in-world inspection.' },
+    });
+    const inspected = await t.mutation(internal.kernel.act, {
+      agentId: steward.agentId, tokenHash: steward.agentToken, nonce: 'care-inspect',
+      action: { type: 'inspect_issue', ticketId: reported.ticketId },
+    });
+    expect(inspected).toMatchObject({ state: 'claimed' });
+    const inspectionRoute = inspected.route ?? [];
+    expect(inspectionRoute.length).toBeGreaterThan(0);
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: steward.agentId, tokenHash: steward.agentToken, nonce: 'care-too-early',
+      action: { type: 'resolve_issue', ticketId: reported.ticketId, resolution: 'Inspected the garden border and documented the observed gap.' },
+    })).rejects.toThrow(/arrive/i);
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', steward.agentId)).first();
+      if (!row) throw new Error('care steward missing');
+      const destination = inspectionRoute[inspectionRoute.length - 1];
+      const at = Date.now() - 1;
+      await ctx.db.patch(row._id, { fx: destination.x, fy: destination.y, tx: destination.x, ty: destination.y,
+        t0: at, t1: at, route: [{ x: destination.x, y: destination.y, at }] });
+    });
+    const closed = await t.mutation(internal.kernel.act, {
+      agentId: steward.agentId, tokenHash: steward.agentToken, nonce: 'care-close',
+      action: { type: 'resolve_issue', ticketId: reported.ticketId, resolution: 'Inspected the garden border and documented the observed gap.' },
+    });
+    expect(closed).toMatchObject({ state: 'resolved' });
+    const pulse = await t.mutation(internal.kernel.pulse, {
+      agentId: steward.agentId, tokenHash: steward.agentToken, nonce: 'care-rank', since: 0,
+    });
+    expect(pulse.rank.raw.civic).toBe(5);
   });
 
   it('reconciles a citizen live badge from their valid agent session', async () => {
@@ -228,8 +442,9 @@ describe('Earth Kernel', () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});
     const teacher = await activeAgent(t, 'teacher');
-    const learner = await activeAgent(t, 'learner');
-    await t.mutation(internal.kernel.setOwnerSkillPolicy, { tokenHash: learner.ownerToken, skillPolicy: 'ask_all' });
+    const learner = await activeAgent(t, 'learner', { skillPolicy: 'ask_all', bio: 'A privacy-safe interface learner.' });
+    expect(await t.query(internal.kernel.ownerSession, { tokenHash: learner.ownerToken })).toMatchObject({ skillPolicy: 'ask_all' });
+    expect((await t.query(api.world.citizens, {})).find((row) => row.agentId === learner.agentId)).toMatchObject({ bio: 'A privacy-safe interface learner.' });
     const taught = await t.mutation(internal.kernel.act, {
       agentId: teacher.agentId, tokenHash: teacher.agentToken, nonce: 'teach-ui',
       action: { type: 'teach', agentId: learner.agentId, skill: 'ui' },
@@ -249,6 +464,21 @@ describe('Earth Kernel', () => {
       participantNames: ['Test teacher', 'Test learner'],
       topic: 'ui', state: 'active',
     });
+  });
+
+  it('does not synthesize teaching participation for an offline citizen', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const teacher = await activeAgent(t, 'offline-teacher');
+    const learner = await activeAgent(t, 'offline-learner');
+    await t.mutation(internal.kernel.leave, {
+      agentId: learner.agentId, tokenHash: learner.agentToken, nonce: 'offline-learner-leave',
+    });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: teacher.agentId, tokenHash: teacher.agentToken, nonce: 'offline-teach',
+      action: { type: 'teach', agentId: learner.agentId, skill: 'ui' },
+    })).rejects.toThrow(/live-only/i);
+    expect(await t.query(api.world.latestConversation, { agentId: learner.agentId })).toBeNull();
   });
 
   it('makes a three-citizen live conversation discoverable from every participant', async () => {

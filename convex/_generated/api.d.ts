@@ -9,6 +9,7 @@
  */
 
 import type * as act from "../act.js";
+import type * as community from "../community.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
@@ -28,6 +29,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   act: typeof act;
+  community: typeof community;
   crons: typeof crons;
   http: typeof http;
   kernel: typeof kernel;

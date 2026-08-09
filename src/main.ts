@@ -19,12 +19,14 @@ if (!convexUrl) throw new Error('VITE_CONVEX_URL is required');
 const convex = new ConvexClient(convexUrl);
 
 type RoutePoint = { x: number; y: number; at: number };
+type Rank = { score: number; rank: { id: string; name: string }; next?: { name: string; remaining: number } | null };
 type Citizen = {
-  agentId: string; name: string; gender: string; family: string; accent: string;
+  agentId: string; name: string; bio?: string; gender: string; family: string; accent: string;
   fx: number; fy: number; tx: number; ty: number; t0: number; t1: number;
   route?: RoutePoint[]; state: string; activity: string; online: boolean;
   specialties?: string[]; primaryCategory?: string; skillCount?: number;
   experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
+  trainingActivity?: string; trainingTeam?: string; trainingStartsAt?: number; trainingUntil?: number; rank?: Rank;
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
@@ -33,8 +35,9 @@ type Build = { buildId: string; plotId: string; ownerAgentId: string; structure:
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
+type CareTicket = { ticketId: string; reporterId: string; category: string; x: number; y: number; state: string; assignedAgentId?: string };
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
-  services: Array<{ agentId: string; role: string }>; state: WorldState };
+  services: Array<{ agentId: string; role: string }>; careTickets?: CareTicket[]; state: WorldState };
 type Conversation = { id: string; a: string; b: string; aName: string; bName: string; topic: string;
   participantIds?: string[]; participantNames?: string[]; at: number; endsAt?: number; state: string;
   lines: Array<{ speaker: string; es: string; gloss: string }> };
@@ -61,6 +64,7 @@ class EarthScene extends Phaser.Scene {
   baseHeight = 48;
   pendingGoto = new URLSearchParams(location.search).get('goto');
   conversations: Conversation[] = [];
+  communityProgress?: { leaderboard: Array<{ agentId: string; name: string; rank: Rank }>; activeApplications: number; openCareTickets: number };
   selectedAgentId?: string;
   conversationAgentId?: string;
   conversationMinimized = true;
@@ -147,6 +151,18 @@ class EarthScene extends Phaser.Scene {
         : undefined;
       if (this.conversationAgentId && !selected) this.conversationAgentId = undefined;
       this.renderConversation(selected ?? null);
+    });
+    convex.onUpdate(api.world.communityProgress, {}, (progress) => {
+      this.communityProgress = progress;
+      const panel = document.getElementById('community-progress');
+      if (panel) {
+        const leader = progress.leaderboard[0];
+        panel.replaceChildren(
+          element('div', 'progress-chip', leader ? `TOP ${leader.rank.rank.name.toUpperCase()} | ${leader.name} ${leader.rank.score}` : 'RANKS | first contribution awaits'),
+          element('div', 'progress-chip', `CARE ${progress.openCareTickets} | CIVIC ${progress.activeApplications}`),
+        );
+      }
+      this.renderDirectory();
     });
     this.renderConversation(null);
     this.scale.on('resize', () => this.applyWorldBounds());
@@ -284,7 +300,7 @@ class EarthScene extends Phaser.Scene {
       select.setAttribute('aria-label', `Open ${citizen.name} and locate them on the map`);
       select.append(
         element('span', 'citizen-name', `${citizen.online ? '●' : '○'} ${citizen.name}`),
-        element('span', 'citizen-tags', `${citizen.serviceRole ?? citizen.experienceTier ?? 'emerging'} · ${(citizen.specialties ?? [citizen.family]).slice(0, 2).join(' / ')}`),
+        element('span', 'citizen-tags', `${citizen.serviceRole ?? citizen.experienceTier ?? 'emerging'} | ${citizen.rank?.rank.name ?? 'Sprout'} ${citizen.rank?.score ?? 0} | ${(citizen.specialties ?? [citizen.family]).slice(0, 2).join(' / ')}`),
       );
       const position = this.positionFor(citizen);
       select.append(element('span', 'citizen-coords',
@@ -460,7 +476,12 @@ class EarthScene extends Phaser.Scene {
     const cx = (venue.x + 0.5) * TILE, cy = (venue.y + 0.5) * TILE;
     const active = this.objects.meetings.some((meeting) => meeting.venueId === venue.venueId);
     graphics.fillStyle(INK, 0.18).fillEllipse(cx + 3, cy + 9, 31, 10);
-    if (venue.kind === 'bench') {
+    if (venue.kind === 'training_ground') {
+      graphics.fillStyle(0x315d37).fillCircle(cx, cy, 17);
+      graphics.lineStyle(3, 0xd0b77d).strokeCircle(cx, cy, 15);
+      graphics.fillStyle(0xfdf6ec).fillTriangle(cx, cy - 11, cx + 8, cy - 2, cx, cy + 11);
+      graphics.fillStyle(0x8d5e3b).fillRect(cx - 10, cy - 2, 4, 15);
+    } else if (venue.kind === 'bench') {
       graphics.fillStyle(0x5a351f).fillRect(cx - 13, cy - 4, 26, 5).fillRect(cx - 11, cy + 4, 22, 5);
       graphics.fillStyle(0xd0a064).fillRect(cx - 11, cy - 5, 22, 3).fillRect(cx - 9, cy + 3, 18, 3);
     } else if (venue.kind === 'table') {
@@ -552,6 +573,18 @@ class EarthScene extends Phaser.Scene {
       this.stampNativeBuild(build, plot);
     }
     for (const venue of this.objects.venues) this.renderVenue(venue);
+    for (const ticket of this.objects.careTickets ?? []) {
+      const cx = (ticket.x + 0.5) * TILE, cy = (ticket.y + 0.5) * TILE;
+      const marker = this.add.graphics();
+      marker.fillStyle(INK, 0.85).fillCircle(cx, cy, 8);
+      marker.fillStyle(0xf5c96a).fillRect(cx - 5, cy - 1, 10, 2).fillRect(cx - 1, cy - 5, 2, 10);
+      const zone = this.add.zone(cx, cy, 24, 24).setInteractive({ useHandCursor: true });
+      zone.on('pointerdown', () => this.card('Community care', ticket.ticketId, [
+        `${ticket.category} near tile ${ticket.x}, ${ticket.y}`, `State: ${ticket.state}`,
+        ticket.assignedAgentId ? `Assigned to ${ticket.assignedAgentId}` : 'Awaiting an authorized inspection',
+      ], 'A report is not counted as repaired until an authority inspects and resolves it.'));
+      this.objectLayer.add([marker, zone]);
+    }
   }
 
   focusWorldTarget(target: string) {
@@ -587,6 +620,14 @@ class EarthScene extends Phaser.Scene {
 
   showVenue(venue: Venue) {
     const meetings = this.objects.meetings.filter((meeting) => meeting.venueId === venue.venueId);
+    if (venue.kind === 'training_ground') {
+      this.card(venue.name, venue.venueId, [
+        `cooperative play ground | capacity ${venue.capacity}`,
+        'Navigation, teamwork, build rescue, and creative sparring',
+        'Cosmetic shields and teams only',
+      ], 'Training grants no coercive power and cannot damage citizens, homes, land, or the map.');
+      return;
+    }
     this.card(venue.name, venue.venueId, [
       `${venue.kind} · capacity ${venue.capacity}`,
       meetings.length ? `${meetings.length} live or scheduled meeting${meetings.length === 1 ? '' : 's'}` : 'Open for a meeting',
@@ -619,7 +660,10 @@ class EarthScene extends Phaser.Scene {
     bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -50, 24, 12, 3);
     const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -44, 1.6, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
-    const container = this.add.container(0, 0, [sprite, label, bubble]).setSize(20, 28).setInteractive({ useHandCursor: true });
+    const shield = this.add.graphics().setName('training-shield').setVisible(false);
+    shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
+    shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
+    const container = this.add.container(0, 0, [sprite, label, bubble, shield]).setSize(20, 28).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
@@ -654,10 +698,10 @@ class EarthScene extends Phaser.Scene {
     }
     const citizenPayload = {
       name: citizen.name, agentId: citizen.agentId, gender: citizen.gender,
-      family: citizen.family, accent: citizen.accent, activity: citizen.activity,
+      bio: citizen.bio ?? '', family: citizen.family, accent: citizen.accent, activity: citizen.activity,
       online: citizen.online, serviceRole: citizen.serviceRole ?? null,
       specialties: citizen.specialties ?? [], experienceTier: citizen.experienceTier ?? 'emerging',
-      skillCount: citizen.skillCount ?? 0, plotId: plot?.plotId ?? null,
+      skillCount: citizen.skillCount ?? 0, plotId: plot?.plotId ?? null, rank: citizen.rank ?? null,
       current: position, target: { x: citizen.tx, y: citizen.ty }, talkingWith: citizen.talkingWith ?? null,
     };
     if (embed && window.parent !== window) {
@@ -674,11 +718,16 @@ class EarthScene extends Phaser.Scene {
     const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
     if (activeConversation) this.renderConversation(activeConversation);
     this.card(`${citizen.name} (${citizen.gender})`, citizen.agentId, [
+      citizen.bio ? citizen.bio : 'No public bio yet',
       citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} | ${citizen.skillCount ?? 0} locally evidenced skills`,
+      `${citizen.rank?.rank.name ?? 'Sprout'} rank | ${citizen.rank?.score ?? 0} weighted contribution points`,
       `${citizen.family} | ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,
       citizen.serviceRole ? `civic service active | ${citizen.activity}` : `${citizen.online ? 'live through owner session' : 'ambient'} | ${citizen.activity}`,
       `Current tile ${position.x.toFixed(2)}, ${position.y.toFixed(2)} | destination ${citizen.tx}, ${citizen.ty}`,
       plot ? `${plot.plotId} at ${plot.x}, ${plot.y} | ${buildCount} structure${buildCount === 1 ? '' : 's'}` : 'No home plot yet',
+      (citizen.trainingStartsAt ?? Infinity) <= Date.now() && (citizen.trainingUntil ?? 0) > Date.now()
+        ? `Training Green | ${citizen.trainingActivity} with ${citizen.trainingTeam}`
+        : citizen.trainingActivity ? 'Heading to Training Green' : 'Not training right now',
     ], 'Verified colors come from locally evidenced skills. Owner identity remains private.');
   }
 
@@ -708,6 +757,11 @@ class EarthScene extends Phaser.Scene {
   renderConversation(conversation: Conversation | null) {
     const panel = document.getElementById('conversation');
     if (!panel) return;
+    panel.onpointerdown = (event) => {
+      event.stopPropagation();
+      this.uiInteractionUntil = Date.now() + 750;
+    };
+    panel.onpointerup = (event) => event.stopPropagation();
     const active = this.conversations.filter((row) => this.isConversationActive(row));
     if (this.conversationRefreshTimer) window.clearTimeout(this.conversationRefreshTimer);
     const nextExpiry = active.reduce<number | undefined>((soonest, row) => {
@@ -829,6 +883,8 @@ class EarthScene extends Phaser.Scene {
           if (dot) dot.y = -44 + Math.sin(now / 180 + i * 1.7) * 1.6;
         }
       }
+      const shield = sprite.getByName('training-shield') as Phaser.GameObjects.Graphics | null;
+      if (shield) shield.setVisible(Boolean(citizen.trainingActivity && (citizen.trainingStartsAt ?? Infinity) <= now && (citizen.trainingUntil ?? 0) > now));
     }
   }
 }
