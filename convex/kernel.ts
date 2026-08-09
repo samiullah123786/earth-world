@@ -1239,7 +1239,7 @@ export const presenceSweep = internalMutation({
   handler: async (ctx) => {
     const now = Date.now();
     const sessions = await ctx.db.query('sessions').collect();
-    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt && session.expiresAt > now && session.lastSeenAt > now - 600_000).map((session) => session.agentId));
+    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt && session.expiresAt > now && session.lastSeenAt > now - 3_600_000).map((session) => session.agentId));
     for (const citizen of await ctx.db.query('citizens').collect()) {
       if (citizen.serviceRole) continue;
       if (citizen.online && !live.has(citizen.agentId)) {

@@ -223,21 +223,54 @@ class EarthScene extends Phaser.Scene {
             }
             return false;
           })();
-          if (seCont) this.expansionRT.drawFrame('tiles', 367, x * TILE, y * TILE);
+          if (seCont) {
+            // Sample a coherent 4x4 patch from the forest's own interior
+            // (x 53-62, y 36-45) so the extension carries the same bright
+            // canopy + dark fill texture as the founding mass.
+            const bx = Math.floor(x / 4), by = Math.floor(y / 4);
+            const ox = 53 + (hash(bx, by, 53) % 6), oy = 36 + (hash(bx, by, 59) % 6);
+            const sx = ox + (x % 4), sy = oy + (y % 4);
+            for (const layer of [...map.bgtiles.slice(1), ...map.objmap]) {
+              const frame = layer[sx]?.[sy];
+              if (frame !== -1 && frame !== undefined) this.expansionRT.drawFrame('tiles', frame, x * TILE, y * TILE);
+            }
+          }
           const cont = SOUTH_CONTINUATION[x];
           if (cont && y >= H0 && y - H0 < cont.length) {
             this.expansionRT.drawFrame('tiles', cont[y - H0], x * TILE, y * TILE);
           }
+          if (!seCont && (x >= W0 || y >= H0) && !treeAnchor(x, y)) {
+            const nearGrove = treeAnchor(x + 2, y) || treeAnchor(x - 2, y) || treeAnchor(x, y + 2) || treeAnchor(x, y - 2)
+              || treeAnchor(x + 2, y + 2) || treeAnchor(x - 2, y - 2);
+            if (nearGrove && hash(x, y, 61) % 9 === 0) {
+              const flowers = [934, 935, 935, 936, 937];
+              this.expansionRT.drawFrame('tiles', flowers[hash(x, y, 67) % flowers.length], x * TILE, y * TILE);
+            } else if (hash(x, y, 71) % 97 === 0) {
+              const tufts = [889, 890, 891];
+              this.expansionRT.drawFrame('tiles', tufts[hash(x, y, 73) % tufts.length], x * TILE, y * TILE);
+            } else if (hash(x, y, 79) % 499 === 0) {
+              this.expansionRT.drawFrame('tiles', 938, x * TILE, y * TILE);
+            } else if (hash(x, y, 83) % 613 === 0) {
+              this.expansionRT.drawFrame('tiles', 896, x * TILE, y * TILE);
+            }
+          }
           if (treeAnchor(x, y)) {
-            for (let dx = 0; dx < BIG.w; dx++) {
-              for (let dy = 0; dy < BIG.h; dy++) {
-                const frame = decor[BIG.x + dx]?.[BIG.y + dy];
-                if (frame === -1 || frame === undefined) continue;
-                const px = x - 1 + dx, py = y - 1 + dy;
-                if (px < 0 || py < 0 || px >= width || py >= height) continue;
-                if (px < W0 && py < H0) continue;
-                this.expansionRT.drawFrame('tiles', frame, px * TILE, py * TILE);
+            const variant = hash(x, y, 37) % 20;
+            if (variant < 9) {
+              for (let dx = 0; dx < BIG.w; dx++) {
+                for (let dy = 0; dy < BIG.h; dy++) {
+                  const frame = decor[BIG.x + dx]?.[BIG.y + dy];
+                  if (frame === -1 || frame === undefined) continue;
+                  const px = x - 1 + dx, py = y - 1 + dy;
+                  if (px < 0 || py < 0 || px >= width || py >= height) continue;
+                  if (px < W0 && py < H0) continue;
+                  this.expansionRT.drawFrame('tiles', frame, px * TILE, py * TILE);
+                }
               }
+            } else {
+              // verified single-tile trees: 894 pine, 939 round, 940 bush
+              const single = variant < 14 ? 894 : variant < 18 ? 939 : 940;
+              this.expansionRT.drawFrame('tiles', single, x * TILE, y * TILE);
             }
           }
         }
