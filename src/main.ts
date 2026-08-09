@@ -305,21 +305,14 @@ class EarthScene extends Phaser.Scene {
       const position = this.positionFor(citizen);
       select.append(element('span', 'citizen-coords',
         `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now() ? ' | talking' : ''}`));
-      const locate = element('button', 'citizen-locate', '⌖ MAP');
-      locate.type = 'button';
-      locate.setAttribute('aria-label', `Locate ${citizen.name} on the map`);
+      // The whole row locates + opens the citizen; no redundant MAP button.
       const holdUi = (event: PointerEvent) => { event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; };
       select.onpointerdown = holdUi;
       select.onpointerup = (event) => event.stopPropagation();
       select.onclick = (event) => {
         event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(citizen.agentId);
       };
-      locate.onpointerdown = holdUi;
-      locate.onpointerup = (event) => event.stopPropagation();
-      locate.onclick = (event) => {
-        event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(citizen.agentId);
-      };
-      row.append(select, locate);
+      row.append(select);
       return row;
     }));
   }
