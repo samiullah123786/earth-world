@@ -59,6 +59,7 @@ class EarthScene extends Phaser.Scene {
   pendingGoto = new URLSearchParams(location.search).get('goto');
   conversations: Conversation[] = [];
   selectedAgentId?: string;
+  uiInteractionUntil = 0;
 
   constructor() {
     super('EarthScene');
@@ -215,9 +216,11 @@ class EarthScene extends Phaser.Scene {
       const position = this.positionFor(citizen);
       button.append(element('span', 'citizen-coords',
         `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith ? ' | talking' : ''}`));
-      button.onpointerdown = (event) => event.stopPropagation();
+      button.onpointerdown = (event) => { event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; };
       button.onpointerup = (event) => event.stopPropagation();
-      button.onclick = (event) => { event.stopPropagation(); this.focusCitizen(citizen.agentId); };
+      button.onclick = (event) => {
+        event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(citizen.agentId);
+      };
       return button;
     }));
   }
@@ -317,7 +320,7 @@ class EarthScene extends Phaser.Scene {
     }
     if (active) graphics.lineStyle(3, 0xec4899, 0.95).strokeCircle(cx, cy, 20);
     const zone = this.add.zone(cx, cy, 42, 42).setInteractive();
-    zone.on('pointerdown', () => this.showVenue(venue));
+    zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showVenue(venue); });
     this.objectLayer.add([graphics, zone]);
     if (!embed) {
       const label = this.add.text(cx, cy - 27, venue.name, {
@@ -370,7 +373,7 @@ class EarthScene extends Phaser.Scene {
         graphics.lineStyle(plot.ownerAgentId ? 2 : 1, color, plot.ownerAgentId ? 0.62 : 0.22);
         graphics.strokeRect(plot.x * TILE, plot.y * TILE, plot.w * TILE, plot.h * TILE);
         const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive();
-        zone.on('pointerdown', () => this.showPlot(plot));
+        zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showPlot(plot); });
         this.objectLayer.add([graphics, zone]);
       }
     }
@@ -438,7 +441,7 @@ class EarthScene extends Phaser.Scene {
     const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -44, 1.6, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
     const container = this.add.container(0, 0, [sprite, label, bubble]).setSize(20, 28).setInteractive();
-    container.on('pointerdown', () => this.showProfile(citizen.agentId));
+    container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
 
