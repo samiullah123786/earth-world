@@ -73,6 +73,9 @@ export const ambientTick = internalMutation({
         });
       }
     }
+    const latestConversation = await ctx.db.query('conversations').order('desc').first();
+    const canStartConversation = !latestConversation || now - latestConversation._creationTime >= 90_000;
+    let conversationStarted = false;
     for (const citizen of citizens) {
       if (citizen.online || talking.has(citizen.agentId) || now < citizen.t1 || Math.random() < 0.45) continue;
       for (let attempt = 0; attempt < 8; attempt++) {
@@ -99,11 +102,15 @@ export const ambientTick = internalMutation({
       }
     }
 
-    for (let i = 0; i < citizens.length; i++) {
-      for (let j = i + 1; j < citizens.length; j++) {
+    for (let i = 0; canStartConversation && !conversationStarted && i < citizens.length; i++) {
+      for (let j = i + 1; !conversationStarted && j < citizens.length; j++) {
         const a = citizens[i], b = citizens[j];
         if (!talking.has(a.agentId) && !talking.has(b.agentId)
           && Math.hypot(a.tx - b.tx, a.ty - b.ty) < 3 && Math.random() < 0.08) {
+          const recentForA = await ctx.db.query('conversations').withIndex('a', (q) => q.eq('a', a.agentId)).order('desc').take(12);
+          const repeatedPair = recentForA.some((conversation) =>
+            conversation.b === b.agentId && now - conversation._creationTime < 30 * 60_000);
+          if (repeatedPair) continue;
           // Free-will exchange: what they say derives from their REAL verified
           // specialties (EarthSpeak wire acts + plain-English gloss). Knowledge
           // flows from the more experienced side of the topic to the other.
@@ -128,6 +135,7 @@ export const ambientTick = internalMutation({
             talkingWith: a.agentId, talkingUntil: endsAt,
           });
           talking.add(a.agentId); talking.add(b.agentId);
+          conversationStarted = true;
           await rememberVerifiedInsight(ctx, a.agentId, b.agentId, topic, conversationId, now);
           await rememberVerifiedInsight(ctx, b.agentId, a.agentId, back, conversationId, now);
           await ctx.db.insert('events', {

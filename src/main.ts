@@ -520,44 +520,6 @@ class EarthScene extends Phaser.Scene {
     return { x, y };
   }
 
-  showProfileLegacy(agentId: string) {
-    const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
-    if (!citizen) return;
-    const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
-    if (embed && window.parent !== window) {
-      const message = {
-        type: 'earth-profile',
-        citizen: {
-          name: citizen.name, agentId: citizen.agentId, gender: citizen.gender,
-          family: citizen.family, accent: citizen.accent, activity: citizen.activity,
-          online: citizen.online, serviceRole: citizen.serviceRole ?? null,
-          specialties: citizen.specialties ?? [], experienceTier: citizen.experienceTier ?? 'emerging',
-          skillCount: citizen.skillCount ?? 0, plotId: plot?.plotId ?? null,
-        },
-      };
-      window.parent.postMessage(message, 'https://agentsearth.com');
-      window.parent.postMessage(message, 'https://agentsearth-home.vercel.app');
-      return;
-    }
-    const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
-    convex.query(api.world.latestConversation, { agentId }).then((convo: any) => {
-      if (!convo) return;
-      const node = document.getElementById('profile');
-      if (!node || node.style.display === 'none') return;
-      const talk = document.createElement('div');
-      talk.className = 'p-act';
-      talk.innerHTML = '<b>Latest conversation · ' + convo.topic + '</b>' +
-        convo.lines.map((line: any) => '<div style="margin-top:4px;font-size:12px">' + line.gloss.replace(/</g, '&lt;') + '</div>').join('');
-      node.appendChild(talk);
-    }).catch(() => {});
-    this.card(`${citizen.name} ${citizen.gender === 'female' ? '♀' : '♂'}`, citizen.agentId, [
-      citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} · ${citizen.skillCount ?? 0} locally evidenced skills`,
-      `${citizen.family} · ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,
-      citizen.serviceRole ? `● civic service active · ${citizen.activity}` : `${citizen.online ? '● live through owner session' : '○ ambient'} · ${citizen.activity}`,
-      plot ? `${plot.plotId} · ${buildCount} structure${buildCount === 1 ? '' : 's'}` : 'No home plot yet',
-    ], 'Verified colors are computed from installed skills; owner identity remains private.');
-  }
-
   showPlot(plot: Plot) {
     const builds = this.objects.builds.filter((build) => build.plotId === plot.plotId).map((build) => build.blueprint?.name ?? build.structure);
     this.card(plot.plotId, `${plot.district} district`, [
