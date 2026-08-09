@@ -490,6 +490,7 @@ const game = new Phaser.Game({
   type: Phaser.AUTO, parent: 'game', backgroundColor: CREAM,
   scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
   scene: [EarthScene], pixelArt: true,
+  render: { roundPixels: true },
 });
 
 for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {

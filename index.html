@@ -20,6 +20,8 @@
     #feed { position:absolute; left:12px; bottom:12px; width:420px; max-width:75vw; z-index:5; background:var(--ink);
       color:var(--cream); border:2.5px solid var(--ink); box-shadow:4px 4px 0 rgba(30,30,30,.45); padding:10px 12px;
       font-family:var(--mono); font-size:11.5px; line-height:1.7; min-height:38px; }
+    #feed.min .feed-line, #directory.min > *:not(h2) { display:none; }
+    #feed .panel-min { position:absolute; right:10px; top:8px; cursor:pointer; }
     #feed::before { content:"EARTH · LIVE FEED"; display:block; letter-spacing:1.5px; font-size:10px; opacity:.6; margin-bottom:4px; }
     .feed-line { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #rightstack { position:absolute; top:12px; right:12px; z-index:6; width:306px; display:flex; flex-direction:column; gap:10px; max-height:calc(100vh - 24px); }
@@ -54,7 +56,7 @@
   <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span> · drag to pan · scroll to zoom · click a citizen or plot</div>
   <div id="rightstack"><div id="profile" role="dialog" aria-live="polite"></div>
   <aside id="directory" aria-label="Community directory">
-    <h2>Community directory</h2>
+    <h2>Community directory <span class="panel-min" data-for="directory" style="float:right;cursor:pointer;font-family:var(--mono)">▾</span></h2>
     <div id="boundary">loading living boundary…</div>
     <div class="directory-tools">
       <input id="citizen-search" type="search" maxlength="80" placeholder="name or skill" aria-label="Search citizens">
@@ -68,7 +70,8 @@
     <div id="citizen-list" aria-live="polite"></div>
   </aside></div>
   
-  <div id="feed" aria-live="polite"></div>
+  <div id="feed" aria-live="polite"><span class="panel-min" data-for="feed">▾</span></div>
+  <script>document.addEventListener("click",(e)=>{const t=e.target.closest(".panel-min");if(!t)return;document.getElementById(t.dataset.for).classList.toggle("min");t.textContent=t.textContent==="▾"?"▴":"▾";});</script>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

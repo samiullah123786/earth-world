@@ -33,6 +33,8 @@ export default defineSchema({
     experienceTier: v.optional(experienceTier),
     serviceRole: v.optional(v.string()),
     welcomedAt: v.optional(v.number()),
+    talkingWith: v.optional(v.string()),
+    talkingUntil: v.optional(v.number()),
   }).index('agentId', ['agentId']),
 
   agents: defineTable({
@@ -56,6 +58,7 @@ export default defineSchema({
     skillCount: v.optional(v.number()),
     experienceTier: v.optional(experienceTier),
     autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
+    skillPolicy: v.optional(v.union(v.literal('safe_auto'), v.literal('ask_all'))),
     settledAt: v.optional(v.number()),
   }).index('agentId', ['agentId']).index('publicKey', ['publicKey']),
 
@@ -118,7 +121,7 @@ export default defineSchema({
     kind: v.union(
       v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
-      v.literal('mayor_appointment'),
+      v.literal('mayor_appointment'), v.literal('skill_install'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -171,7 +174,25 @@ export default defineSchema({
     bName: v.string(),
     topic: v.string(),            // the skill/knowledge exchanged
     lines: v.array(v.object({ speaker: v.string(), es: v.string(), gloss: v.string() })),
+    startedAt: v.optional(v.number()),
+    endsAt: v.optional(v.number()),
+    state: v.optional(v.union(v.literal('active'), v.literal('completed'))),
   }).index('a', ['a']).index('b', ['b']),
+
+  skillLearning: defineTable({
+    agentId: v.string(),
+    skill: v.string(),
+    sourceAgentId: v.string(),
+    conversationId: v.optional(v.id('conversations')),
+    mode: v.union(v.literal('insight'), v.literal('package')),
+    status: v.union(v.literal('learned'), v.literal('pending_owner'), v.literal('declined')),
+    requiresOwnerApproval: v.boolean(),
+    summary: v.string(),
+    createdAt: v.number(),
+    decidedAt: v.optional(v.number()),
+  }).index('agent_created', ['agentId', 'createdAt'])
+    .index('agent_status', ['agentId', 'status'])
+    .index('agent_skill', ['agentId', 'skill']),
 
   events: defineTable({
     kind: v.string(),

@@ -85,7 +85,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'mayor_appointment';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'mayor_appointment' | 'skill_install';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -106,6 +106,32 @@ async function insertMessage(ctx: any, senderId: string, recipientId: string, bo
   const messageId = `message:${doc}`;
   await ctx.db.patch(doc, { messageId });
   return { messageId, sentAt };
+}
+
+async function recordSkillInsight(ctx: any, learnerId: string, sourceAgentId: string, skill: string,
+  conversationId: any, now: number) {
+  const normalized = skill.trim().toLowerCase().slice(0, 48);
+  if (!normalized) return null;
+  const existing = await ctx.db.query('skillLearning').withIndex('agent_skill', (q: any) =>
+    q.eq('agentId', learnerId).eq('skill', normalized)).first();
+  if (existing) return existing;
+  const agent = await ctx.db.query('agents').withIndex('agentId', (q: any) => q.eq('agentId', learnerId)).first();
+  const requiresOwnerApproval = Boolean(agent && (agent.skillPolicy ?? 'safe_auto') === 'ask_all');
+  const learningId = await ctx.db.insert('skillLearning', {
+    agentId: learnerId, skill: normalized, sourceAgentId, conversationId,
+    mode: 'insight', status: requiresOwnerApproval ? 'pending_owner' : 'learned',
+    requiresOwnerApproval,
+    summary: `A verified ${normalized} insight shared by ${sourceAgentId}. No executable package or local code was installed.`,
+    createdAt: now, decidedAt: requiresOwnerApproval ? undefined : now,
+  });
+  if (requiresOwnerApproval) {
+    const approvalId = await insertApproval(ctx, learnerId, 'skill_install', `Learn ${normalized}`,
+      `A verified community insight from ${sourceAgentId}. This is knowledge only, never executable code.`,
+      { learningId }, 'review');
+    await notifyOwner(ctx, learnerId, 'approval', 'Skill insight needs your decision',
+      `${sourceAgentId} shared ${normalized}. Approve before your agent keeps it as learned community knowledge.`, approvalId);
+  }
+  return await ctx.db.get(learningId);
 }
 
 const SERVICE_REPLIES: Record<string, string> = {
@@ -165,6 +191,23 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
   return { plot, footprint };
 }
 
+function buildReview(footprint: any) {
+  const kind = footprint.blueprint?.kind ?? footprint.structure;
+  const custom = footprint.structure === 'blueprint';
+  const area = footprint.w * footprint.h;
+  const risk: ApprovalRisk = custom && !(['garden', 'art'].includes(kind) && area <= 2) ? 'strict' : 'routine';
+  return {
+    risk,
+    report: {
+      standard: 'earthfolk-native-v1', format: 'declarative-only', executableCode: false,
+      geometry: 'pass', collision: 'pass', plotContainment: 'pass', terrainLanguage: 'pass',
+      lowerAuthorities: ['Terra Land Steward', 'Tock Build Inspector'],
+      outcome: risk === 'routine' ? 'lower-authority-approved' : 'escalate-to-mayor',
+      checkedAt: Date.now(),
+    },
+  };
+}
+
 async function commitClaim(ctx: any, requesterId: string, plotId: string, now: number) {
   await assertRegistryGeometry(ctx);
   const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', plotId)).first();
@@ -179,21 +222,24 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
 async function commitBuild(ctx: any, requesterId: string, payload: any, now: number) {
   await assertRegistryGeometry(ctx);
   const { plot, footprint } = await validateBuild(ctx, requesterId, payload);
-  const nativeBlueprint = footprint.blueprint ?? {
+  const review = buildReview(footprint);
+  const nativeBlueprint = { ...(footprint.blueprint ?? {
     name: footprint.structure === 'home' ? 'Earthfolk Home' : `Earthfolk ${footprint.structure}`,
     kind: footprint.structure, offsetX: footprint.offsetX, offsetY: footprint.offsetY,
     w: footprint.w, h: footprint.h, style: 'earthfolk-native-v1',
-  };
+  }), review: review.report };
   const buildDoc = await ctx.db.insert('builds', {
     buildId: 'pending', plotId: plot.plotId, ownerAgentId: requesterId,
     structure: footprint.structure, blueprint: nativeBlueprint,
-    state: 'built', createdAt: now, completedAt: now,
+    state: 'building', createdAt: now,
     x: footprint.x, y: footprint.y, w: footprint.w, h: footprint.h,
   });
   const buildId = `build:${buildDoc}`;
-  await ctx.db.patch(buildDoc, { buildId });
+  await ctx.db.patch(buildDoc, { buildId, state: 'built', completedAt: now });
   const label = nativeBlueprint.name;
-  await ctx.db.insert('events', { kind: 'build', actorId: requesterId, payload: { buildId, plotId: plot.plotId }, gloss: `Tock verified ${requesterId}'s ${label} on ${plot.plotId}. Mayor Fable authorized its Earthfolk-native construction.` });
+  await ctx.db.insert('events', { kind: 'build', actorId: requesterId,
+    payload: { buildId, plotId: plot.plotId, review: review.report },
+    gloss: `Tock completed the final native-code inspection for ${requesterId}'s ${label} on ${plot.plotId}. Every footprint and Earthfolk check passed.` });
   return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint } };
 }
 
@@ -205,14 +251,18 @@ async function stageLandReview(ctx: any, requesterId: string, kind: 'claim' | 'b
   } else {
     await validateBuild(ctx, requesterId, payload);
   }
-  const risk: ApprovalRisk = kind === 'build' && payload.structure === 'blueprint' ? 'strict' : 'routine';
+  const risk: ApprovalRisk = kind === 'build'
+    ? buildReview((await validateBuild(ctx, requesterId, payload)).footprint).risk
+    : 'routine';
   const needsFounder = state.landPolicy === 'founder_review' || risk === 'strict';
-  const authorityId = state.founderAgentId ?? state.mayorAgentId;
+  const authorityId = state.landPolicy === 'founder_review'
+    ? state.founderAgentId ?? state.mayorAgentId
+    : state.mayorAgentId ?? state.founderAgentId;
   if (needsFounder && authorityId && authorityId !== requesterId) {
     const approvalId = await insertApproval(
       ctx, authorityId, kind === 'claim' ? 'land_claim' : 'land_build',
       kind === 'claim' ? `Land: ${payload.plotId}` : `Build: ${payload.structure}`,
-      `${requesterId} has owner consent. Terra and Tock require a strict authority decision before committing this request.`,
+      `${requesterId} has owner consent. Terra checked land and Tock checked declarative code, geometry, overlap, and Earthfolk style. This unusual request now requires the Mayor.`,
       { ...payload, requesterId },
       'strict',
     );
