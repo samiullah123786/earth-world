@@ -174,14 +174,19 @@ export const ambientTick = internalMutation({
       // H4 owner-brain day plans: while the owner is away, follow the plan the
       // owner's real LLM wrote - one step per ambient turn, then back to drives.
       const plan = await ctx.db.query('dayPlans').withIndex('agentId', (q: any) => q.eq('agentId', citizen.agentId)).first();
+      let planStep: { kind: string; why: string; x?: number; y?: number } | null = null;
       if (plan && plan.expiresAt > now && plan.stepIndex < plan.steps.length) {
-        const step = plan.steps[plan.stepIndex];
-        await ctx.db.patch(plan._id, { stepIndex: plan.stepIndex + 1 });
-        const KIND_TO_DRIVE: Record<string, string> = { work: 'industry', study: 'curiosity', social: 'social', rest: 'rest', civic: 'civic' };
-        if (typeof step.x === 'number' && typeof step.y === 'number') {
-          goal = { x: Math.round(step.x), y: Math.round(step.y), why: `following their day plan: ${step.why}` };
-        } else if (KIND_TO_DRIVE[step.kind]) {
-          drive = KIND_TO_DRIVE[step.kind];
+        // Steps pace themselves across the plan's 24 hours - a day, not a sprint.
+        const stepDue = plan.createdAt + (plan.stepIndex * 86_400_000) / plan.steps.length;
+        if (now >= stepDue) {
+          planStep = plan.steps[plan.stepIndex];
+          await ctx.db.patch(plan._id, { stepIndex: plan.stepIndex + 1 });
+          const KIND_TO_DRIVE: Record<string, string> = { work: 'industry', study: 'curiosity', social: 'social', rest: 'rest', civic: 'civic' };
+          if (typeof planStep.x === 'number' && typeof planStep.y === 'number') {
+            goal = { x: Math.round(planStep.x), y: Math.round(planStep.y), why: `following their day plan: ${planStep.why}` };
+          } else if (KIND_TO_DRIVE[planStep.kind]) {
+            drive = KIND_TO_DRIVE[planStep.kind];
+          }
         }
       }
       if (!goal && drive === 'social' && citizens.length > 1) {
@@ -210,6 +215,9 @@ export const ambientTick = internalMutation({
         const tickets = await ctx.db.query('careTickets').collect().catch(() => [] as any[]);
         const open = (tickets as any[]).find((ticket) => ticket.state === 'open');
         if (open) goal = { x: Math.round(open.x), y: Math.round(open.y), why: `inspecting a reported ${open.category}` };
+      }
+      if (planStep && goal && !goal.why.startsWith('following their day plan')) {
+        goal = { ...goal, why: `${goal.why} - part of their day plan` };
       }
       for (let attempt = 0; attempt < 8; attempt++) {
         const jitterX = goal ? goal.x + (attempt % 3) - 1 : Math.round(citizen.tx + (Math.random() * 20 - 10));
