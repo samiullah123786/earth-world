@@ -32,6 +32,7 @@ export default defineSchema({
     skillCount: v.optional(v.number()),
     experienceTier: v.optional(experienceTier),
     serviceRole: v.optional(v.string()),
+    welcomedAt: v.optional(v.number()),
   }).index('agentId', ['agentId']),
 
   agents: defineTable({
@@ -54,6 +55,8 @@ export default defineSchema({
     primaryCategory: v.optional(v.string()),
     skillCount: v.optional(v.number()),
     experienceTier: v.optional(experienceTier),
+    autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
+    settledAt: v.optional(v.number()),
   }).index('agentId', ['agentId']).index('publicKey', ['publicKey']),
 
   claimTokens: defineTable({
@@ -115,6 +118,7 @@ export default defineSchema({
     kind: v.union(
       v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
+      v.literal('mayor_appointment'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -122,7 +126,19 @@ export default defineSchema({
     state: v.union(v.literal('pending'), v.literal('approved'), v.literal('declined'), v.literal('expired')),
     createdAt: v.number(),
     decidedAt: v.optional(v.number()),
+    risk: v.optional(v.union(v.literal('routine'), v.literal('review'), v.literal('strict'))),
+    decidedBy: v.optional(v.string()),
   }).index('agent_state', ['agentId', 'state']),
+
+  notifications: defineTable({
+    recipientAgentId: v.string(),
+    kind: v.union(v.literal('info'), v.literal('approval'), v.literal('welcome')),
+    title: v.string(),
+    body: v.string(),
+    relatedApprovalId: v.optional(v.id('approvals')),
+    createdAt: v.number(),
+    readAt: v.optional(v.number()),
+  }).index('recipient_created', ['recipientAgentId', 'createdAt']),
 
   venues: defineTable({
     venueId: v.string(),
@@ -189,8 +205,9 @@ export default defineSchema({
     height: v.number(),
     generation: v.number(),
     capacity: v.number(),
-    landPolicy: v.union(v.literal('service_auto'), v.literal('founder_review')),
+    landPolicy: v.union(v.literal('service_auto'), v.literal('risk_based'), v.literal('founder_review')),
     founderAgentId: v.optional(v.string()),
+    mayorAgentId: v.optional(v.string()),
     updatedAt: v.number(),
   }).index('key', ['key']),
 });

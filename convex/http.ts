@@ -63,6 +63,7 @@ const register = httpAction(async (ctx, request) => {
     const primaryCategory = String(value.primaryCategory ?? specialties[0] ?? 'general');
     const skillCount = Number(value.skillCount ?? 0);
     const experienceTier = String(value.experienceTier ?? 'emerging');
+    const autonomy = String(value.autonomy ?? 'light');
     if (!/^[\p{L}\p{N} _'-]{2,24}$/u.test(name)) throw new Error('agent name must be 2-24 plain characters');
     if (!/^[\p{L}\p{N} ._'-]{1,40}$/u.test(ownerName)) throw new Error('owner name must be 1-40 plain characters');
     if (gender !== 'male' && gender !== 'female') throw new Error('invalid gender');
@@ -70,6 +71,7 @@ const register = httpAction(async (ctx, request) => {
     if (!/^[a-f0-9]{64}$/.test(genomeDigest)) throw new Error('invalid genome digest');
     if (!/^[a-f0-9]{64}$/.test(evidenceDigest)) throw new Error('invalid evidence digest');
     if (!CATEGORIES.has(primaryCategory) || !EXPERIENCE.has(experienceTier)) throw new Error('invalid community profile');
+    if (!['none', 'light', 'active'].includes(autonomy)) throw new Error('invalid autonomy preference');
     if (!Number.isInteger(skillCount) || skillCount < 0 || skillCount > 5000) throw new Error('invalid skill count');
     const cleanScores: Record<string, number> = {};
     for (const [key, rawScore] of Object.entries(categoryScores).slice(0, CATEGORIES.size)) {
@@ -84,6 +86,7 @@ const register = httpAction(async (ctx, request) => {
       agentId, publicKey, name, ownerName, gender, family, accent, genomeDigest,
       evidenceDigest, categoryScores: cleanScores, specialties: specialties.length ? specialties : [primaryCategory],
       primaryCategory, skillCount, experienceTier: experienceTier as 'emerging' | 'practiced' | 'seasoned' | 'polymath',
+      autonomy: autonomy as 'none' | 'light' | 'active',
       charterVersion: '2026-08-09', claimTokenHash: await sha256Hex(claimToken),
       claimExpiresAt: Date.now() + 30 * 60_000,
     });
@@ -196,7 +199,7 @@ const ownerSession = httpAction(async (ctx, request) => {
 const ownerApprovals = httpAction(async (ctx, request) => {
   try {
     const approvals = await ctx.runQuery(internal.kernel.ownerApprovals, { tokenHash: await sha256Hex(bearerToken(request)) });
-    return json({ ok: true, approvals: approvals.map((approval: any) => ({ id: approval._id, kind: approval.kind, summary: approval.summary, detail: approval.detail, createdAt: approval.createdAt })) });
+    return json({ ok: true, approvals: approvals.map((approval: any) => ({ id: approval._id, kind: approval.kind, risk: approval.risk ?? 'review', summary: approval.summary, detail: approval.detail, createdAt: approval.createdAt })) });
   } catch (error) {
     return json({ ok: false, why: message(error) }, 401);
   }
@@ -227,7 +230,7 @@ const ownerLogout = httpAction(async (ctx, request) => {
 const ownerGovernance = httpAction(async (ctx, request) => {
   try {
     const { value } = await body(request);
-    if (value.landPolicy !== 'service_auto' && value.landPolicy !== 'founder_review') throw new Error('invalid land policy');
+    if (value.landPolicy !== 'risk_based' && value.landPolicy !== 'founder_review') throw new Error('invalid land policy');
     const result = await ctx.runMutation(internal.kernel.setOwnerGovernance, {
       tokenHash: await sha256Hex(bearerToken(request)), landPolicy: value.landPolicy,
     });
@@ -235,6 +238,61 @@ const ownerGovernance = httpAction(async (ctx, request) => {
   } catch (error) {
     return json({ ok: false, why: message(error) }, 403);
   }
+});
+
+const ownerNotifications = httpAction(async (ctx, request) => {
+  try {
+    const notifications = await ctx.runQuery(internal.kernel.ownerNotifications, { tokenHash: await sha256Hex(bearerToken(request)) });
+    return json({ ok: true, notifications: notifications.map((notification: any) => ({
+      id: notification._id, kind: notification.kind, title: notification.title, body: notification.body,
+      relatedApprovalId: notification.relatedApprovalId, createdAt: notification.createdAt, readAt: notification.readAt,
+    })) });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
+const ownerNotificationsRead = httpAction(async (ctx, request) => {
+  try {
+    const result = await ctx.runMutation(internal.kernel.readOwnerNotifications, { tokenHash: await sha256Hex(bearerToken(request)) });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
+const ownerAutonomy = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    if (!['none', 'light', 'active'].includes(value.autonomy)) throw new Error('invalid autonomy preference');
+    const result = await ctx.runMutation(internal.kernel.setOwnerAutonomy, {
+      tokenHash: await sha256Hex(bearerToken(request)), autonomy: value.autonomy,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const ownerMayor = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const targetAgentId = String(value.targetAgentId ?? '').trim();
+    if (!/^agent:[a-z0-9-]{3,80}$/.test(targetAgentId)) throw new Error('use a valid registered agent id');
+    const result = await ctx.runMutation(internal.kernel.requestMayorAppointment, {
+      tokenHash: await sha256Hex(bearerToken(request)), targetAgentId,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const publicVenues = httpAction(async (ctx) => {
+  const rows = await ctx.runQuery(internal.kernel.publicVenues, {});
+  return new Response(JSON.stringify({ ok: true, ...rows }), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=4', 'access-control-allow-origin': '*' },
+  });
 });
 
 const publicFeed = httpAction(async (ctx) => {
@@ -258,7 +316,12 @@ http.route({ path: '/v1/owner/approvals', method: 'GET', handler: ownerApprovals
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
+http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotifications });
+http.route({ path: '/v1/owner/notifications/read', method: 'POST', handler: ownerNotificationsRead });
+http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy });
+http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
 http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
+http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 
 export default http;

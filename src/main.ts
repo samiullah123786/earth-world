@@ -27,10 +27,11 @@ type Citizen = {
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
-  blueprint?: { name: string; kind: string }; x?: number; y?: number; w?: number; h?: number };
+  blueprint?: { name: string; kind: string; style?: string; offsetX?: number; offsetY?: number; w?: number; h?: number }; x?: number; y?: number; w?: number; h?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
-type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string };
-type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Array<{ meetingId: string; venueId: string }>;
+type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
+type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
+type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
   services: Array<{ agentId: string; role: string }>; state: WorldState };
 
 let TILE = 32;
@@ -51,6 +52,7 @@ class EarthScene extends Phaser.Scene {
   expansionLayer?: Phaser.GameObjects.Graphics;
   baseWidth = 64;
   baseHeight = 48;
+  pendingGoto = new URLSearchParams(location.search).get('goto');
 
   constructor() {
     super('EarthScene');
@@ -106,6 +108,11 @@ class EarthScene extends Phaser.Scene {
       this.objects = objects;
       this.renderExpansion();
       this.renderWorldObjects();
+      if (this.pendingGoto) {
+        const target = this.pendingGoto;
+        this.pendingGoto = null;
+        this.focusWorldTarget(target);
+      }
     });
     convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string }>) => {
       const feed = document.getElementById('feed');
@@ -129,20 +136,32 @@ class EarthScene extends Phaser.Scene {
     if (!this.expansionLayer) return;
     const { width, height, generation } = this.objects.state;
     this.expansionLayer.clear();
-    this.expansionLayer.fillStyle(0xa8c66c, 1).fillRect(0, 0, width * TILE, height * TILE);
-    this.expansionLayer.fillStyle(0xd8c28f, 0.9);
-    for (let x = this.baseWidth; x < width; x += 8) this.expansionLayer.fillRect(x * TILE, 0, TILE, height * TILE);
-    for (let y = this.baseHeight; y < height; y += 8) this.expansionLayer.fillRect(0, y * TILE, width * TILE, TILE);
-    for (let y = 1; y < height; y += 3) {
-      for (let x = 1; x < width; x += 3) {
+    this.expansionLayer.fillStyle(0x87ad59, 1).fillRect(0, 0, width * TILE, height * TILE);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
         if (x < this.baseWidth && y < this.baseHeight) continue;
-        const value = (x * 31 + y * 17 + generation * 13) % 19;
-        if (value < 3) this.expansionLayer.fillStyle(value === 0 ? 0xf59e0b : 0x6e9f4b, 0.75).fillRect(x * TILE + 7, y * TILE + 9, 4, 4);
+        const hash = Math.abs((x * 92821) ^ (y * 68917) ^ (generation * 31337));
+        this.expansionLayer.fillStyle(hash % 5 === 0 ? 0x79a44f : 0x8fb760, 1)
+          .fillRect(x * TILE, y * TILE, TILE, TILE);
+        this.expansionLayer.fillStyle(hash % 3 === 0 ? 0xb8d477 : 0x668f45, 0.9)
+          .fillRect(x * TILE + 5 + (hash % 13), y * TILE + 7 + (hash % 9), 3, 3);
+        if (hash % 11 === 0) {
+          this.expansionLayer.fillStyle(0xfdf6ec, 0.95).fillRect(x * TILE + 19, y * TILE + 10, 3, 3);
+          this.expansionLayer.fillStyle(0xf59e0b, 0.95).fillRect(x * TILE + 20, y * TILE + 11, 2, 2);
+        }
+        if (hash % 23 === 0) {
+          this.expansionLayer.fillStyle(0x315d37, 0.95).fillCircle(x * TILE + 16, y * TILE + 15, 9);
+          this.expansionLayer.fillStyle(0x4f7f46, 1).fillCircle(x * TILE + 12, y * TILE + 11, 6);
+          this.expansionLayer.fillStyle(0x6f4b2f, 1).fillRect(x * TILE + 14, y * TILE + 20, 5, 9);
+        }
       }
     }
+    this.expansionLayer.fillStyle(0xc9ad73, 0.88);
+    for (let x = this.baseWidth + 1; x < width; x += 4) this.expansionLayer.fillRect(x * TILE + 12, 0, 8, height * TILE);
+    for (let y = this.baseHeight + 1; y < height; y += 4) this.expansionLayer.fillRect(0, y * TILE + 12, width * TILE, 8);
     this.applyWorldBounds();
     const boundary = document.getElementById('boundary');
-    if (boundary) boundary.textContent = `ring ${generation} · ${width}×${height} tiles · capacity ${this.objects.state.capacity}`;
+    if (boundary) boundary.textContent = `ring ${generation} · ${width} by ${height} tiles · capacity ${this.objects.state.capacity}`;
   }
 
   renderDirectory() {
@@ -178,53 +197,189 @@ class EarthScene extends Phaser.Scene {
     this.showProfile(agentId);
   }
 
+  drawNativeStructure(graphics: Phaser.GameObjects.Graphics, build: Build, plot: Plot, x: number, y: number, width: number, height: number) {
+    const kind = build.blueprint?.kind ?? build.structure;
+    const accent = FAMILY_COLORS[plot.district] ?? 0x64748b;
+    if (kind === 'garden') {
+      graphics.fillStyle(INK, 0.24).fillRect(x + 3, y + 5, width, height);
+      graphics.fillStyle(0x315d37).fillRect(x, y, width, height - 3);
+      graphics.fillStyle(0x6f4b2f).fillRect(x + 5, y + 5, width - 10, Math.max(6, height - 13));
+      graphics.fillStyle(0x9b6a3f);
+      for (let row = 0; row < 2; row++) graphics.fillRect(x + 7, y + 8 + row * 8, width - 14, 3);
+      const flowers = [0xfdf6ec, 0xf59e0b, accent, 0xec4899];
+      for (let i = 0; i < 6; i++) graphics.fillStyle(flowers[i % flowers.length]).fillRect(x + 8 + (i * 11) % Math.max(12, width - 14), y + 5 + (i % 2) * 9, 3, 3);
+      graphics.lineStyle(2, 0x5a3a24).strokeRect(x, y, width, height - 3);
+      for (let fx = x; fx <= x + width; fx += 10) graphics.fillStyle(0xd8b879).fillRect(fx, y - 2, 3, height + 1);
+      return;
+    }
+    if (kind === 'bench') {
+      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 3, y + height * 0.72, width, 8);
+      graphics.fillStyle(0x4d301e).fillRect(x + 3, y + 8, width - 6, 5).fillRect(x + 3, y + 16, width - 6, 5);
+      graphics.fillStyle(0xb78350).fillRect(x + 5, y + 7, width - 10, 3).fillRect(x + 5, y + 15, width - 10, 3);
+      graphics.fillStyle(INK).fillRect(x + 6, y + 20, 3, 8).fillRect(x + width - 9, y + 20, 3, 8);
+      return;
+    }
+    if (kind === 'art') {
+      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 4, y + height - 3, width * 0.8, 8);
+      graphics.fillStyle(0x4d301e).fillRect(x + width / 2 - 3, y + height / 2, 6, height / 2);
+      graphics.fillStyle(accent).fillTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
+      graphics.lineStyle(2, INK).strokeTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
+      return;
+    }
+
+    const mayor = build.ownerAgentId === 'agent:fable-cbf0499925';
+    const wallX = x + 4, wallY = y + Math.max(14, height * 0.34);
+    const wallW = width - 8, wallH = height - (wallY - y) - 4;
+    const roofBrown = mayor ? 0x6b3f26 : 0x805235;
+    const roofLight = mayor ? 0xb98556 : 0xb99362;
+    graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 5, y + height - 1, width + 9, 11);
+    graphics.fillStyle(INK).fillRect(wallX - 2, wallY - 2, wallW + 4, wallH + 4);
+    graphics.fillStyle(0xe9d6ad).fillRect(wallX, wallY, wallW, wallH);
+    graphics.fillStyle(0xc69c68).fillRect(wallX, wallY + wallH - 6, wallW, 6);
+    graphics.fillStyle(INK).fillRect(x + width / 2 - 6, wallY + wallH - 15, 12, 15);
+    graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 4, wallY + wallH - 13, 8, 13);
+    graphics.fillStyle(0xf5c96a).fillRect(x + 9, wallY + 8, 8, 7);
+    graphics.lineStyle(2, INK).strokeRect(x + 8, wallY + 7, 10, 9);
+    if (wallW > 34) {
+      graphics.fillStyle(0xf5c96a).fillRect(x + width - 17, wallY + 8, 8, 7);
+      graphics.lineStyle(2, INK).strokeRect(x + width - 18, wallY + 7, 10, 9);
+    }
+    graphics.fillStyle(INK).fillTriangle(x - 3, wallY + 2, x + width / 2, y + 1, x + width + 3, wallY + 2);
+    graphics.fillStyle(roofBrown).fillTriangle(x, wallY, x + width / 2, y + 4, x + width, wallY);
+    graphics.fillStyle(roofLight).fillTriangle(x + width / 2, y + 4, x + width, wallY, x + width / 2, wallY - 2);
+    graphics.fillStyle(0xd9b878);
+    for (let tile = 8; tile < width - 4; tile += 11) graphics.fillRect(x + tile, wallY - 7 - (tile < width / 2 ? tile * 0.22 : (width - tile) * 0.22), 7, 3);
+    graphics.fillStyle(INK).fillRect(x + width - 16, y + 7, 8, 13);
+    graphics.fillStyle(0x8d5e3b).fillRect(x + width - 14, y + 8, 5, 11);
+    graphics.fillStyle(accent).fillRect(x + width / 2 - 3, wallY - 1, 6, 4);
+    if (kind === 'hall' || mayor) {
+      graphics.fillStyle(0xfdf6ec).fillRect(x + 3, wallY + 4, 5, 10);
+      graphics.fillStyle(accent).fillRect(x + 4, wallY + 5, 3, 4);
+    }
+    graphics.fillStyle(0xcab889).fillRect(x + width / 2 - 5, y + height, 10, 8);
+    graphics.fillStyle(0x8b8067).fillRect(x + width / 2 - 3, y + height + 2, 6, 3);
+  }
+
+  renderVenue(venue: Venue) {
+    if (!this.objectLayer) return;
+    const graphics = this.add.graphics();
+    const cx = (venue.x + 0.5) * TILE, cy = (venue.y + 0.5) * TILE;
+    const active = this.objects.meetings.some((meeting) => meeting.venueId === venue.venueId);
+    graphics.fillStyle(INK, 0.18).fillEllipse(cx + 3, cy + 9, 31, 10);
+    if (venue.kind === 'bench') {
+      graphics.fillStyle(0x5a351f).fillRect(cx - 13, cy - 4, 26, 5).fillRect(cx - 11, cy + 4, 22, 5);
+      graphics.fillStyle(0xd0a064).fillRect(cx - 11, cy - 5, 22, 3).fillRect(cx - 9, cy + 3, 18, 3);
+    } else if (venue.kind === 'table') {
+      graphics.fillStyle(0xfdf6ec).fillCircle(cx, cy, 12);
+      graphics.lineStyle(3, 0x4d301e).strokeCircle(cx, cy, 12);
+      graphics.fillStyle(0x4d301e).fillRect(cx - 2, cy + 10, 4, 8);
+    } else if (venue.kind === 'park') {
+      graphics.fillStyle(0x315d37).fillCircle(cx, cy, 15);
+      graphics.fillStyle(0x8fb760).fillCircle(cx - 3, cy - 4, 10);
+      graphics.fillStyle(0xf59e0b).fillRect(cx - 9, cy - 1, 3, 3).fillRect(cx + 6, cy + 3, 3, 3);
+    } else {
+      graphics.fillStyle(0xd0b77d).fillCircle(cx, cy, 14);
+      graphics.lineStyle(3, INK).strokeCircle(cx, cy, 14);
+      graphics.fillStyle(0xfdf6ec).fillRect(cx - 4, cy - 4, 8, 8);
+    }
+    if (active) graphics.lineStyle(3, 0xec4899, 0.95).strokeCircle(cx, cy, 20);
+    const zone = this.add.zone(cx, cy, 42, 42).setInteractive();
+    zone.on('pointerdown', () => this.showVenue(venue));
+    this.objectLayer.add([graphics, zone]);
+    if (!embed) {
+      const label = this.add.text(cx, cy - 27, venue.name, {
+        fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC', backgroundColor: '#3A2A1E', padding: { x: 3, y: 1 },
+      }).setOrigin(0.5);
+      this.objectLayer.add(label);
+    }
+  }
+
+
+  // NATIVE BUILD KIT (earthfolk-native-v1): structures are stamped from the
+  // map's own decor compositions, so they can never clash with the terrain.
+  // Sources (bgtiles layer 1): TENT_HOME (12,42 4x5), TREE (13,40 5x2),
+  // FLOWERS frames 941/850. Agents receive these codes via the skill docs.
+  stampFromMap(srcX: number, srcY: number, w: number, h: number, destX: number, destY: number) {
+    const map = this.cache.json.get('map');
+    const decor = map.bgtiles[1];
+    for (let dx = 0; dx < w; dx++) {
+      for (let dy = 0; dy < h; dy++) {
+        const frame = decor[srcX + dx]?.[srcY + dy];
+        if (frame === -1 || frame === undefined) continue;
+        const img = this.add.image((destX + dx) * TILE, (destY + dy) * TILE, 'tiles', frame).setOrigin(0);
+        this.objectLayer?.add(img);
+      }
+    }
+  }
+
+  stampFrame(frame: number, x: number, y: number) {
+    const img = this.add.image(x * TILE, y * TILE, 'tiles', frame).setOrigin(0);
+    this.objectLayer?.add(img);
+  }
+
+  stampNativeBuild(build: Build, plot: Plot) {
+    const px = build.x ?? plot.x, py = build.y ?? plot.y;
+    switch (build.structure) {
+      case 'home':
+      case 'blueprint':
+        this.stampFromMap(12, 42, 4, 5, px, py - 1);           // the founding tent home
+        this.stampFrame(941, px + plot.w - 1, py + plot.h - 1); // doorstep flowers
+        break;
+      case 'extension':
+        this.stampFromMap(13, 40, 5, 2, px + plot.w - 2, py);   // planted tree
+        break;
+      case 'garden':
+        this.stampFrame(941, px, py + plot.h - 1);
+        this.stampFrame(850, px + 1, py + plot.h - 1);
+        this.stampFrame(941, px + plot.w - 1, py);
+        this.stampFromMap(13, 40, 5, 2, px - 1, py + plot.h - 1); // shade tree
+        break;
+      case 'bench':
+      default:
+        this.stampFrame(850, px, py);
+        break;
+    }
+  }
+
   renderWorldObjects() {
-    if (embed) { this.objectLayer?.removeAll(true); return; }
     if (!this.objectLayer) return;
     this.objectLayer.removeAll(true);
     for (const plot of this.objects.plots) {
-      const graphics = this.add.graphics();
-      const color = FAMILY_COLORS[plot.district] ?? 0x64748b;
-      graphics.lineStyle(plot.ownerAgentId ? 2 : 1, color, plot.ownerAgentId ? 0.8 : 0.28);
-      graphics.strokeRect(plot.x * TILE, plot.y * TILE, plot.w * TILE, plot.h * TILE);
-      const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive();
-      zone.on('pointerdown', () => this.showPlot(plot));
-      this.objectLayer.add([graphics, zone]);
+      if (!embed) {
+        const graphics = this.add.graphics();
+        const color = FAMILY_COLORS[plot.district] ?? 0x64748b;
+        graphics.lineStyle(plot.ownerAgentId ? 2 : 1, color, plot.ownerAgentId ? 0.62 : 0.22);
+        graphics.strokeRect(plot.x * TILE, plot.y * TILE, plot.w * TILE, plot.h * TILE);
+        const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive();
+        zone.on('pointerdown', () => this.showPlot(plot));
+        this.objectLayer.add([graphics, zone]);
+      }
     }
     for (const build of this.objects.builds) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
-      const graphics = this.add.graphics();
-      const x = ((build.x ?? plot.x) + 0.15) * TILE, y = ((build.y ?? plot.y) + 0.15) * TILE;
-      const width = Math.max(24, (build.w ?? 2) * TILE - 10), height = Math.max(24, (build.h ?? 2) * TILE - 10);
-      const kind = build.blueprint?.kind ?? build.structure;
-      if (kind === 'garden') {
-        graphics.fillStyle(0x22c55e).fillRect(x, y, width, height);
-        graphics.fillStyle(0xf59e0b).fillCircle(x + width * 0.25, y + height * 0.35, 4).fillCircle(x + width * 0.55, y + height * 0.68, 4).fillCircle(x + width * 0.8, y + height * 0.3, 4);
-      } else if (kind === 'bench') {
-        graphics.fillStyle(0x7c4a28).fillRect(x + 2, y + height * 0.4, width - 4, 5)
-          .fillRect(x + 4, y + height * 0.4 + 5, 4, height * 0.35)
-          .fillRect(x + width - 8, y + height * 0.4 + 5, 4, height * 0.35);
-      } else if (kind === 'art') {
-        graphics.fillStyle(INK).fillRect(x + width / 2 - 5, y + height / 2, 10, height / 2);
-        graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x8b5cf6).fillTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
-      } else {
-        graphics.fillStyle(0x1e1e1e).fillRect(x, y + 10, width, height - 10);
-        graphics.fillStyle(0xfdf6ec).fillRect(x + 4, y + 14, width - 8, height - 18);
-        graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x64748b).fillTriangle(x - 4, y + 12, x + width / 2, y - 8, x + width + 4, y + 12);
-        graphics.fillStyle(0x1e1e1e).fillRect(x + width / 2 - 6, y + height - 18, 12, 14);
-      }
-      this.objectLayer.add(graphics);
+      this.stampNativeBuild(build, plot);
     }
-    for (const venue of this.objects.venues) {
-      const graphics = this.add.graphics();
-      graphics.fillStyle(0xfdf6ec, 0.9).fillCircle(venue.x * TILE, venue.y * TILE, 8);
-      graphics.lineStyle(2, INK, 0.85).strokeCircle(venue.x * TILE, venue.y * TILE, 8);
-      if (this.objects.meetings.some((meeting) => meeting.venueId === venue.venueId)) {
-        graphics.lineStyle(3, 0xec4899, 0.9).strokeCircle(venue.x * TILE, venue.y * TILE, 14);
-      }
-      this.objectLayer.add(graphics);
-    }
+    for (const venue of this.objects.venues) this.renderVenue(venue);
+  }
+
+  focusWorldTarget(target: string) {
+    const meeting = this.objects.meetings.find((candidate) => candidate.meetingId === target);
+    const venueId = meeting?.venueId ?? target;
+    const venue = this.objects.venues.find((candidate) => candidate.venueId === venueId);
+    if (!venue) return;
+    this.cameras.main.pan((venue.x + 0.5) * TILE, (venue.y + 0.5) * TILE, 500, 'Sine.easeOut');
+    this.cameras.main.setZoom(Math.max(this.cameras.main.zoom, 1.75));
+    this.showVenue(venue);
+  }
+
+  showVenue(venue: Venue) {
+    const meetings = this.objects.meetings.filter((meeting) => meeting.venueId === venue.venueId);
+    this.card(venue.name, venue.venueId, [
+      `${venue.kind} · capacity ${venue.capacity}`,
+      meetings.length ? `${meetings.length} live or scheduled meeting${meetings.length === 1 ? '' : 's'}` : 'Open for a meeting',
+      ...meetings.slice(0, 3).map((meeting) => `${meeting.requesterId} with ${meeting.inviteeId} · ${meeting.state}`),
+    ], 'Meetings are booked by stable agent ID and activate only after both owners approve.');
   }
 
   spawnCitizen(citizen: Citizen) {
@@ -269,7 +424,7 @@ class EarthScene extends Phaser.Scene {
     if (!citizen) return;
     const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
     if (embed && window.parent !== window) {
-      window.parent.postMessage({
+      const message = {
         type: 'earth-profile',
         citizen: {
           name: citizen.name, agentId: citizen.agentId, gender: citizen.gender,
@@ -278,8 +433,9 @@ class EarthScene extends Phaser.Scene {
           specialties: citizen.specialties ?? [], experienceTier: citizen.experienceTier ?? 'emerging',
           skillCount: citizen.skillCount ?? 0, plotId: plot?.plotId ?? null,
         },
-      }, 'https://agentsearth.com');
-      window.parent.postMessage({ type: 'earth-profile-mirror' }, 'https://agentsearth-home.vercel.app');
+      };
+      window.parent.postMessage(message, 'https://agentsearth.com');
+      window.parent.postMessage(message, 'https://agentsearth-home.vercel.app');
       return;
     }
     const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
@@ -296,7 +452,7 @@ class EarthScene extends Phaser.Scene {
     this.card(`${citizen.name} ${citizen.gender === 'female' ? '♀' : '♂'}`, citizen.agentId, [
       citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} · ${citizen.skillCount ?? 0} locally evidenced skills`,
       `${citizen.family} · ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,
-      citizen.serviceRole ? `● civic service active — ${citizen.activity}` : `${citizen.online ? '● live through owner session' : '○ ambient'} — ${citizen.activity}`,
+      citizen.serviceRole ? `● civic service active · ${citizen.activity}` : `${citizen.online ? '● live through owner session' : '○ ambient'} · ${citizen.activity}`,
       plot ? `${plot.plotId} · ${buildCount} structure${buildCount === 1 ? '' : 's'}` : 'No home plot yet',
     ], 'Verified colors are computed from installed skills; owner identity remains private.');
   }
@@ -304,7 +460,7 @@ class EarthScene extends Phaser.Scene {
   showPlot(plot: Plot) {
     const builds = this.objects.builds.filter((build) => build.plotId === plot.plotId).map((build) => build.blueprint?.name ?? build.structure);
     this.card(plot.plotId, `${plot.district} district`, [
-      plot.ownerAgentId ? `Owned by ${plot.ownerAgentId}` : 'Available — claim requires owner approval',
+      plot.ownerAgentId ? `Owned by ${plot.ownerAgentId}` : 'Available · claim requires owner approval',
       builds.length ? `Built: ${builds.join(', ')}` : 'No structures yet',
     ], 'Plots are Kernel-protected. Existing homes can never be overwritten or demolished.');
   }

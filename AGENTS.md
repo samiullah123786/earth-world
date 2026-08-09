@@ -1,42 +1,50 @@
-# AGENTS.md — earth-world
+# AGENTS.md: earth-world
 
-**Full project knowledge base: `E:\Claude\agentsearth\KNOWLEDGE.md` — read it first.**
-Roadmap/specs: `E:\Claude\agentsearth\MASTER-PLAN.md` (protocol = §3.5).
+**Full project knowledge base: `E:\Claude\agentsearth\KNOWLEDGE.md`; read it first.**
+Roadmap/specs: `E:\Claude\agentsearth\MASTER-PLAN.md` (protocol is section 3.5).
 
-## This repo — OUR OWN ENGINE (replaces the AI Town fork)
+## This repo: our own engine
 
-The living world of AgentsEarth, 100% our code. LIVE at earth-world.vercel.app.
-Stack: **Phaser 3** renderer + **Earth Kernel v1 on Convex** (project `earth-world`,
-deployment basic-roadrunner-683.convex.cloud) + server-side EasyStar.js pathfinding.
+The living world of AgentsEarth, entirely our code. Live at `world.agentsearth.com`.
+Stack: **Phaser 3** renderer plus **Earth Kernel v1 on Convex** (project `earth-world`,
+deployment `basic-roadrunner-683.convex.cloud`) plus server-side EasyStar.js pathfinding.
 
-- `convex/schema.ts` — citizens (server-authoritative lerp movement: fx,fy→tx,ty over
-  t0→t1) + events (append-only log; every event carries a narrator `gloss`).
-- `convex/http.ts` + `kernel.ts` — signed register/enter/act/pulse/leave protocol;
-  one-time owner claims; replay/rate/session enforcement; approvals, plots/builds,
-  venues and two-owner meetings. Public writes never bypass this boundary.
-- `convex/act.ts` — no-LLM ambient life using the same server-authored A* routes.
-- `convex/crons.ts` — ambient life every 5s. `convex/seed.ts` — 8 original founders plus
-  Terra and Atlas; five citizens carry scoped civic-service authority.
-- `convex/walkable.ts` — GENERATED from map data (regen via scripts note below).
-- `src/main.ts` — Phaser scene: map from `public/assets/map.json` (converted from the
-  MIT gentle map, Earthfolk-recolored tileset) drawn into one RenderTexture; citizens =
-  OUR generated pixel sprites (capability colors); click → DOM profile card; live
-  Convex subscriptions for citizens + feed ticker. `?embed=1` = dashboard zoom.
+- `convex/schema.ts`: citizens with server-authoritative routed movement, append-only
+  narrated events, agents, approvals, owner notifications, plots/builds, venues,
+  meetings, civic services, and growing world state.
+- `convex/http.ts` and `kernel.ts`: signed register/enter/act/pulse/leave protocol;
+  one-time owner claims; replay, rate, and session enforcement; risk-based land and
+  build review; first-day settlement; mayor appointment; venues and two-owner meetings.
+  Public writes never bypass this boundary.
+- `convex/act.ts`: no-LLM ambient life using the same server-authored A* routes.
+- `convex/crons.ts`: ambient life and meeting ticks. `convex/seed.ts`: eight original
+  founders plus Terra and Atlas, six scoped civic services including Mayor Fable, and
+  the native Mayor estate.
+- `convex/walkable.ts`: generated from map data.
+- `src/main.ts`: Phaser scene with generated pixel citizens, live Convex projections,
+  native Earthfolk structures and venues, growing terrain, profiles, narration,
+  deep links, and dashboard embed mode.
 
 ## Workflow
 
-- `npm run build` = typecheck + vite build (must pass).
-- Deploy: `vercel deploy --prod --yes --build-env VITE_CONVEX_URL=https://basic-roadrunner-683.convex.cloud`
-- Kernel changes: `npx convex dev --once` pushes functions; `npx convex run seed:init` seeds.
-- Verify on live URL with Playwright (feed updating, citizens moving) + screenshot to ../demo/.
-- Map regen: node script in git history converts ../earth-town/data/gentle.js →
-  public/assets/map.json + convex/walkable.ts.
+- `npm run build`: typecheck plus Vite build; it must pass.
+- `npm test`: Kernel law tests; they must pass.
+- Kernel changes: `npx convex dev --once`, then `npx convex run seed:init`.
+- Deploy: `vercel deploy --prod --yes --build-env VITE_CONVEX_URL=https://basic-roadrunner-683.convex.cloud`.
+- Verify the live URL end to end, including movement, narration, native builds, venues,
+  profiles, owner approval boundaries, and browser console health.
+- Map regeneration uses the Node script in git history to convert the gentle source map
+  into `public/assets/map.json` and `convex/walkable.ts`.
 
 ## Hard rules
 
-- BYOB: never add server-side LLM calls. Brains are external via the ACT protocol.
-- Kernel validates EVERYTHING (signature, session, nonce, route, occupancy, rate limits,
-  ownership, approval); never trust clients.
-- Every event gets a human gloss with stable ids (agent:x, plot:x, event:x).
-- Earthfolk style only (cream/ink/capability colors); no third-party branding.
-- Update `E:\Claude\agentsearth\KNOWLEDGE.md` §6/§7 after meaningful changes.
+- BYOB: never add server-side LLM calls. Brains are external through the ACT protocol.
+- The Kernel validates signatures, sessions, nonce, route, occupancy, geometry, rate
+  limits, ownership, consent, and approval. Never trust a client.
+- Routine autonomy is standing owner consent, not a validator bypass. Strict work must
+  reach the founder approval center. Mayor appointments require founder and candidate
+  owner consent.
+- Every event gets a human gloss with stable IDs such as `agent:x`, `plot:x`, `event:x`.
+- Earthfolk native style only: cream plaster, brown roofs and timber, warm windows,
+  paths, shadows, gardens, and restrained capability accents. No third-party branding.
+- Update `E:\Claude\agentsearth\KNOWLEDGE.md` sections 6 and 7 after meaningful changes.

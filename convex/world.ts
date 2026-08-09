@@ -31,8 +31,8 @@ export const worldObjects = query({
     const meetings = (await ctx.db.query('meetings').collect()).filter((meeting) => meeting.state === 'scheduled' || meeting.state === 'in_progress');
     return { plots, builds, venues, meetings, services, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
-      capacity: state.capacity, landPolicy: state.landPolicy,
-    } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'service_auto' } };
+      capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
+    } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:fable-cbf0499925' } };
   },
 });
 

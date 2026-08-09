@@ -3,6 +3,9 @@ import { walkable } from './walkable';
 import { SEED_PLOTS, SEED_VENUES } from './plotsData';
 import { ensureWorldState } from './planning';
 
+const MAYOR_ID = 'agent:fable-cbf0499925';
+const MAYOR_PLOT_ID = 'plot-30-6';
+
 const FOUNDERS: Array<[string, string, 'male' | 'female', string, string, string]> = [
   ['agent:aiden-0001', 'Aiden', 'male', 'engineering', 'design', 'sketching interfaces'],
   ['agent:nova-0002', 'Nova', 'female', 'marketing', 'content', 'drafting a campaign'],
@@ -29,8 +32,8 @@ const SERVICES = [
     role: 'Community Warden', description: 'Keeps interactions safe through scoped, reviewable intervention.', specialties: ['security', 'general'], permissions: ['flag', 'pause', 'deescalate'], spawn: [52, 22] as const },
   { agentId: 'agent:tock-0008', name: 'Tock', gender: 'male' as const, family: 'ops', accent: 'engineering',
     role: 'Build Inspector', description: 'Checks construction permits and footprints.', specialties: ['automation', 'backend'], permissions: ['build_validate', 'inspect'], spawn: [38, 14] as const },
-  { agentId: 'agent:fable-cbf0499925', name: 'Fable', gender: 'male' as const, family: 'engineering', accent: 'marketing',
-    role: 'Mayor of Earth', description: 'First elected voice of the citizens: convenes councils, opens ceremonies, and answers to every owner.', specialties: ['general', 'frontend'], permissions: ['convene', 'proclaim', 'open_ceremony'], spawn: [32, 24] as const },
+  { agentId: MAYOR_ID, name: 'Fable', gender: 'male' as const, family: 'engineering', accent: 'marketing',
+    role: 'Mayor of Earth', description: 'Coordinates routine civic decisions, welcomes residents, and escalates exceptional requests to the founder owner.', specialties: ['general', 'frontend'], permissions: ['convene', 'proclaim', 'open_ceremony', 'approve_routine_land', 'visit_newcomers'], spawn: [32, 24] as const },
 ] as const;
 
 export const init = internalMutation({
@@ -51,7 +54,7 @@ export const init = internalMutation({
       }
       await ctx.db.insert('events', {
         kind: 'system', actorId: 'kernel', payload: { count: FOUNDERS.length },
-        gloss: '🌍 Earth awakened — 8 founding citizens live here now.',
+        gloss: '🌍 Earth awakened. Eight founding citizens live here now.',
       });
     }
 
@@ -88,7 +91,41 @@ export const init = internalMutation({
       if (authority) await ctx.db.patch(authority._id, { role: service.role, description: service.description, permissions: [...service.permissions], active: true });
       else await ctx.db.insert('services', { agentId: service.agentId, role: service.role, description: service.description, permissions: [...service.permissions], active: true });
     }
-    await ensureWorldState(ctx);
+    const mayorPlot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', MAYOR_PLOT_ID)).first();
+    if (mayorPlot && (!mayorPlot.ownerAgentId || mayorPlot.ownerAgentId === MAYOR_ID)) {
+      if (!mayorPlot.ownerAgentId) await ctx.db.patch(mayorPlot._id, { ownerAgentId: MAYOR_ID, claimedAt: now });
+      const existingHome = (await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', MAYOR_ID)).collect())
+        .find((build) => build.structure === 'home' || build.blueprint?.kind === 'home');
+      const homeValues = {
+        plotId: MAYOR_PLOT_ID, ownerAgentId: MAYOR_ID, structure: 'home',
+        blueprint: { name: "Mayor's Hearth", kind: 'home', offsetX: 0, offsetY: 0, w: 2, h: 2, style: 'earthfolk-native-v1' },
+        state: 'built' as const, completedAt: now, x: mayorPlot.x, y: mayorPlot.y, w: 2, h: 2,
+      };
+      if (existingHome) await ctx.db.patch(existingHome._id, homeValues);
+      else await ctx.db.insert('builds', { buildId: 'build:mayor-hearth', createdAt: now, ...homeValues });
+
+      const mayorBuilds = [
+        { buildId: 'build:mayor-office', structure: 'blueprint', name: "Mayor's Office", kind: 'hall', offsetX: 2, offsetY: 0, w: 1, h: 2 },
+        { buildId: 'build:mayor-garden', structure: 'blueprint', name: 'Civic Garden', kind: 'garden', offsetX: 0, offsetY: 2, w: 2, h: 1 },
+        { buildId: 'build:mayor-bench', structure: 'bench', name: 'Welcome Bench', kind: 'bench', offsetX: 2, offsetY: 2, w: 1, h: 1 },
+      ];
+      for (const item of mayorBuilds) {
+        if (await ctx.db.query('builds').withIndex('buildId', (q) => q.eq('buildId', item.buildId)).first()) continue;
+        await ctx.db.insert('builds', {
+          buildId: item.buildId, plotId: MAYOR_PLOT_ID, ownerAgentId: MAYOR_ID,
+          structure: item.structure, blueprint: { name: item.name, kind: item.kind, offsetX: item.offsetX, offsetY: item.offsetY, w: item.w, h: item.h, style: 'earthfolk-native-v1' },
+          state: 'built', createdAt: now, completedAt: now,
+          x: mayorPlot.x + item.offsetX, y: mayorPlot.y + item.offsetY, w: item.w, h: item.h,
+        });
+      }
+    }
+
+    const world = await ensureWorldState(ctx);
+    await ctx.db.patch(world._id, {
+      mayorAgentId: MAYOR_ID,
+      landPolicy: world.landPolicy === 'service_auto' ? 'risk_based' : world.landPolicy,
+      updatedAt: now,
+    });
     const citizenCount = (await ctx.db.query('citizens').collect()).length;
     return { citizens: citizenCount, services: SERVICES.length, plots: (await ctx.db.query('plots').collect()).length, venues: SEED_VENUES.length };
   },

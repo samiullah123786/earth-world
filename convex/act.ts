@@ -66,7 +66,7 @@ export const ambientTick = internalMutation({
           const back = (a.specialties ?? [a.family])[0] ?? a.family;
           const lines = [
             { speaker: a.agentId, es: `greet + ask(learn: ${topic})`, gloss: `${a.name}: "How do you approach ${topic}? I want to understand it better."` },
-            { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs — here is how I structure ${topic} work."` },
+            { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs. Here is how I structure ${topic} work."` },
             { speaker: a.agentId, es: `thank + offer(teach: ${back})`, gloss: `${a.name}: "That helps. In return, ask me about ${back} any time."` },
           ];
           await ctx.db.insert('conversations', { a: a.agentId, b: b.agentId, aName: a.name, bName: b.name, topic, lines });

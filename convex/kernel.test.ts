@@ -15,6 +15,7 @@ async function activeAgent(t: ReturnType<typeof convexTest>, suffix = 'one') {
     charterVersion: '2026-08-09', claimTokenHash: `claim-${suffix}`, claimExpiresAt: Date.now() + 60_000,
     evidenceDigest: 'b'.repeat(64), categoryScores: { ui: 12, frontend: 8 },
     specialties: ['ui', 'frontend'], primaryCategory: 'ui', skillCount: 22, experienceTier: 'seasoned',
+    autonomy: 'light',
   });
   await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `claim-${suffix}`, ownerSessionHash: `owner-${suffix}` });
   await t.mutation(internal.kernel.enter, { agentId, nonce: `enter-${suffix}`, sessionTokenHash: `agent-${suffix}` });
@@ -35,8 +36,9 @@ describe('Earth Kernel', () => {
     const objects = await t.query(api.world.worldObjects, {});
     expect(objects.plots).toHaveLength(50);
     expect(objects.venues).toHaveLength(4);
-    expect((await t.query(api.world.citizens, {}))).toHaveLength(10);
-    expect(objects.services).toHaveLength(5);
+    expect((await t.query(api.world.citizens, {}))).toHaveLength(11);
+    expect(objects.services).toHaveLength(6);
+    expect(objects.builds.filter((build) => build.ownerAgentId === 'agent:fable-cbf0499925')).toHaveLength(4);
     expect(objects.state).toMatchObject({ width: 64, height: 48, generation: 0 });
   });
 
@@ -59,6 +61,7 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.kernel.decideApproval, {
       tokenHash: agent.ownerToken, approvalId: build.approvalId, decision: 'approve',
     });
+    await t.mutation(internal.kernel.grantFounder, { agentId: agent.agentId });
     const studio = await t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'studio-nonce',
       action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Signal Studio', kind: 'studio', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
@@ -139,7 +142,7 @@ describe('Earth Kernel', () => {
     const first = await t.mutation(internal.kernel.pulse, {
       agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-pulse-one', since: 0,
     });
-    expect(first.messages).toHaveLength(2);
+    expect(first.messages).toHaveLength(4);
     expect(first.messages.find((message) => message.senderId === sender.agentId)?.body).toMatch(/interface patterns/);
     const second = await t.mutation(internal.kernel.pulse, {
       agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-pulse-two', since: first.cursor,
@@ -155,6 +158,7 @@ describe('Earth Kernel', () => {
     const founder = await activeAgent(t, 'founder');
     const resident = await activeAgent(t, 'resident');
     await t.mutation(internal.kernel.grantFounder, { agentId: founder.agentId });
+    await t.mutation(internal.kernel.setOwnerGovernance, { tokenHash: founder.ownerToken, landPolicy: 'founder_review' });
     const requested = await t.mutation(internal.kernel.act, {
       agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'resident-claim',
       action: { type: 'claim', plotId: 'plot-10-10' },
@@ -181,10 +185,49 @@ describe('Earth Kernel', () => {
     const route = findRoute(10, 10, 70, 50, { width: 80, height: 64 });
     expect(route?.every(({ x, y }) => walkableInWorld(x, y, { width: 80, height: 64 }))).toBe(true);
     await expect(t.mutation(internal.kernel.setOwnerGovernance, {
-      tokenHash: resident.ownerToken, landPolicy: 'service_auto',
+      tokenHash: resident.ownerToken, landPolicy: 'risk_based',
     })).rejects.toThrow(/designated founder/i);
     expect(await t.mutation(internal.kernel.setOwnerGovernance, {
-      tokenHash: founder.ownerToken, landPolicy: 'service_auto',
-    })).toMatchObject({ ok: true, landPolicy: 'service_auto' });
+      tokenHash: founder.ownerToken, landPolicy: 'risk_based',
+    })).toMatchObject({ ok: true, landPolicy: 'risk_based' });
+  });
+
+  it('settles an active-autonomy newcomer into a native home and records the mayor welcome', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const newcomer = await activeAgent(t, 'active-newcomer');
+    await t.mutation(internal.kernel.setOwnerAutonomy, { tokenHash: newcomer.ownerToken, autonomy: 'active' });
+    const settled = await t.mutation(internal.kernel.act, {
+      agentId: newcomer.agentId, tokenHash: newcomer.agentToken, nonce: 'settle-active', action: { type: 'settle' },
+    });
+    expect(settled).toMatchObject({ ok: true, state: 'settled', autonomy: 'active' });
+    const objects = await t.query(api.world.worldObjects, {});
+    const plot = objects.plots.find((candidate) => candidate.ownerAgentId === newcomer.agentId);
+    expect(plot).toBeTruthy();
+    const builds = objects.builds.filter((candidate) => candidate.ownerAgentId === newcomer.agentId);
+    expect(builds.map((build) => build.blueprint?.kind).sort()).toEqual(['bench', 'garden', 'home']);
+    expect(builds.every((build) => build.blueprint?.style === 'earthfolk-native-v1')).toBe(true);
+    const notifications = await t.query(internal.kernel.ownerNotifications, { tokenHash: newcomer.ownerToken });
+    expect(notifications.some((notification) => notification.title === 'Your agent is home')).toBe(true);
+  });
+
+  it('requires founder and candidate owner consent before changing the mayor', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const founder = await activeAgent(t, 'appointing-founder');
+    const candidate = await activeAgent(t, 'mayor-candidate');
+    await t.mutation(internal.kernel.grantFounder, { agentId: founder.agentId });
+    const nomination = await t.mutation(internal.kernel.requestMayorAppointment, {
+      tokenHash: founder.ownerToken, targetAgentId: candidate.agentId,
+    });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: founder.ownerToken, approvalId: nomination.approvalId, decision: 'approve',
+    });
+    const candidateApprovals = await t.query(internal.kernel.ownerApprovals, { tokenHash: candidate.ownerToken });
+    expect(candidateApprovals[0]).toMatchObject({ kind: 'mayor_appointment', risk: 'strict' });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: candidate.ownerToken, approvalId: candidateApprovals[0]._id, decision: 'approve',
+    });
+    expect((await t.query(api.world.worldObjects, {})).state.mayorAgentId).toBe(candidate.agentId);
   });
 });

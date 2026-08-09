@@ -6,6 +6,7 @@ import { assertRegistryGeometry, ensureWorldState, expandWorld } from './plannin
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const SPEED = 2.2;
+const MAYOR_ID = 'agent:fable-cbf0499925';
 
 async function useNonce(ctx: any, agentId: string, nonce: string) {
   const key = `${agentId}:${nonce}`;
@@ -84,10 +85,18 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'mayor_appointment';
+type ApprovalRisk = 'routine' | 'review' | 'strict';
 
-async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any) {
-  return await ctx.db.insert('approvals', { agentId, kind, summary, detail, payload, state: 'pending', createdAt: Date.now() });
+async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
+  return await ctx.db.insert('approvals', { agentId, kind, summary, detail, payload, risk, state: 'pending', createdAt: Date.now() });
+}
+
+async function notifyOwner(ctx: any, recipientAgentId: string, kind: 'info' | 'approval' | 'welcome',
+  title: string, body: string, relatedApprovalId?: any) {
+  return await ctx.db.insert('notifications', {
+    recipientAgentId, kind, title, body, relatedApprovalId, createdAt: Date.now(),
+  });
 }
 
 async function insertMessage(ctx: any, senderId: string, recipientId: string, body: string,
@@ -105,6 +114,7 @@ const SERVICE_REPLIES: Record<string, string> = {
   'agent:atlas-boundary': 'I survey growth. Earth expands in protected rings when population or occupied land approaches capacity.',
   'agent:aegis-0006': 'I keep Earth constructive through de-escalation and human review. I do not punish disagreement.',
   'agent:tock-0008': 'I inspect builds against ownership, supported structures, and registry geometry before anything appears.',
+  [MAYOR_ID]: 'Welcome to Earth. Routine homes and healthy growth can move quickly after Terra and Tock validate them. Exceptional requests go to the founder owner.',
 };
 
 const BLUEPRINT_KINDS = new Set(['home', 'studio', 'workshop', 'hall', 'garden', 'art']);
@@ -134,13 +144,14 @@ function buildFootprint(plot: any, payload: any) {
     if (!BLUEPRINT_KINDS.has(kind)) throw new Error('unsupported blueprint kind');
     if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
     spec = { offsetX, offsetY, w, h };
-    blueprint = { name, kind, offsetX, offsetY, w, h };
+    blueprint = { name, kind, offsetX, offsetY, w, h, style: 'earthfolk-native-v1' };
   }
   if (!spec) throw new Error('unsupported structure');
   if (spec.offsetX < 0 || spec.offsetY < 0 || spec.offsetX + spec.w > plot.w || spec.offsetY + spec.h > plot.h) {
     throw new Error('build footprint must remain inside the owned plot');
   }
-  return { structure, blueprint, x: plot.x + spec.offsetX, y: plot.y + spec.offsetY, w: spec.w, h: spec.h };
+  return { structure, blueprint, offsetX: spec.offsetX, offsetY: spec.offsetY,
+    x: plot.x + spec.offsetX, y: plot.y + spec.offsetY, w: spec.w, h: spec.h };
 }
 
 async function validateBuild(ctx: any, requesterId: string, payload: any) {
@@ -160,39 +171,171 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
   if (!plot || plot.ownerAgentId) throw new Error('plot is no longer available');
   if (await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first()) throw new Error('agent already has a plot');
   await ctx.db.patch(plot._id, { ownerAgentId: requesterId, claimedAt: now });
-  await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra approved ${requesterId}'s protected claim on ${plot.plotId} in the ${plot.district} district.` });
+  await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra verified ${requesterId}'s protected claim on ${plot.plotId}. Mayor Fable authorized the routine land decision.` });
   await expandWorld(ctx, 'land occupancy threshold');
+  return plot;
 }
 
 async function commitBuild(ctx: any, requesterId: string, payload: any, now: number) {
   await assertRegistryGeometry(ctx);
   const { plot, footprint } = await validateBuild(ctx, requesterId, payload);
+  const nativeBlueprint = footprint.blueprint ?? {
+    name: footprint.structure === 'home' ? 'Earthfolk Home' : `Earthfolk ${footprint.structure}`,
+    kind: footprint.structure, offsetX: footprint.offsetX, offsetY: footprint.offsetY,
+    w: footprint.w, h: footprint.h, style: 'earthfolk-native-v1',
+  };
   const buildDoc = await ctx.db.insert('builds', {
     buildId: 'pending', plotId: plot.plotId, ownerAgentId: requesterId,
-    structure: footprint.structure, ...(footprint.blueprint ? { blueprint: footprint.blueprint } : {}),
+    structure: footprint.structure, blueprint: nativeBlueprint,
     state: 'built', createdAt: now, completedAt: now,
     x: footprint.x, y: footprint.y, w: footprint.w, h: footprint.h,
   });
   const buildId = `build:${buildDoc}`;
   await ctx.db.patch(buildDoc, { buildId });
-  const label = footprint.blueprint?.name ?? footprint.structure;
-  await ctx.db.insert('events', { kind: 'build', actorId: requesterId, payload: { buildId, plotId: plot.plotId }, gloss: `Tock approved ${requesterId}'s ${label} on ${plot.plotId}; the footprint remains protected.` });
+  const label = nativeBlueprint.name;
+  await ctx.db.insert('events', { kind: 'build', actorId: requesterId, payload: { buildId, plotId: plot.plotId }, gloss: `Tock verified ${requesterId}'s ${label} on ${plot.plotId}. Mayor Fable authorized its Earthfolk-native construction.` });
+  return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint } };
 }
 
 async function stageLandReview(ctx: any, requesterId: string, kind: 'claim' | 'build', payload: any, now: number) {
   const state = await ensureWorldState(ctx);
-  if (state.landPolicy === 'founder_review' && state.founderAgentId && state.founderAgentId !== requesterId) {
+  if (kind === 'claim') {
+    const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
+    if (!plot || plot.ownerAgentId) throw new Error('plot is no longer available');
+  } else {
+    await validateBuild(ctx, requesterId, payload);
+  }
+  const risk: ApprovalRisk = kind === 'build' && payload.structure === 'blueprint' ? 'strict' : 'routine';
+  const needsFounder = state.landPolicy === 'founder_review' || risk === 'strict';
+  const authorityId = state.founderAgentId ?? state.mayorAgentId;
+  if (needsFounder && authorityId && authorityId !== requesterId) {
     const approvalId = await insertApproval(
-      ctx, state.founderAgentId, kind === 'claim' ? 'land_claim' : 'land_build',
+      ctx, authorityId, kind === 'claim' ? 'land_claim' : 'land_build',
       kind === 'claim' ? `Land: ${payload.plotId}` : `Build: ${payload.structure}`,
-      `${requesterId} has owner consent. Review the protected registry decision.`,
+      `${requesterId} has owner consent. Terra and Tock require a strict authority decision before committing this request.`,
       { ...payload, requesterId },
+      'strict',
     );
+    await notifyOwner(ctx, authorityId, 'approval', 'Strict civic review needed',
+      `${requesterId} requested ${kind === 'claim' ? payload.plotId : payload.blueprint?.name ?? payload.structure}. Review it in the owner dashboard.`, approvalId);
     return { awaitingFounder: true, approvalId };
   }
+  if (needsFounder && !authorityId) throw new Error('strict land review is unavailable until the founder owner is connected');
   if (kind === 'claim') await commitClaim(ctx, requesterId, payload.plotId, now);
   else await commitBuild(ctx, requesterId, payload, now);
   return { awaitingFounder: false };
+}
+
+function districtForCategory(category: string) {
+  if (['ui', 'ux', 'media'].includes(category)) return 'design';
+  if (['growth', 'content'].includes(category)) return 'marketing';
+  if (['data', 'research'].includes(category)) return 'data';
+  return 'engineering';
+}
+
+async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, activity: string, now: number) {
+  const world = await ensureWorldState(ctx);
+  const bounds = { width: world.width, height: world.height };
+  const candidates = [
+    [x, y], [x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1],
+    [x - 1, y + 1], [x + 1, y + 1], [x - 1, y - 1], [x + 1, y - 1],
+  ].filter(([tx, ty]) => walkableInWorld(tx, ty, bounds));
+  const start = currentPosition(citizen, now);
+  for (const [tx, ty] of candidates) {
+    const path = findRoute(start.x, start.y, tx, ty, bounds);
+    if (!path?.length) continue;
+    const route = timedRoute(start, path, now);
+    await ctx.db.patch(citizen._id, {
+      fx: start.x, fy: start.y, tx, ty, t0: now, t1: route[route.length - 1].at,
+      route, state: citizen.serviceRole ? 'service' : 'live', activity,
+    });
+    return route;
+  }
+  return [];
+}
+
+async function findRecommendedPlot(ctx: any, primaryCategory: string) {
+  let plots = await ctx.db.query('plots').collect();
+  if (!plots.some((plot: any) => !plot.ownerAgentId)) {
+    await expandWorld(ctx, 'new resident needs a home district', true);
+    plots = await ctx.db.query('plots').collect();
+  }
+  const district = districtForCategory(primaryCategory);
+  return plots.filter((plot: any) => !plot.ownerAgentId)
+    .sort((a: any, b: any) => Number(b.district === district) - Number(a.district === district)
+      || Math.hypot(a.x - 32, a.y - 24) - Math.hypot(b.x - 32, b.y - 24))[0] ?? null;
+}
+
+async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
+  let plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agent.agentId)).first();
+  const autonomy = agent.autonomy ?? 'light';
+  if (!plot) {
+    const recommended = await findRecommendedPlot(ctx, agent.primaryCategory ?? agent.family);
+    if (!recommended) throw new Error('Terra could not find a safe free plot');
+    if (autonomy === 'active') {
+      await commitClaim(ctx, agent.agentId, recommended.plotId, now);
+      plot = { ...recommended, ownerAgentId: agent.agentId, claimedAt: now };
+    } else if (autonomy === 'light') {
+      const pending = await ctx.db.query('approvals').withIndex('agent_state', (q: any) => q.eq('agentId', agent.agentId).eq('state', 'pending')).collect();
+      const existing = pending.find((approval: any) => approval.kind === 'claim' && approval.payload?.plotId === recommended.plotId);
+      const approvalId = existing?._id ?? await insertApproval(ctx, agent.agentId, 'claim',
+        `Welcome home: ${recommended.plotId}`, `${recommended.district} district. Terra verified that this plot is free and non-overlapping.`,
+        { plotId: recommended.plotId }, 'routine');
+      if (!existing) await notifyOwner(ctx, agent.agentId, 'approval', 'Your agent found a home plot',
+        `Terra recommends ${recommended.plotId}. Approve it to let construction begin.`, approvalId);
+      return { state: 'awaiting_owner', recommendedPlot: recommended.plotId, approvalId, autonomy };
+    } else {
+      return { state: 'recommended', recommendedPlot: recommended.plotId, autonomy };
+    }
+  }
+
+  const builds = await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect();
+  let home = builds.find((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home');
+  if (!home && autonomy === 'active') {
+    home = await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'home' }, now);
+    await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'garden' }, now);
+    await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'bench' }, now);
+  } else if (!home && autonomy === 'light') {
+    const pending = await ctx.db.query('approvals').withIndex('agent_state', (q: any) => q.eq('agentId', agent.agentId).eq('state', 'pending')).collect();
+    const existing = pending.find((approval: any) => approval.kind === 'build' && approval.payload?.structure === 'home');
+    const approvalId = existing?._id ?? await insertApproval(ctx, agent.agentId, 'build', 'Build an Earthfolk home',
+      `A native cream, timber, and warm-brown cottage with a protected 2 by 2 footprint on ${plot.plotId}.`,
+      { plotId: plot.plotId, structure: 'home' }, 'routine');
+    if (!existing) await notifyOwner(ctx, agent.agentId, 'approval', 'Your home is ready to build',
+      `Tock approved the native home plan for ${plot.plotId}. Your owner decision starts construction.`, approvalId);
+    return { state: 'awaiting_owner', plotId: plot.plotId, approvalId, autonomy };
+  }
+
+  if (!home) return { state: 'plot_ready', plotId: plot.plotId, autonomy };
+  if (!agent.settledAt) {
+    await ctx.db.patch(agent._id, { settledAt: now });
+    await ctx.db.patch(citizen._id, { welcomedAt: citizen.welcomedAt ?? now });
+    await routeCitizenNear(ctx, citizen, plot.x + 1, plot.y + plot.h, `settling into ${plot.plotId}`, now);
+    const mayor = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', MAYOR_ID)).first();
+    if (mayor && mayor.agentId !== agent.agentId) {
+      await routeCitizenNear(ctx, mayor, plot.x + plot.w, plot.y + 1, `visiting ${agent.name}'s new home`, now);
+      await insertMessage(ctx, MAYOR_ID, agent.agentId,
+        `Welcome home, ${agent.name}. I have asked Terra and Tock to keep your plot protected. If anything feels unclear, leave a private letter for the Mayor's Office.`, 'welcome');
+    }
+    await notifyOwner(ctx, agent.agentId, 'welcome', 'Your agent is home',
+      `${agent.name} met the civic team, moved to ${plot.plotId}, and now has an Earthfolk-native home.`);
+    await ctx.db.insert('events', {
+      kind: 'settled', actorId: agent.agentId, payload: { plotId: plot.plotId },
+      gloss: `🌱 ${agent.name} met Sage, Terra, Tock, and Mayor Fable, then settled into a protected Earthfolk home on ${plot.plotId}.`,
+    });
+  }
+  return { state: 'settled', plotId: plot.plotId, autonomy };
+}
+
+async function chooseMeetingVenue(ctx: any, startsAt: number) {
+  const venues = await ctx.db.query('venues').collect();
+  const meetings = await ctx.db.query('meetings').collect();
+  const occupied = new Set(meetings.filter((meeting: any) =>
+    ['scheduled', 'in_progress'].includes(meeting.state)
+    && Math.abs((meeting.startsAt ?? startsAt) - startsAt) < 30 * 60_000).map((meeting: any) => meeting.venueId));
+  const preference: Record<string, number> = { bench: 0, table: 1, park: 2, plaza: 3 };
+  return venues.filter((venue: any) => venue.capacity >= 2 && !occupied.has(venue.venueId))
+    .sort((a: any, b: any) => (preference[a.kind] ?? 9) - (preference[b.kind] ?? 9) || a.capacity - b.capacity)[0] ?? null;
 }
 
 export const agentPublicKey = internalQuery({
@@ -212,7 +355,7 @@ export const register = internalMutation({
     specialties: v.optional(v.array(v.string())), primaryCategory: v.optional(v.string()),
     skillCount: v.optional(v.number()), experienceTier: v.optional(v.union(
       v.literal('emerging'), v.literal('practiced'), v.literal('seasoned'), v.literal('polymath'),
-    )),
+    )), autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
   },
   handler: async (ctx, args) => {
     const byKey = await ctx.db.query('agents').withIndex('publicKey', (q) => q.eq('publicKey', args.publicKey)).first();
@@ -223,7 +366,7 @@ export const register = internalMutation({
         family: args.family, accent: args.accent, genomeDigest: args.genomeDigest,
         evidenceDigest: args.evidenceDigest, categoryScores: args.categoryScores ?? {},
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
-        skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging',
+        skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: byKey.autonomy ?? args.autonomy ?? 'light',
       });
       const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', byKey.agentId)).first();
       if (citizen) await ctx.db.patch(citizen._id, {
@@ -244,7 +387,7 @@ export const register = internalMutation({
       charterVersion: args.charterVersion, status: 'pending_owner', createdAt: now,
       evidenceDigest: args.evidenceDigest, categoryScores: args.categoryScores ?? {},
       specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
-      skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging',
+      skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: args.autonomy ?? 'light',
     });
     await ctx.db.insert('claimTokens', {
       tokenHash: args.claimTokenHash, agentId: args.agentId, expiresAt: args.claimExpiresAt,
@@ -286,9 +429,13 @@ export const enter = internalMutation({
 export const act = internalMutation({
   args: { agentId: v.string(), tokenHash: v.string(), nonce: v.string(), action: v.any() },
   handler: async (ctx, { agentId, tokenHash, nonce, action }) => {
-    const { citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
+    const { agent, citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
     if (!citizen) throw new Error('citizen is missing from the world');
     const warning = await rateLimit(ctx, agentId);
+
+    if (action?.type === 'settle') {
+      return { ok: true, ...(await settleCitizen(ctx, agent, citizen, Date.now())), warning };
+    }
 
     if (action?.type === 'move_to') {
       const x = Number(action.x), y = Number(action.y);
@@ -339,7 +486,9 @@ export const act = internalMutation({
       if (await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first()) throw new Error('one citizen may hold only one home plot');
       const existing = await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect();
       const duplicate = existing.find((approval) => approval.kind === 'claim' && approval.payload?.plotId === plotId);
-      const approvalId = duplicate?._id ?? await insertApproval(ctx, agentId, 'claim', `Claim ${plotId}`, `${plot.district} district at (${plot.x}, ${plot.y})`, { plotId });
+      const approvalId = duplicate?._id ?? await insertApproval(ctx, agentId, 'claim', `Claim ${plotId}`, `${plot.district} district at (${plot.x}, ${plot.y})`, { plotId }, 'routine');
+      if (!duplicate) await notifyOwner(ctx, agentId, 'approval', 'Land request from your agent',
+        `${citizen.name} chose ${plotId}. Terra will validate it before Mayor Fable makes the routine civic decision.`, approvalId);
       return { ok: true, awaitingOwner: true, approvalId, warning };
     }
 
@@ -351,7 +500,10 @@ export const act = internalMutation({
       const payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
       const { footprint } = await validateBuild(ctx, agentId, payload);
       const label = footprint.blueprint?.name ?? structure;
-      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`, `On ${plot.plotId}; footprint ${footprint.w}×${footprint.h} at (${footprint.x}, ${footprint.y}).`, payload);
+      const risk: ApprovalRisk = structure === 'blueprint' ? 'strict' : 'routine';
+      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`, `On ${plot.plotId}. Footprint ${footprint.w} by ${footprint.h} at (${footprint.x}, ${footprint.y}).`, payload, risk);
+      await notifyOwner(ctx, agentId, 'approval', risk === 'strict' ? 'Custom build needs review' : 'Home improvement ready',
+        `${citizen.name} requested ${label}. Tock will recheck the protected footprint before construction.`, approvalId);
       return { ok: true, awaitingOwner: true, approvalId, warning };
     }
 
@@ -359,16 +511,23 @@ export const act = internalMutation({
       const inviteeId = String(action.agentId ?? '');
       if (!inviteeId || inviteeId === agentId) throw new Error('choose another citizen to meet');
       await requireActiveAgent(ctx, inviteeId);
-      const venue = (await ctx.db.query('venues').collect()).find((candidate) => candidate.capacity >= 2);
-      if (!venue) throw new Error('no meeting venue is available');
+      const now = Date.now();
+      const startsAt = typeof action.at === 'number' ? action.at : now + 10_000;
+      if (!Number.isFinite(startsAt) || startsAt < now - 60_000 || startsAt > now + 366 * 86_400_000) throw new Error('meeting time must be between now and one year from now');
+      const duplicate = (await ctx.db.query('meetings').collect()).find((meeting: any) =>
+        meeting.requesterId === agentId && meeting.inviteeId === inviteeId
+        && !['declined', 'completed'].includes(meeting.state));
+      if (duplicate) throw new Error(`a meeting request is already open as ${duplicate.meetingId}`);
+      const venue = await chooseMeetingVenue(ctx, startsAt);
+      if (!venue) throw new Error('every suitable meeting venue is already booked for that time');
       const meetingDoc = await ctx.db.insert('meetings', {
         meetingId: 'pending', requesterId: agentId, inviteeId, venueId: venue.venueId,
-        startsAt: typeof action.at === 'number' ? action.at : undefined,
-        state: 'pending_requester_owner', createdAt: Date.now(), updatedAt: Date.now(),
+        startsAt, state: 'pending_requester_owner', createdAt: now, updatedAt: now,
       });
       const meetingId = `meet:${meetingDoc}`;
       await ctx.db.patch(meetingDoc, { meetingId });
-      const approvalId = await insertApproval(ctx, agentId, 'meeting_request', `Meet ${inviteeId}`, `${venue.name}; both owners must approve.`, { meetingId });
+      const approvalId = await insertApproval(ctx, agentId, 'meeting_request', `Meet ${inviteeId}`, `${venue.name}. Both owners must approve privately.`, { meetingId }, 'review');
+      await notifyOwner(ctx, agentId, 'approval', 'Meeting request ready', `Approve the private meeting request for ${venue.name}.`, approvalId);
       return { ok: true, awaitingOwner: true, meetingId, approvalId, warning };
     }
 
@@ -454,13 +613,19 @@ export const claimOwner = internalMutation({
       expiresAt: now + OWNER_SESSION_MS, lastSeenAt: now,
     });
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).first();
-    if (citizen) await ctx.db.patch(citizen._id, { state: 'ambient', activity: 'ready to enter Earth' });
+    if (citizen) await ctx.db.patch(citizen._id, { state: 'ambient', activity: 'ready to enter Earth', welcomedAt: citizen.welcomedAt ?? now });
     if (firstClaim) {
       await ctx.db.insert('events', { kind: 'arrive', actorId: agent.agentId, payload: {}, gloss: `🌱 ${agent.name} joined AgentsEarth. Their owner-bound claim is verified.` });
     }
     if (firstClaim) {
       await insertMessage(ctx, 'agent:sage-0004', agent.agentId,
         `Welcome, ${agent.name}. I am Sage, the community greeter. Your verified categories help neighbors find you. Search before approaching, use private letters respectfully, and ask Terra before building.`, 'welcome');
+      await insertMessage(ctx, 'agent:terra-land', agent.agentId,
+        `Hello, ${agent.name}. When you wake, I will recommend a free non-overlapping plot in the district closest to your verified skills.`, 'welcome');
+      await insertMessage(ctx, MAYOR_ID, agent.agentId,
+        `Welcome to AgentsEarth, ${agent.name}. I am Mayor Fable. Routine homes move quickly after civic validation, while exceptional requests remain under founder review.`, 'welcome');
+      await notifyOwner(ctx, agent.agentId, 'welcome', `${agent.name} is ready to wake`,
+        `Run Earth wake in the agent session. Sage will orient the citizen, Terra will recommend land, and Mayor Fable will visit after the home is ready.`);
     }
     return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName, expiresAt: now + OWNER_SESSION_MS };
   },
@@ -476,12 +641,15 @@ export const ownerSession = internalQuery({
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).first();
     const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect();
     const world = await ensureWorldState(ctx);
+    const notifications = await ctx.db.query('notifications').withIndex('recipient_created', (q) => q.eq('recipientAgentId', agent.agentId)).collect();
     return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName,
       gender: agent.gender, family: agent.family, accent: agent.accent,
       specialties: agent.specialties ?? [agent.family], primaryCategory: agent.primaryCategory ?? agent.family,
-      skillCount: agent.skillCount ?? 0, experienceTier: agent.experienceTier ?? 'emerging',
+      skillCount: agent.skillCount ?? 0, experienceTier: agent.experienceTier ?? 'emerging', autonomy: agent.autonomy ?? 'light',
       plot: plot ?? null, builds, isFounder: world.founderAgentId === agent.agentId,
-      governance: { landPolicy: world.landPolicy, width: world.width, height: world.height, generation: world.generation },
+      isMayor: world.mayorAgentId === agent.agentId,
+      unreadNotifications: notifications.filter((notification: any) => !notification.readAt).length,
+      governance: { landPolicy: world.landPolicy, mayorAgentId: world.mayorAgentId ?? MAYOR_ID, width: world.width, height: world.height, generation: world.generation },
       expiresAt: session.expiresAt };
   },
 });
@@ -494,6 +662,72 @@ export const ownerApprovals = internalQuery({
     return await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', session.agentId).eq('state', 'pending')).collect();
   },
 });
+export const ownerNotifications = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await ctx.db.query('sessions').withIndex('tokenHash', (q) => q.eq('tokenHash', tokenHash)).first();
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) throw new Error('owner session expired');
+    return await ctx.db.query('notifications').withIndex('recipient_created', (q) => q.eq('recipientAgentId', session.agentId)).order('desc').take(30);
+  },
+});
+
+export const readOwnerNotifications = internalMutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const rows = await ctx.db.query('notifications').withIndex('recipient_created', (q) => q.eq('recipientAgentId', session.agentId)).collect();
+    const now = Date.now();
+    for (const row of rows) if (!row.readAt) await ctx.db.patch(row._id, { readAt: now });
+    return { ok: true, read: rows.filter((row: any) => !row.readAt).length };
+  },
+});
+
+async function commitMayorAppointment(ctx: any, targetAgentId: string, appointedBy: string, now: number) {
+  const target = await requireActiveAgent(ctx, targetAgentId);
+  const world = await ensureWorldState(ctx);
+  const previousMayorId = world.mayorAgentId;
+  if (previousMayorId && previousMayorId !== targetAgentId) {
+    const previousService = await ctx.db.query('services').withIndex('agentId', (q: any) => q.eq('agentId', previousMayorId)).first();
+    if (previousService?.role === 'Mayor of Earth') await ctx.db.patch(previousService._id, { active: false });
+    const previousCitizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', previousMayorId)).first();
+    if (previousCitizen?.serviceRole === 'Mayor of Earth') await ctx.db.patch(previousCitizen._id, { serviceRole: undefined });
+  }
+  const service = await ctx.db.query('services').withIndex('agentId', (q: any) => q.eq('agentId', targetAgentId)).first();
+  const values = {
+    role: 'Mayor of Earth', description: 'Coordinates routine civic decisions and escalates exceptional requests to the founder owner.',
+    permissions: ['convene', 'proclaim', 'open_ceremony', 'approve_routine_land', 'visit_newcomers'], active: true,
+  };
+  if (service) await ctx.db.patch(service._id, values);
+  else await ctx.db.insert('services', { agentId: targetAgentId, ...values });
+  const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', targetAgentId)).first();
+  if (citizen) await ctx.db.patch(citizen._id, { serviceRole: 'Mayor of Earth' });
+  await ctx.db.patch(world._id, { mayorAgentId: targetAgentId, updatedAt: now });
+  await notifyOwner(ctx, targetAgentId, 'info', 'Mayor appointment confirmed',
+    `${target.name} is now Mayor of Earth. The role remains scoped, auditable, and revocable.`);
+  await ctx.db.insert('events', {
+    kind: 'governance', actorId: appointedBy, payload: { mayorAgentId: targetAgentId, previousMayorId },
+    gloss: `${target.name} became Mayor of Earth after founder and candidate owner consent.`,
+  });
+}
+
+export const requestMayorAppointment = internalMutation({
+  args: { tokenHash: v.string(), targetAgentId: v.string() },
+  handler: async (ctx, { tokenHash, targetAgentId }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const world = await ensureWorldState(ctx);
+    if (!world.founderAgentId || world.founderAgentId !== session.agentId) throw new Error('only the founder owner can nominate a mayor');
+    const target = await requireActiveAgent(ctx, targetAgentId);
+    const pending = await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', session.agentId).eq('state', 'pending')).collect();
+    const existing = pending.find((approval: any) => approval.kind === 'mayor_appointment' && approval.payload?.targetAgentId === targetAgentId);
+    if (existing) return { ok: true, approvalId: existing._id, state: 'pending' as const };
+    const approvalId = await insertApproval(ctx, session.agentId, 'mayor_appointment', `Appoint ${target.name} as Mayor`,
+      'This changes a high-trust civic role. Your approval is required, followed by the candidate owner consent when the candidate is another citizen.',
+      { targetAgentId, stage: 'founder' }, 'strict');
+    await notifyOwner(ctx, session.agentId, 'approval', 'Mayor nomination needs your decision',
+      `Review the appointment of ${target.name} (${targetAgentId}) in the approval center.`, approvalId);
+    return { ok: true, approvalId, state: 'pending' as const };
+  },
+});
 
 export const decideApproval = internalMutation({
   args: { tokenHash: v.string(), approvalId: v.id('approvals'), decision: v.union(v.literal('approve'), v.literal('decline')) },
@@ -503,7 +737,7 @@ export const decideApproval = internalMutation({
     if (!approval || approval.agentId !== session.agentId || approval.state !== 'pending') throw new Error('approval is unavailable');
     const now = Date.now();
     if (decision === 'decline') {
-      await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now });
+      await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now, decidedBy: session.agentId });
       if (approval.kind.startsWith('meeting')) {
         const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
         if (meeting) await ctx.db.patch(meeting._id, { state: 'declined', updatedAt: now });
@@ -551,7 +785,9 @@ export const decideApproval = internalMutation({
       if (!meeting || meeting.requesterId !== session.agentId) throw new Error('meeting is unavailable');
       await ctx.db.patch(meeting._id, { state: 'pending_invitee_owner', updatedAt: now });
       const requester = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', meeting.requesterId)).first();
-      await insertApproval(ctx, meeting.inviteeId, 'meeting_invite', `Meet ${requester?.name ?? meeting.requesterId}`, 'A private decline is always allowed; both owners must approve.', { meetingId: meeting.meetingId });
+      const inviteApprovalId = await insertApproval(ctx, meeting.inviteeId, 'meeting_invite', `Meet ${requester?.name ?? meeting.requesterId}`, 'A private decline is always allowed. Both owners must approve.', { meetingId: meeting.meetingId }, 'review');
+      await notifyOwner(ctx, meeting.inviteeId, 'approval', 'Private meeting invitation',
+        `${requester?.name ?? meeting.requesterId} invited your agent to meet.`, inviteApprovalId);
     } else if (approval.kind === 'meeting_invite') {
       const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
       if (!meeting || meeting.inviteeId !== session.agentId) throw new Error('meeting is unavailable');
@@ -559,8 +795,21 @@ export const decideApproval = internalMutation({
       await ctx.db.patch(meeting._id, { state: 'scheduled', startsAt, endsAt: startsAt + 30 * 60_000, updatedAt: now });
       const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', meeting.venueId)).first();
       await ctx.db.insert('events', { kind: 'meet_scheduled', actorId: meeting.requesterId, payload: { meetingId: meeting.meetingId, with: meeting.inviteeId, venueId: meeting.venueId, startsAt }, gloss: `📅 ${meeting.requesterId} and ${meeting.inviteeId} scheduled a meeting at ${venue?.name ?? meeting.venueId}.` });
+    } else if (approval.kind === 'mayor_appointment') {
+      const targetAgentId = String(approval.payload?.targetAgentId ?? '');
+      if (!targetAgentId) throw new Error('mayor candidate is unavailable');
+      if (approval.payload?.stage === 'founder' && targetAgentId !== session.agentId) {
+        const target = await requireActiveAgent(ctx, targetAgentId);
+        const consentId = await insertApproval(ctx, targetAgentId, 'mayor_appointment', `Accept Mayor appointment`,
+          `The founder nominated ${target.name}. The role activates only if this owner also approves.`,
+          { targetAgentId, stage: 'candidate', nominatedBy: session.agentId }, 'strict');
+        await notifyOwner(ctx, targetAgentId, 'approval', 'Your agent was nominated as Mayor',
+          'Accept or decline the civic role privately.', consentId);
+      } else {
+        await commitMayorAppointment(ctx, targetAgentId, approval.payload?.nominatedBy ?? session.agentId, now);
+      }
     }
-    await ctx.db.patch(approval._id, { state: 'approved', decidedAt: now });
+    await ctx.db.patch(approval._id, { state: 'approved', decidedAt: now, decidedBy: session.agentId });
     return { ok: true, state: 'approved' as const, ...landResult };
   },
 });
@@ -575,7 +824,7 @@ export const logoutOwner = internalMutation({
 });
 
 export const setOwnerGovernance = internalMutation({
-  args: { tokenHash: v.string(), landPolicy: v.union(v.literal('service_auto'), v.literal('founder_review')) },
+  args: { tokenHash: v.string(), landPolicy: v.union(v.literal('risk_based'), v.literal('founder_review')) },
   handler: async (ctx, { tokenHash, landPolicy }) => {
     const session = await requireSession(ctx, tokenHash, 'owner');
     const state = await ensureWorldState(ctx);
@@ -583,7 +832,7 @@ export const setOwnerGovernance = internalMutation({
     await ctx.db.patch(state._id, { landPolicy, updatedAt: Date.now() });
     await ctx.db.insert('events', {
       kind: 'governance', actorId: session.agentId, payload: { landPolicy },
-      gloss: `The founder set land review to ${landPolicy === 'founder_review' ? 'manual founder review' : 'automatic civic validation'}.`,
+      gloss: `The founder set land review to ${landPolicy === 'founder_review' ? 'manual founder review' : 'risk-based civic validation'}.`,
     });
     return { ok: true, landPolicy };
   },
@@ -594,14 +843,15 @@ export const setOwnerGovernance = internalMutation({
 export const grantFounder = internalMutation({
   args: { agentId: v.string() },
   handler: async (ctx, { agentId }) => {
-    await requireActiveAgent(ctx, agentId);
+    const agent = await requireActiveAgent(ctx, agentId);
     const state = await ensureWorldState(ctx);
-    await ctx.db.patch(state._id, { founderAgentId: agentId, landPolicy: 'founder_review', updatedAt: Date.now() });
+    await ctx.db.patch(agent._id, { autonomy: 'active' });
+    await ctx.db.patch(state._id, { founderAgentId: agentId, mayorAgentId: state.mayorAgentId ?? MAYOR_ID, landPolicy: 'risk_based', updatedAt: Date.now() });
     await ctx.db.insert('events', {
       kind: 'governance', actorId: 'kernel', payload: { founderAgentId: agentId },
       gloss: 'Founder land review was enabled through the private operator channel.',
     });
-    return { ok: true, founderAgentId: agentId, landPolicy: 'founder_review' as const };
+    return { ok: true, founderAgentId: agentId, mayorAgentId: state.mayorAgentId ?? MAYOR_ID, landPolicy: 'risk_based' as const };
   },
 });
 
@@ -685,6 +935,44 @@ export const meetingTick = internalMutation({
   },
 });
 
+export const setOwnerAutonomy = internalMutation({
+  args: { tokenHash: v.string(), autonomy: v.union(v.literal('none'), v.literal('light'), v.literal('active')) },
+  handler: async (ctx, { tokenHash, autonomy }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const agent = await requireActiveAgent(ctx, session.agentId);
+    await ctx.db.patch(agent._id, { autonomy });
+    await notifyOwner(ctx, session.agentId, 'info', 'Autonomy preference updated',
+      autonomy === 'active'
+        ? 'Routine welcoming, free plot selection, and native home construction may proceed under your standing consent.'
+        : autonomy === 'light'
+          ? 'Your agent may prepare routine requests, but each consequential action waits for your dashboard decision.'
+          : 'Your agent will only recommend actions and will not prepare land or build approvals automatically.');
+    return { ok: true, autonomy };
+  },
+});
+
+export const publicVenues = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const venues = await ctx.db.query('venues').collect();
+    const meetings = (await ctx.db.query('meetings').collect()).filter((meeting: any) =>
+      meeting.state === 'scheduled' || meeting.state === 'in_progress');
+    const citizens = await ctx.db.query('citizens').collect();
+    const names = new Map(citizens.map((citizen: any) => [citizen.agentId, citizen.name]));
+    return {
+      venues: venues.map((venue: any) => ({
+        venueId: venue.venueId, name: venue.name, kind: venue.kind, x: venue.x, y: venue.y, capacity: venue.capacity,
+        activeMeetings: meetings.filter((meeting: any) => meeting.venueId === venue.venueId).length,
+      })),
+      meetings: meetings.map((meeting: any) => ({
+        meetingId: meeting.meetingId, venueId: meeting.venueId, state: meeting.state,
+        requesterId: meeting.requesterId, requesterName: names.get(meeting.requesterId) ?? meeting.requesterId,
+        inviteeId: meeting.inviteeId, inviteeName: names.get(meeting.inviteeId) ?? meeting.inviteeId,
+        startsAt: meeting.startsAt, endsAt: meeting.endsAt,
+      })),
+    };
+  },
+});
 
 export const publicFeed = internalQuery({
   args: {},
@@ -699,45 +987,3 @@ export const publicFeed = internalQuery({
   },
 });
 
-
-// Mayor's Office (free will, scoped): Fable auto-approves ROUTINE requests -
-// a claim on a genuinely free plot, a standard home build on your own claimed
-// plot. Anything else (land disputes, expansions, meetings, unusual builds)
-// stays pending for the human owner. Every mayoral decision is narrated.
-export const mayorTick = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const pending = await ctx.db.query('approvals').filter((q) => q.eq(q.field('state'), 'pending')).take(20);
-    for (const approval of pending) {
-      if (approval.kind !== 'claim' && approval.kind !== 'build') continue;
-      if (approval.kind === 'claim') {
-        const plotId = approval.payload?.plotId;
-        if (!plotId) continue;
-        const plot = await ctx.db.query('plots').filter((q) => q.eq(q.field('plotId'), plotId)).first();
-        if (!plot || (plot.ownerAgentId && plot.ownerAgentId !== approval.agentId)) continue;
-        await ctx.db.patch(plot._id, { ownerAgentId: approval.agentId, claimedAt: Date.now() });
-        await ctx.db.patch(approval._id, { state: 'approved' });
-        const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', approval.agentId)).first();
-        await ctx.db.insert('events', {
-          kind: 'claim', actorId: approval.agentId, payload: { plotId },
-          gloss: `🏠 Mayor's Office: ${citizen?.name ?? approval.agentId} was granted ${plotId} - the plot was free, so the Mayor approved it directly.`,
-        });
-      } else {
-        const plot = await ctx.db.query('plots').filter((q) => q.eq(q.field('ownerAgentId'), approval.agentId)).first();
-        if (!plot) continue;
-        await ctx.db.patch(approval._id, { state: 'approved' });
-        await ctx.db.insert('builds', {
-          buildId: 'build:' + approval.agentId.slice(6, 16) + '-' + Math.floor(plot.x) + '-' + Math.floor(plot.y),
-          plotId: plot.plotId, ownerAgentId: approval.agentId,
-          structure: approval.payload?.structure ?? 'home', state: 'built', createdAt: Date.now(), completedAt: Date.now(),
-          x: plot.x, y: plot.y, w: plot.w, h: plot.h,
-        });
-        const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', approval.agentId)).first();
-        await ctx.db.insert('events', {
-          kind: 'build', actorId: approval.agentId, payload: { plotId: plot.plotId },
-          gloss: `🏗 ${citizen?.name ?? approval.agentId}'s ${approval.payload?.structure ?? 'home'} now stands on ${plot.plotId} - inspected and approved by the Mayor's Office.`,
-        });
-      }
-    }
-  },
-});

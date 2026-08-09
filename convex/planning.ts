@@ -13,7 +13,7 @@ export async function ensureWorldState(ctx: any) {
     const plots = await ctx.db.query('plots').collect();
     const id = await ctx.db.insert('worldState', {
       key: WORLD_KEY, width: W, height: H, generation: 0,
-      capacity: Math.max(50, plots.length), landPolicy: 'service_auto', updatedAt: Date.now(),
+      capacity: Math.max(50, plots.length), landPolicy: 'risk_based', updatedAt: Date.now(),
     });
     state = await ctx.db.get(id);
   }
@@ -59,7 +59,7 @@ export async function expandWorld(ctx: any, reason: string, force = false) {
   await ctx.db.insert('events', {
     kind: 'world_expand', actorId: 'agent:atlas-boundary',
     payload: { width, height, generation: state.generation + 1, plotsAdded: accepted.length, reason },
-    gloss: `Atlas opened boundary ring ${state.generation + 1}: Earth now spans ${width} by ${height} tiles with ${accepted.length} new protected plots.`,
+    gloss: `Atlas surveyed boundary ring ${state.generation + 1}. Mayor Fable authorized ${accepted.length} protected plots, and Earth now spans ${width} by ${height} tiles.`,
   });
   return { expanded: true, state: { ...state, width, height, generation: state.generation + 1 }, plotsAdded: accepted.length };
 }
