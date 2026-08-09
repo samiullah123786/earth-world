@@ -190,7 +190,10 @@ class EarthScene extends Phaser.Scene {
         return edgeForest(gx, gy);
       };
       const GRASS = 271, GRASS_ALT = 962;
-      const TREE = { x: 12, y: 39, w: 4, h: 3 };
+      // The one verified grass-native tree: the lush 4x4 river-side tree.
+      // (Close-up QA killed the other candidates: (20,23) is a mossy boulder,
+      // and frames 941/850 are crystals/mushrooms, not flowers.)
+      const BIG = { x: 15, y: 24, w: 4, h: 4 };
       const decor = map.bgtiles[1];
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
@@ -201,9 +204,9 @@ class EarthScene extends Phaser.Scene {
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
           if (treeAnchor(x, y)) {
-            for (let dx = 0; dx < TREE.w; dx++) {
-              for (let dy = 0; dy < TREE.h; dy++) {
-                const frame = decor[TREE.x + dx]?.[TREE.y + dy];
+            for (let dx = 0; dx < BIG.w; dx++) {
+              for (let dy = 0; dy < BIG.h; dy++) {
+                const frame = decor[BIG.x + dx]?.[BIG.y + dy];
                 if (frame === -1 || frame === undefined) continue;
                 const px = x - 1 + dx, py = y - 1 + dy;
                 if (px < 0 || py < 0 || px >= width || py >= height) continue;
@@ -211,8 +214,6 @@ class EarthScene extends Phaser.Scene {
                 this.expansionRT.drawFrame('tiles', frame, px * TILE, py * TILE);
               }
             }
-          } else if (x >= W0 || y >= H0) {
-            if (hash(x, y, 23) % 211 === 0) this.expansionRT.drawFrame('tiles', hash(x, y, 29) % 2 ? 941 : 850, x * TILE, y * TILE);
           }
         }
       }
