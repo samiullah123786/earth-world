@@ -11,6 +11,8 @@
     * { margin:0; padding:0; box-sizing:border-box; }
     html, body { height:100%; background:var(--cream); overflow:hidden; font-family:"Segoe UI",Inter,system-ui,sans-serif; }
     #game { position:absolute; inset:0; }
+    #game canvas { cursor:grab; }
+    body.is-panning #game canvas { cursor:grabbing; }
     .hud { position:absolute; font-family:var(--mono); font-size:12px; font-weight:700; background:var(--paper);
       border:2.5px solid var(--ink); box-shadow:4px 4px 0 var(--ink); padding:7px 12px; z-index:5; }
     #brand { top:12px; left:12px; display:flex; align-items:center; gap:8px; }
@@ -27,6 +29,13 @@
     #rightstack { position:absolute; top:12px; right:12px; z-index:6; width:306px; display:flex; flex-direction:column; gap:10px; max-height:calc(100vh - 24px); }
     #profile { display:none; width:100%; max-width:calc(100vw - 24px); z-index:6;
       background:var(--paper); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink); padding:14px 16px; font-size:13px; }
+    #conversation { display:none; width:100%; max-width:calc(100vw - 24px); z-index:6;
+      background:#3A2A1E; color:var(--cream); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink);
+      padding:13px 15px; font-size:13px; }
+    #conversation .p-x { color:var(--cream); }
+    .conversation-people { font:800 13px/1.3 var(--mono); margin-top:4px; }
+    .conversation-line { margin-top:7px; padding:7px 9px; color:var(--ink); background:var(--cream);
+      border:2px solid var(--ink); box-shadow:2px 2px 0 #8d5e3b; font-size:11.5px; line-height:1.4; }
     .p-head { font-size:16px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .p-x { cursor:pointer; font:700 18px/1 var(--mono); border:0; background:transparent; padding:2px 4px; }
     .p-id { font-family:var(--mono); font-size:10.5px; opacity:.55; margin:2px 0 8px; }
@@ -45,16 +54,18 @@
     .citizen-row:hover, .citizen-row:focus-visible { transform:translate(-1px,-1px); box-shadow:3px 3px 0 var(--ink); }
     .citizen-name { font:700 11px var(--mono); }
     .citizen-tags { font:9.5px/1.35 var(--mono); opacity:.62; margin-top:2px; }
+    .citizen-coords { font:9px/1.35 var(--mono); opacity:.5; margin-top:2px; }
     @media (max-width:760px) { #brand { max-width:calc(100vw - 24px); font-size:10px; } #feed { max-width:calc(100vw - 24px); }
       #directory { top:54px; width:240px; max-height:42vh; } #citizen-list { max-height:23vh; } #profile { top:auto; bottom:110px; } }
     /* Embed (dashboard tile): pure map. Feed and directory live in the full view. */
-    body.embed #feed, body.embed #directory, body.embed #brand { display:none; }
+    body.embed #feed, body.embed #directory, body.embed #brand, body.embed #conversation { display:none !important; }
   </style>
 </head>
 <body>
   <div id="game"></div>
   <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span> · drag to pan · scroll to zoom · click a citizen or plot</div>
   <div id="rightstack"><div id="profile" role="dialog" aria-live="polite"></div>
+  <section id="conversation" aria-label="Citizen conversation" aria-live="polite"></section>
   <aside id="directory" aria-label="Community directory">
     <h2>Community directory <span class="panel-min" data-for="directory" style="float:right;cursor:pointer;font-family:var(--mono)">▾</span></h2>
     <div id="boundary">loading living boundary…</div>

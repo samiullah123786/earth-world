@@ -340,7 +340,7 @@ class EarthScene extends Phaser.Scene {
     if (kind === 'home') {
       const scale = Math.min(width, height) / (4 * TILE);
       const nativeSize = 4 * TILE * scale;
-      this.stampFromMap(12, 43, 4, 4, x + (width - nativeSize) / 2, y + (height - nativeSize) / 2, scale);
+      this.stampFromMap(9, 7, 3, 3, x + (width - nativeSize) / 2, y + (height - nativeSize) / 2, scale);
       return;
     }
     const graphics = this.add.graphics();
@@ -442,6 +442,74 @@ class EarthScene extends Phaser.Scene {
     card.style.display = 'block';
   }
 
+  showProfile(agentId: string) {
+    const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
+    if (!citizen) return;
+    const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
+    const position = this.positionFor(citizen);
+    this.selectedAgentId = agentId;
+    const citizenPayload = {
+      name: citizen.name, agentId: citizen.agentId, gender: citizen.gender,
+      family: citizen.family, accent: citizen.accent, activity: citizen.activity,
+      online: citizen.online, serviceRole: citizen.serviceRole ?? null,
+      specialties: citizen.specialties ?? [], experienceTier: citizen.experienceTier ?? 'emerging',
+      skillCount: citizen.skillCount ?? 0, plotId: plot?.plotId ?? null,
+      current: position, target: { x: citizen.tx, y: citizen.ty }, talkingWith: citizen.talkingWith ?? null,
+    };
+    if (embed && window.parent !== window) {
+      const send = (conversation: any) => {
+        const message = { type: 'earth-profile', citizen: citizenPayload, conversation };
+        window.parent.postMessage(message, 'https://agentsearth.com');
+        window.parent.postMessage(message, 'https://agentsearth-home.vercel.app');
+      };
+      convex.query(api.world.latestConversation, { agentId }).then(send).catch(() => send(null));
+      return;
+    }
+    const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
+    convex.query(api.world.latestConversation, { agentId }).then((conversation: any) => this.renderConversation(conversation)).catch(() => {});
+    this.card(`${citizen.name} (${citizen.gender})`, citizen.agentId, [
+      citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} | ${citizen.skillCount ?? 0} locally evidenced skills`,
+      `${citizen.family} | ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,
+      citizen.serviceRole ? `civic service active | ${citizen.activity}` : `${citizen.online ? 'live through owner session' : 'ambient'} | ${citizen.activity}`,
+      `Current tile ${position.x.toFixed(2)}, ${position.y.toFixed(2)} | destination ${citizen.tx}, ${citizen.ty}`,
+      plot ? `${plot.plotId} at ${plot.x}, ${plot.y} | ${buildCount} structure${buildCount === 1 ? '' : 's'}` : 'No home plot yet',
+    ], 'Verified colors come from locally evidenced skills. Owner identity remains private.');
+  }
+
+  renderConversation(conversation: Conversation | null) {
+    const panel = document.getElementById('conversation');
+    if (!panel) return;
+    if (!conversation) { panel.style.display = 'none'; return; }
+    const head = element('div', 'p-head');
+    head.append(element('b', '', 'Live conversation'));
+    const close = element('button', 'p-x', 'x');
+    close.type = 'button'; close.setAttribute('aria-label', 'Close conversation');
+    close.onclick = () => { panel.style.display = 'none'; this.selectedAgentId = undefined; };
+    head.append(close);
+    const status = conversation.state === 'active' && (conversation.endsAt ?? 0) > Date.now() ? 'LIVE NOW' : 'LATEST';
+    const people = element('div', 'conversation-people', `${conversation.aName} with ${conversation.bName}`);
+    const topic = element('div', 'p-id', `${status} | ${conversation.topic}`);
+    const lines = conversation.lines.map((line) => element('div', 'conversation-line', line.gloss));
+    panel.replaceChildren(head, people, topic, ...lines);
+    panel.style.display = 'block';
+  }
+
+  positionFor(citizen: Citizen, now = Date.now()) {
+    let x = citizen.tx, y = citizen.ty;
+    const route = citizen.route;
+    if (route && route.length > 1 && now < route[route.length - 1].at) {
+      for (let i = 1; i < route.length; i++) {
+        if (now <= route[i].at) {
+          const a = route[i - 1], b = route[i];
+          const progress = Phaser.Math.Clamp((now - a.at) / Math.max(1, b.at - a.at), 0, 1);
+          x = Phaser.Math.Linear(a.x, b.x, progress); y = Phaser.Math.Linear(a.y, b.y, progress);
+          break;
+        }
+      }
+    }
+    return { x, y };
+  }
+
   showProfileLegacy(agentId: string) {
     const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
     if (!citizen) return;
@@ -508,6 +576,15 @@ class EarthScene extends Phaser.Scene {
       sprite.x = x * TILE + TILE / 2;
       sprite.y = y * TILE + TILE / 2;
       sprite.setDepth(sprite.y);
+      const bubble = sprite.getByName('talk-bubble') as Phaser.GameObjects.Container | null;
+      if (bubble) {
+        const active = Boolean(citizen.talkingWith && (citizen.talkingUntil ?? 0) > now);
+        bubble.setVisible(active);
+        if (active) for (let i = 0; i < 3; i++) {
+          const dot = bubble.getByName(`talk-dot-${i}`) as Phaser.GameObjects.Arc | null;
+          if (dot) dot.y = -44 + Math.sin(now / 180 + i * 1.7) * 1.6;
+        }
+      }
     }
   }
 }
