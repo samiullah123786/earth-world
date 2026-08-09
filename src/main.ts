@@ -166,23 +166,40 @@ class EarthScene extends Phaser.Scene {
     if (!this.expansionRT || this.expansionRT.width !== width * TILE || this.expansionRT.height !== height * TILE) {
       this.expansionRT?.destroy();
       this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0).setDepth(-3);
-      const mirror = (value: number, size: number) => {
-        const period = Math.max(1, size * 2 - 2);
-        const wrapped = ((value % period) + period) % period;
-        return wrapped < size ? wrapped : period - wrapped;
+      // Wilderness, matching convex/pathfinding.ts exactly: open meadow, organic
+      // groves, nothing man-made. Settlers civilize this land later.
+      const hash = (hx: number, hy: number, salt: number) => {
+        let h = (hx * 374761393 + hy * 668265263 + salt * 2246822519) | 0;
+        h = (h ^ (h >>> 13)) * 1274126177;
+        return (h ^ (h >>> 16)) >>> 0;
       };
+      const grove = (gx: number, gy: number) => hash(Math.floor(gx / 6), Math.floor(gy / 6), 7) % 100 < 34;
+      const treeAnchor = (gx: number, gy: number) => grove(gx, gy) && hash(gx, gy, 11) % 17 === 0;
+      const GRASS = 271, GRASS_ALT = 962, TREE = { x: 13, y: 40, w: 5, h: 2 };
+      const decor = map.bgtiles[1];
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
           if (x < this.baseWidth && y < this.baseHeight) continue;
-          const sx = mirror(x, this.baseWidth);
-          const sy = mirror(y, this.baseHeight);
-          for (const layer of map.bgtiles) {
-            const frame = layer[sx]?.[sy];
-            if (frame !== -1 && frame !== undefined) this.expansionRT.drawFrame('tiles', frame, x * TILE, y * TILE);
-          }
-          for (const layer of map.objmap) {
-            const frame = layer[sx]?.[sy];
-            if (frame !== -1 && frame !== undefined) this.expansionRT.drawFrame('tiles', frame, x * TILE, y * TILE);
+          const speck = hash(x, y, 3) % 97;
+          this.expansionRT.drawFrame('tiles', speck === 0 ? GRASS_ALT : GRASS, x * TILE, y * TILE);
+        }
+      }
+      for (let x = 0; x < width; x++) {
+        for (let y = 0; y < height; y++) {
+          if (x < this.baseWidth && y < this.baseHeight) continue;
+          if (treeAnchor(x, y)) {
+            for (let dx = 0; dx < TREE.w; dx++) {
+              for (let dy = 0; dy < TREE.h; dy++) {
+                const frame = decor[TREE.x + dx]?.[TREE.y + dy];
+                if (frame === -1 || frame === undefined) continue;
+                const px = x - 2 + dx, py = y - 1 + dy;
+                if (px < 0 || py < 0 || px >= width || py >= height) continue;
+                if (px < this.baseWidth && py < this.baseHeight) continue;
+                this.expansionRT.drawFrame('tiles', frame, px * TILE, py * TILE);
+              }
+            }
+          } else if (hash(x, y, 23) % 211 === 0) {
+            this.expansionRT.drawFrame('tiles', hash(x, y, 29) % 2 ? 941 : 850, x * TILE, y * TILE);
           }
         }
       }
