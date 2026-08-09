@@ -295,50 +295,36 @@ class EarthScene extends Phaser.Scene {
   }
 
 
-  // NATIVE BUILD KIT (earthfolk-native-v1): structures are stamped from the
-  // map's own decor compositions, so they can never clash with the terrain.
-  // Sources (bgtiles layer 1): TENT_HOME (12,42 4x5), TREE (13,40 5x2),
-  // FLOWERS frames 941/850. Agents receive these codes via the skill docs.
-  stampFromMap(srcX: number, srcY: number, w: number, h: number, destX: number, destY: number) {
+  // NATIVE BUILD KIT (earthfolk-native-v1): homes reuse the map's own building
+  // composition, scaled with crisp pixels inside the Kernel-validated footprint.
+  // Other structure kinds use the same palette, perspective, shadows, and grid.
+  stampFromMap(srcX: number, srcY: number, w: number, h: number, destPx: number, destPy: number, scale: number) {
     const map = this.cache.json.get('map');
     const decor = map.bgtiles[1];
     for (let dx = 0; dx < w; dx++) {
       for (let dy = 0; dy < h; dy++) {
         const frame = decor[srcX + dx]?.[srcY + dy];
         if (frame === -1 || frame === undefined) continue;
-        const img = this.add.image((destX + dx) * TILE, (destY + dy) * TILE, 'tiles', frame).setOrigin(0);
+        const img = this.add.image(destPx + dx * TILE * scale, destPy + dy * TILE * scale, 'tiles', frame)
+          .setOrigin(0).setScale(scale);
         this.objectLayer?.add(img);
       }
     }
   }
 
-  stampFrame(frame: number, x: number, y: number) {
-    const img = this.add.image(x * TILE, y * TILE, 'tiles', frame).setOrigin(0);
-    this.objectLayer?.add(img);
-  }
-
   stampNativeBuild(build: Build, plot: Plot) {
-    const px = build.x ?? plot.x, py = build.y ?? plot.y;
-    switch (build.structure) {
-      case 'home':
-      case 'blueprint':
-        this.stampFromMap(12, 42, 4, 5, px, py - 1);           // the founding tent home
-        this.stampFrame(941, px + plot.w - 1, py + plot.h - 1); // doorstep flowers
-        break;
-      case 'extension':
-        this.stampFromMap(13, 40, 5, 2, px + plot.w - 2, py);   // planted tree
-        break;
-      case 'garden':
-        this.stampFrame(941, px, py + plot.h - 1);
-        this.stampFrame(850, px + 1, py + plot.h - 1);
-        this.stampFrame(941, px + plot.w - 1, py);
-        this.stampFromMap(13, 40, 5, 2, px - 1, py + plot.h - 1); // shade tree
-        break;
-      case 'bench':
-      default:
-        this.stampFrame(850, px, py);
-        break;
+    const kind = build.blueprint?.kind ?? build.structure;
+    const x = (build.x ?? plot.x) * TILE, y = (build.y ?? plot.y) * TILE;
+    const width = (build.w ?? 1) * TILE, height = (build.h ?? 1) * TILE;
+    if (kind === 'home') {
+      const scale = Math.min(width, height) / (4 * TILE);
+      const nativeSize = 4 * TILE * scale;
+      this.stampFromMap(12, 43, 4, 4, x + (width - nativeSize) / 2, y + (height - nativeSize) / 2, scale);
+      return;
     }
+    const graphics = this.add.graphics();
+    this.drawNativeStructure(graphics, build, plot, x, y, width, height);
+    this.objectLayer?.add(graphics);
   }
 
   renderWorldObjects() {
@@ -364,6 +350,17 @@ class EarthScene extends Phaser.Scene {
   }
 
   focusWorldTarget(target: string) {
+    const plot = this.objects.plots.find((candidate) => candidate.plotId === target);
+    if (plot) {
+      this.cameras.main.pan((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, 500, 'Sine.easeOut');
+      this.cameras.main.setZoom(Math.max(this.cameras.main.zoom, 1.75));
+      this.showPlot(plot);
+      return;
+    }
+    if (target.startsWith('agent:')) {
+      this.focusCitizen(target);
+      return;
+    }
     const meeting = this.objects.meetings.find((candidate) => candidate.meetingId === target);
     const venueId = meeting?.venueId ?? target;
     const venue = this.objects.venues.find((candidate) => candidate.venueId === venueId);
