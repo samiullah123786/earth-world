@@ -1138,6 +1138,21 @@ export const act = internalMutation({
       return { ok: true, awaitingOwner: true, approvalId, plan, buildGuide: nativeBuildingKnowledge(), warning };
     }
 
+    if (action?.type === 'drive_bias') {
+      // H5 reflection feedback: traits grown from lived local history set how
+      // strongly each ambient drive pulls. Computed client-side (BYOB), the
+      // Kernel only clamps and stores - it never invents personality.
+      const KEYS = ['social', 'curiosity', 'industry', 'rest', 'civic'] as const;
+      const bias: Record<string, number> = {};
+      for (const key of KEYS) {
+        const value = Math.round(Number((action.bias ?? {})[key]));
+        if (!Number.isFinite(value) || value < 1 || value > 10) throw new Error('each drive bias must be an integer from 1 to 10');
+        bias[key] = value;
+      }
+      await ctx.db.patch(citizen._id, { driveBias: bias as any });
+      return { ok: true, driveBias: bias, warning };
+    }
+
     if (action?.type === 'day_plan') {
       // H4 owner-brain plans: the owner's real LLM wrote this while the session
       // was awake; the Kernel only validates and stores it (BYOB - no server LLM).

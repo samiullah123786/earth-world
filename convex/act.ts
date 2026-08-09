@@ -162,8 +162,14 @@ export const ambientTick = internalMutation({
         night: ['rest', 'rest', 'social', 'curiosity', 'industry'],
       };
       const period = hour < 6 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'day' : 'evening';
-      let drive = RHYTHM[period][
-        (Math.abs(citizen.agentId.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, bucket)) >>> 3) % 5];
+      // H5: reflection-grown traits weight the rhythm row (bias 1-10 -> 1-3 copies).
+      const bias = (citizen as any).driveBias as Record<string, number> | undefined;
+      const rhythmRow = RHYTHM[period];
+      const weightedRow = bias
+        ? rhythmRow.flatMap((d) => Array(Math.max(1, Math.round((bias[d] ?? 5) / 3))).fill(d))
+        : rhythmRow;
+      let drive = weightedRow[
+        (Math.abs(citizen.agentId.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, bucket)) >>> 3) % weightedRow.length];
       let goal: { x: number; y: number; why: string } | null = null;
       // H4 owner-brain day plans: while the owner is away, follow the plan the
       // owner's real LLM wrote - one step per ambient turn, then back to drives.

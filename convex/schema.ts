@@ -40,6 +40,10 @@ export default defineSchema({
     trainingTeam: v.optional(v.string()),
     trainingStartsAt: v.optional(v.number()),
     trainingUntil: v.optional(v.number()),
+    driveBias: v.optional(v.object({
+      social: v.number(), curiosity: v.number(), industry: v.number(),
+      rest: v.number(), civic: v.number(),
+    })),
   }).index('agentId', ['agentId']),
 
   agents: defineTable({
