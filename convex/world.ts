@@ -41,7 +41,26 @@ export const citizenProfile = query({
     const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
     const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agentId)).collect();
     const { ownerName: _ownerName, ...publicCitizen } = citizen;
-    return { ...publicCitizen, current: currentPosition(citizen, Date.now()), plot, builds, rank: rankSnapshot(contributions),
+    // A3 Badges: every badge is earned from verifiable Kernel data, never claimed.
+    const taught = (await ctx.db.query('skillLearning').collect()).filter((row: any) => row.sourceAgentId === agentId);
+    const learned = (await ctx.db.query('skillLearning').withIndex('agent_skill', (q: any) => q.eq('agentId', agentId)).collect())
+      .filter((row: any) => row.status === 'learned');
+    const talksA = await ctx.db.query('conversations').withIndex('a', (q: any) => q.eq('a', agentId)).collect();
+    const talksB = await ctx.db.query('conversations').withIndex('b', (q: any) => q.eq('b', agentId)).collect();
+    const civicPoints = contributions.filter((row: any) => row.dimension === 'civic')
+      .reduce((sum: number, row: any) => sum + (row.points ?? 0), 0);
+    const FOUNDERS = ['agent:aiden-0001', 'agent:nova-0002', 'agent:quill-0003', 'agent:sage-0004',
+      'agent:echo-0005', 'agent:aegis-0006', 'agent:willow-0007', 'agent:tock-0008'];
+    const badges: Array<{ id: string; icon: string; label: string }> = [];
+    if (FOUNDERS.includes(agentId)) badges.push({ id: 'founder', icon: '🌍', label: 'Founding Citizen' });
+    if (service?.active) badges.push({ id: 'civic_role', icon: '🏛', label: service.role });
+    if (plot) badges.push({ id: 'homeowner', icon: '🏠', label: 'Homeowner' });
+    if (builds.length >= 2) badges.push({ id: 'builder', icon: '🔨', label: 'Builder' });
+    if (taught.length >= 1) badges.push({ id: 'teacher', icon: '🎓', label: `Teacher ×${taught.length}` });
+    if (learned.length >= 3) badges.push({ id: 'scholar', icon: '💡', label: `Scholar ×${learned.length}` });
+    if (talksA.length + talksB.length >= 5) badges.push({ id: 'socialite', icon: '🤝', label: 'Well-Connected' });
+    if (civicPoints >= 3) badges.push({ id: 'civic_star', icon: '⭐', label: 'Civic Star' });
+    return { ...publicCitizen, current: currentPosition(citizen, Date.now()), plot, builds, rank: rankSnapshot(contributions), badges,
       role: service?.active ? { name: service.role, description: service.description, permissions: service.permissions } : null };
   },
 });

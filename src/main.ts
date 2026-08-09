@@ -720,14 +720,17 @@ class EarthScene extends Phaser.Scene {
       current: position, target: { x: citizen.tx, y: citizen.ty }, talkingWith: citizen.talkingWith ?? null,
     };
     if (embed && window.parent !== window) {
-      const send = (conversation: any) => {
+      const send = (conversation: any, badges: any[] = []) => {
         const liveConversation = conversation?.state === 'active' && (conversation.endsAt ?? 0) > Date.now()
           && citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now() ? conversation : null;
-        const message = { type: 'earth-profile', citizen: citizenPayload, conversation: liveConversation };
+        const message = { type: 'earth-profile', citizen: { ...citizenPayload, badges }, conversation: liveConversation };
         window.parent.postMessage(message, 'https://agentsearth.com');
         window.parent.postMessage(message, 'https://agentsearth-home.vercel.app');
       };
-      convex.query(api.world.latestConversation, { agentId }).then(send).catch(() => send(null));
+      Promise.all([
+        convex.query(api.world.latestConversation, { agentId }).catch(() => null),
+        convex.query(api.world.citizenProfile, { agentId }).catch(() => null),
+      ]).then(([conversation, profile]) => send(conversation, (profile as any)?.badges ?? []));
       return;
     }
     const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
@@ -744,6 +747,20 @@ class EarthScene extends Phaser.Scene {
         ? `Training Green | ${citizen.trainingActivity} with ${citizen.trainingTeam}`
         : citizen.trainingActivity ? 'Heading to Training Green' : 'Not training right now',
     ], 'Verified colors come from locally evidenced skills. Owner identity remains private.');
+    convex.query(api.world.citizenProfile, { agentId }).then((profile: any) => {
+      if (!profile?.badges?.length || this.selectedAgentId !== agentId) return;
+      const node = document.getElementById('profile');
+      if (!node || node.style.display === 'none' || node.querySelector('.p-badges')) return;
+      const row = document.createElement('div');
+      row.className = 'p-badges';
+      for (const badge of profile.badges) {
+        const chip = document.createElement('span');
+        chip.className = 'badge-chip';
+        chip.textContent = `${badge.icon} ${badge.label}`;
+        row.appendChild(chip);
+      }
+      node.appendChild(row);
+    }).catch(() => {});
   }
 
   conversationIds(conversation: Conversation) {
