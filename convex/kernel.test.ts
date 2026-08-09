@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api, internal } from './_generated/api';
 import schema from './schema';
-import { findRoute } from './pathfinding';
+import { findRoute, walkableInWorld } from './pathfinding';
 import { walkable } from './walkable';
 
 const modules = import.meta.glob('./**/*.ts');
@@ -13,6 +13,8 @@ async function activeAgent(t: ReturnType<typeof convexTest>, suffix = 'one') {
     agentId, publicKey: `public-${suffix}`, name: `Test ${suffix}`, ownerName: `Owner ${suffix}`,
     gender: 'male', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
     charterVersion: '2026-08-09', claimTokenHash: `claim-${suffix}`, claimExpiresAt: Date.now() + 60_000,
+    evidenceDigest: 'b'.repeat(64), categoryScores: { ui: 12, frontend: 8 },
+    specialties: ['ui', 'frontend'], primaryCategory: 'ui', skillCount: 22, experienceTier: 'seasoned',
   });
   await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `claim-${suffix}`, ownerSessionHash: `owner-${suffix}` });
   await t.mutation(internal.kernel.enter, { agentId, nonce: `enter-${suffix}`, sessionTokenHash: `agent-${suffix}` });
@@ -33,7 +35,9 @@ describe('Earth Kernel', () => {
     const objects = await t.query(api.world.worldObjects, {});
     expect(objects.plots).toHaveLength(50);
     expect(objects.venues).toHaveLength(4);
-    expect((await t.query(api.world.citizens, {}))).toHaveLength(8);
+    expect((await t.query(api.world.citizens, {}))).toHaveLength(10);
+    expect(objects.services).toHaveLength(5);
+    expect(objects.state).toMatchObject({ width: 64, height: 48, generation: 0 });
   });
 
   it('binds one owner session to an existing agent and commits approved claims/builds', async () => {
@@ -101,5 +105,74 @@ describe('Earth Kernel', () => {
     const citizens = await t.query(api.world.citizens, {});
     expect(citizens.find((citizen) => citizen.agentId === requester.agentId)?.activity).toMatch(/meeting at/i);
     expect((await t.query(api.world.worldObjects, {})).meetings.some((meeting) => meeting.meetingId === proposed.meetingId)).toBe(true);
+  });
+
+  it('searches verified categories and delivers private offline letters exactly once', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const sender = await activeAgent(t, 'sender');
+    const recipient = await activeAgent(t, 'recipient');
+    await t.mutation(internal.kernel.leave, { agentId: recipient.agentId, tokenHash: recipient.agentToken, nonce: 'recipient-leave' });
+    const found = await t.mutation(internal.kernel.search, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'search-ui', category: 'ui', live: false,
+    });
+    expect(found.citizens.some((citizen) => citizen.agentId === recipient.agentId)).toBe(true);
+    await t.mutation(internal.kernel.act, {
+      agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'letter-one',
+      action: { type: 'say', to: recipient.agentId, gloss: 'Can we compare interface patterns tomorrow?' },
+    });
+    await t.mutation(internal.kernel.enter, {
+      agentId: recipient.agentId, nonce: 'recipient-wake', sessionTokenHash: 'agent-recipient-wake',
+    });
+    const first = await t.mutation(internal.kernel.pulse, {
+      agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-pulse-one', since: 0,
+    });
+    expect(first.messages).toHaveLength(2);
+    expect(first.messages.find((message) => message.senderId === sender.agentId)?.body).toMatch(/interface patterns/);
+    const second = await t.mutation(internal.kernel.pulse, {
+      agentId: recipient.agentId, tokenHash: 'agent-recipient-wake', nonce: 'mail-pulse-two', since: first.cursor,
+    });
+    expect(second.messages).toHaveLength(0);
+    const feed = await t.query(api.world.feed, {});
+    expect(feed.some((event) => event.gloss.includes('compare interface'))).toBe(false);
+  });
+
+  it('stages land through the founder owner and preserves non-overlapping expansion rings', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const founder = await activeAgent(t, 'founder');
+    const resident = await activeAgent(t, 'resident');
+    await t.mutation(internal.kernel.grantFounder, { agentId: founder.agentId });
+    const requested = await t.mutation(internal.kernel.act, {
+      agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'resident-claim',
+      action: { type: 'claim', plotId: 'plot-10-10' },
+    });
+    const ownerDecision = await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: resident.ownerToken, approvalId: requested.approvalId, decision: 'approve',
+    });
+    expect((ownerDecision as { awaitingFounder?: boolean }).awaitingFounder).toBe(true);
+    const founderApprovals = await t.query(internal.kernel.ownerApprovals, { tokenHash: founder.ownerToken });
+    expect(founderApprovals[0].kind).toBe('land_claim');
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: founder.ownerToken, approvalId: founderApprovals[0]._id, decision: 'approve',
+    });
+    expect((await t.query(api.world.worldObjects, {})).plots.find((plot) => plot.plotId === 'plot-10-10')?.ownerAgentId).toBe(resident.agentId);
+
+    await t.mutation(internal.kernel.expandNow, { reason: 'capacity test' });
+    const expanded = await t.query(api.world.worldObjects, {});
+    expect(expanded.state).toMatchObject({ width: 80, height: 64, generation: 1 });
+    expect(expanded.plots.length).toBeGreaterThan(50);
+    for (let i = 0; i < expanded.plots.length; i++) for (let j = i + 1; j < expanded.plots.length; j++) {
+      const a = expanded.plots[i], b = expanded.plots[j];
+      expect(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y).toBe(true);
+    }
+    const route = findRoute(10, 10, 70, 50, { width: 80, height: 64 });
+    expect(route?.every(({ x, y }) => walkableInWorld(x, y, { width: 80, height: 64 }))).toBe(true);
+    await expect(t.mutation(internal.kernel.setOwnerGovernance, {
+      tokenHash: resident.ownerToken, landPolicy: 'service_auto',
+    })).rejects.toThrow(/designated founder/i);
+    expect(await t.mutation(internal.kernel.setOwnerGovernance, {
+      tokenHash: founder.ownerToken, landPolicy: 'service_auto',
+    })).toMatchObject({ ok: true, landPolicy: 'service_auto' });
   });
 });

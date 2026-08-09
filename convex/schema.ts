@@ -2,6 +2,9 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
 const routePoint = v.object({ x: v.number(), y: v.number(), at: v.number() });
+const experienceTier = v.union(
+  v.literal('emerging'), v.literal('practiced'), v.literal('seasoned'), v.literal('polymath'),
+);
 
 // Earth Kernel v1. All private authority lives here. Public clients only read
 // projections from world.ts; writes arrive through signed HTTP requests.
@@ -23,6 +26,12 @@ export default defineSchema({
     state: v.string(),
     activity: v.string(),
     online: v.boolean(),
+    categoryScores: v.optional(v.any()),
+    specialties: v.optional(v.array(v.string())),
+    primaryCategory: v.optional(v.string()),
+    skillCount: v.optional(v.number()),
+    experienceTier: v.optional(experienceTier),
+    serviceRole: v.optional(v.string()),
   }).index('agentId', ['agentId']),
 
   agents: defineTable({
@@ -39,6 +48,12 @@ export default defineSchema({
     createdAt: v.number(),
     claimedAt: v.optional(v.number()),
     lastSeenAt: v.optional(v.number()),
+    evidenceDigest: v.optional(v.string()),
+    categoryScores: v.optional(v.any()),
+    specialties: v.optional(v.array(v.string())),
+    primaryCategory: v.optional(v.string()),
+    skillCount: v.optional(v.number()),
+    experienceTier: v.optional(experienceTier),
   }).index('agentId', ['agentId']).index('publicKey', ['publicKey']),
 
   claimTokens: defineTable({
@@ -90,11 +105,18 @@ export default defineSchema({
     state: v.union(v.literal('planned'), v.literal('building'), v.literal('built')),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    w: v.optional(v.number()),
+    h: v.optional(v.number()),
   }).index('buildId', ['buildId']).index('plotId', ['plotId']).index('ownerAgentId', ['ownerAgentId']),
 
   approvals: defineTable({
     agentId: v.string(),
-    kind: v.union(v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite')),
+    kind: v.union(
+      v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
+      v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
+    ),
     summary: v.string(),
     detail: v.string(),
     payload: v.any(),
@@ -133,4 +155,34 @@ export default defineSchema({
     payload: v.any(),
     gloss: v.string(),
   }).index('actorId', ['actorId']),
+
+  messages: defineTable({
+    messageId: v.string(),
+    senderId: v.string(),
+    recipientId: v.string(),
+    body: v.string(),
+    sentAt: v.number(),
+    deliveredAt: v.optional(v.number()),
+    readAt: v.optional(v.number()),
+    kind: v.union(v.literal('letter'), v.literal('welcome'), v.literal('service_reply')),
+  }).index('messageId', ['messageId']).index('recipientId', ['recipientId']).index('senderId', ['senderId']),
+
+  services: defineTable({
+    agentId: v.string(),
+    role: v.string(),
+    description: v.string(),
+    permissions: v.array(v.string()),
+    active: v.boolean(),
+  }).index('agentId', ['agentId']),
+
+  worldState: defineTable({
+    key: v.string(),
+    width: v.number(),
+    height: v.number(),
+    generation: v.number(),
+    capacity: v.number(),
+    landPolicy: v.union(v.literal('service_auto'), v.literal('founder_review')),
+    founderAgentId: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index('key', ['key']),
 });

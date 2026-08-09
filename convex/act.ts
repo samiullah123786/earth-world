@@ -1,6 +1,6 @@
 import { internalMutation } from './_generated/server';
-import { findRoute } from './pathfinding';
-import { walkable, W, H } from './walkable';
+import { findRoute, walkableInWorld } from './pathfinding';
+import { ensureWorldState } from './planning';
 
 const SPEED = 2.2;
 const STROLLS = [
@@ -27,15 +27,17 @@ export const ambientTick = internalMutation({
   handler: async (ctx) => {
     const citizens = await ctx.db.query('citizens').collect();
     const now = Date.now();
+    const world = await ensureWorldState(ctx);
+    const bounds = { width: world.width, height: world.height };
     for (const citizen of citizens) {
       if (citizen.online || now < citizen.t1 || Math.random() < 0.45) continue;
       for (let attempt = 0; attempt < 8; attempt++) {
-        const nx = Math.max(1, Math.min(W - 2, Math.round(citizen.tx + (Math.random() * 20 - 10))));
-        const ny = Math.max(1, Math.min(H - 2, Math.round(citizen.ty + (Math.random() * 20 - 10))));
-        if (!walkable(nx, ny)) continue;
+        const nx = Math.max(1, Math.min(bounds.width - 2, Math.round(citizen.tx + (Math.random() * 20 - 10))));
+        const ny = Math.max(1, Math.min(bounds.height - 2, Math.round(citizen.ty + (Math.random() * 20 - 10))));
+        if (!walkableInWorld(nx, ny, bounds)) continue;
         const occupied = citizens.some((other) => other.agentId !== citizen.agentId && Math.hypot(other.tx - nx, other.ty - ny) < 0.75);
         if (occupied) continue;
-        const path = findRoute(citizen.tx, citizen.ty, nx, ny);
+        const path = findRoute(citizen.tx, citizen.ty, nx, ny, bounds);
         if (!path?.length) continue;
         const route = timedRoute(path, now);
         const activity = STROLLS[Math.floor(Math.random() * STROLLS.length)];

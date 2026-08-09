@@ -15,7 +15,8 @@ deployment basic-roadrunner-683.convex.cloud) + server-side EasyStar.js pathfind
   one-time owner claims; replay/rate/session enforcement; approvals, plots/builds,
   venues and two-owner meetings. Public writes never bypass this boundary.
 - `convex/act.ts` — no-LLM ambient life using the same server-authored A* routes.
-- `convex/crons.ts` — ambient life every 5s. `convex/seed.ts` — 8 founding citizens.
+- `convex/crons.ts` — ambient life every 5s. `convex/seed.ts` — 8 original founders plus
+  Terra and Atlas; five citizens carry scoped civic-service authority.
 - `convex/walkable.ts` — GENERATED from map data (regen via scripts note below).
 - `src/main.ts` — Phaser scene: map from `public/assets/map.json` (converted from the
   MIT gentle map, Earthfolk-recolored tileset) drawn into one RenderTexture; citizens =

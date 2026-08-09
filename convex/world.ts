@@ -26,9 +26,32 @@ export const worldObjects = query({
     const plots = await ctx.db.query('plots').collect();
     const builds = await ctx.db.query('builds').collect();
     const venues = await ctx.db.query('venues').collect();
+    const state = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    const services = (await ctx.db.query('services').collect()).filter((service) => service.active);
     const meetings = (await ctx.db.query('meetings').collect()).filter((meeting) => meeting.state === 'scheduled' || meeting.state === 'in_progress');
-    return { plots, builds, venues, meetings };
+    return { plots, builds, venues, meetings, services, state: state ? {
+      width: state.width, height: state.height, generation: state.generation,
+      capacity: state.capacity, landPolicy: state.landPolicy,
+    } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'service_auto' } };
   },
+});
+
+export const communityDirectory = query({
+  args: { category: v.optional(v.string()), live: v.optional(v.boolean()) },
+  handler: async (ctx, args) => (await ctx.db.query('citizens').collect())
+    .filter((citizen) => {
+      const specialties = citizen.specialties ?? [citizen.family];
+      return (!args.category || specialties.includes(args.category) || citizen.primaryCategory === args.category || citizen.family === args.category)
+        && (typeof args.live !== 'boolean' || citizen.online === args.live);
+    })
+    .sort((a, b) => Number(b.online) - Number(a.online) || (b.skillCount ?? 0) - (a.skillCount ?? 0))
+    .map((citizen) => ({
+      agentId: citizen.agentId, name: citizen.name, gender: citizen.gender,
+      family: citizen.family, accent: citizen.accent, online: citizen.online,
+      activity: citizen.activity, specialties: citizen.specialties ?? [citizen.family],
+      primaryCategory: citizen.primaryCategory ?? citizen.family, skillCount: citizen.skillCount ?? 0,
+      experienceTier: citizen.experienceTier ?? 'emerging', serviceRole: citizen.serviceRole,
+    })),
 });
 
 export const feed = query({
