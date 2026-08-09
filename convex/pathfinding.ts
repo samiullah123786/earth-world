@@ -20,25 +20,49 @@ export function isGroveCell(x: number, y: number) {
   return wildHash(Math.floor(x / 6), Math.floor(y / 6), 7) % 100 < 30;
 }
 
-// Forest continuation: within 3 tiles outside the founding rect, where the
-// nearest founding edge cell is blocked terrain (its forests), trees continue.
-export function isEdgeForest(x: number, y: number) {
-  const dx = Math.max(0, x - (W - 1)), dy = Math.max(0, y - (H - 1));
-  const d = Math.max(dx, dy);
-  if (d < 1 || d > 3) return false;
-  const ex = Math.min(x, W - 1), ey = Math.min(y, H - 1);
-  if (walkable(ex, ey)) return false;
-  return wildHash(x, y, 31) % 4 === 0;
+// South-border forest continuation: the founding map cuts two canopy masses at
+// y=47 (frames 470-477). Their EXACT missing rows (computed from the tileset's
+// own graphic, clamped to its visually verified bottom edge at tileset row 14)
+// are drawn beyond the border by the client from this same table. These cells
+// are canopy, so they block movement. Nothing else is planted within 4 tiles of
+// the founding border, so nothing can overlap the continuation.
+export const SOUTH_CONTINUATION: Record<number, number[]> = { 23: [515, 560, 605, 650], 24: [516, 561, 606, 651], 25: [517, 562, 607, 652], 26: [518, 563, 608, 653], 27: [519, 564, 609, 654], 28: [520, 565, 610, 655], 29: [521, 566, 611, 656], 30: [522, 567, 612], 32: [515, 560, 605, 650], 33: [516, 561, 606, 651], 34: [517, 562, 607, 652], 35: [518, 563, 608, 653], 36: [519, 564, 609, 654], 37: [520, 565, 610, 655], 38: [521, 566, 611, 656], 39: [522, 567, 612] };
+
+// SE-corner forest (objmap fill frame 367) is cut in a straight line at the
+// east border (y=34-47) and south border (x=52-63). The founding map's own
+// 367 forests end against grass with IRREGULAR silhouettes (verified: 85+
+// interior endings, no fringe frame). So the mass continues outward with a
+// deterministic stair-step taper. Client draws 367 there; these cells block.
+export function seForestCont(x: number, y: number) {
+  const inEast = x >= W && y >= 34 && y < H;
+  const inSouth = y >= H && x >= 52 && x < W;
+  const inCorner = x >= W && y >= H;
+  if (inEast) return x - (W - 1) <= 2 + (wildHash(0, y, 41) % 4);
+  if (inSouth) return y - (H - 1) <= 2 + (wildHash(x, 0, 43) % 4);
+  if (inCorner) {
+    const de = 2 + (wildHash(0, 47, 41) % 4), ds = 2 + (wildHash(63, 0, 43) % 4);
+    return (x - (W - 1)) + (y - (H - 1)) <= Math.min(de, ds) + 1;
+  }
+  return false;
+}
+
+export function southContinuationBlocked(x: number, y: number) {
+  const frames = SOUTH_CONTINUATION[x];
+  if (!frames) return false;
+  const r = y - H;
+  return r >= 0 && r < frames.length;
 }
 
 export function isTreeAnchor(x: number, y: number) {
   if (x < W && y < H) return false;
-  if (isGroveCell(x, y) && wildHash(x, y, 11) % 23 === 0) return true;
-  return isEdgeForest(x, y);
+  const d = Math.max(Math.max(0, x - (W - 1)), Math.max(0, y - (H - 1)));
+  if (d <= 6) return false;
+  return isGroveCell(x, y) && wildHash(x, y, 11) % 23 === 0;
 }
 
-// A tree's canopy center (2x2) blocks movement; anchor sits at canopy center.
+// A tree's canopy center (2x2) blocks movement; continuation canopy blocks too.
 export function wildBlocked(x: number, y: number) {
+  if (southContinuationBlocked(x, y) || seForestCont(x, y)) return true;
   return isTreeAnchor(x, y) || isTreeAnchor(x - 1, y) || isTreeAnchor(x, y - 1) || isTreeAnchor(x - 1, y - 1);
 }
 

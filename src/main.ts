@@ -187,7 +187,7 @@ class EarthScene extends Phaser.Scene {
       const treeAnchor = (gx: number, gy: number) => {
         if (gx < W0 && gy < H0) return false;
         const d = Math.max(Math.max(0, gx - (W0 - 1)), Math.max(0, gy - (H0 - 1)));
-        if (d <= 4) return false;
+        if (d <= 6) return false;
         return grove(gx, gy) && hash(gx, gy, 11) % 23 === 0;
       };
       // Exact continuation of the two south-border canopy masses (same table as
@@ -207,6 +207,19 @@ class EarthScene extends Phaser.Scene {
       }
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
+          const seCont = (() => {
+            const inEast = x >= W0 && y >= 34 && y < H0;
+            const inSouth = y >= H0 && x >= 52 && x < W0;
+            const inCorner = x >= W0 && y >= H0;
+            if (inEast) return x - (W0 - 1) <= 2 + (hash(0, y, 41) % 4);
+            if (inSouth) return y - (H0 - 1) <= 2 + (hash(x, 0, 43) % 4);
+            if (inCorner) {
+              const de = 2 + (hash(0, 47, 41) % 4), ds = 2 + (hash(63, 0, 43) % 4);
+              return (x - (W0 - 1)) + (y - (H0 - 1)) <= Math.min(de, ds) + 1;
+            }
+            return false;
+          })();
+          if (seCont) this.expansionRT.drawFrame('tiles', 367, x * TILE, y * TILE);
           const cont = SOUTH_CONTINUATION[x];
           if (cont && y >= H0 && y - H0 < cont.length) {
             this.expansionRT.drawFrame('tiles', cont[y - H0], x * TILE, y * TILE);
