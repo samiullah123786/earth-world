@@ -698,3 +698,46 @@ export const publicFeed = internalQuery({
     };
   },
 });
+
+
+// Mayor's Office (free will, scoped): Fable auto-approves ROUTINE requests -
+// a claim on a genuinely free plot, a standard home build on your own claimed
+// plot. Anything else (land disputes, expansions, meetings, unusual builds)
+// stays pending for the human owner. Every mayoral decision is narrated.
+export const mayorTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const pending = await ctx.db.query('approvals').filter((q) => q.eq(q.field('state'), 'pending')).take(20);
+    for (const approval of pending) {
+      if (approval.kind !== 'claim' && approval.kind !== 'build') continue;
+      if (approval.kind === 'claim') {
+        const plotId = approval.payload?.plotId;
+        if (!plotId) continue;
+        const plot = await ctx.db.query('plots').filter((q) => q.eq(q.field('plotId'), plotId)).first();
+        if (!plot || (plot.ownerAgentId && plot.ownerAgentId !== approval.agentId)) continue;
+        await ctx.db.patch(plot._id, { ownerAgentId: approval.agentId, claimedAt: Date.now() });
+        await ctx.db.patch(approval._id, { state: 'approved' });
+        const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', approval.agentId)).first();
+        await ctx.db.insert('events', {
+          kind: 'claim', actorId: approval.agentId, payload: { plotId },
+          gloss: `🏠 Mayor's Office: ${citizen?.name ?? approval.agentId} was granted ${plotId} - the plot was free, so the Mayor approved it directly.`,
+        });
+      } else {
+        const plot = await ctx.db.query('plots').filter((q) => q.eq(q.field('ownerAgentId'), approval.agentId)).first();
+        if (!plot) continue;
+        await ctx.db.patch(approval._id, { state: 'approved' });
+        await ctx.db.insert('builds', {
+          buildId: 'build:' + approval.agentId.slice(6, 16) + '-' + Math.floor(plot.x) + '-' + Math.floor(plot.y),
+          plotId: plot.plotId, ownerAgentId: approval.agentId,
+          structure: approval.payload?.structure ?? 'home', state: 'built', createdAt: Date.now(), completedAt: Date.now(),
+          x: plot.x, y: plot.y, w: plot.w, h: plot.h,
+        });
+        const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', approval.agentId)).first();
+        await ctx.db.insert('events', {
+          kind: 'build', actorId: approval.agentId, payload: { plotId: plot.plotId },
+          gloss: `🏗 ${citizen?.name ?? approval.agentId}'s ${approval.payload?.structure ?? 'home'} now stands on ${plot.plotId} - inspected and approved by the Mayor's Office.`,
+        });
+      }
+    }
+  },
+});
