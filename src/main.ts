@@ -35,7 +35,8 @@ type Meeting = { meetingId: string; venueId: string; requesterId: string; invite
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
   services: Array<{ agentId: string; role: string }>; state: WorldState };
 type Conversation = { id: string; a: string; b: string; aName: string; bName: string; topic: string;
-  at: number; endsAt?: number; state: string; lines: Array<{ speaker: string; es: string; gloss: string }> };
+  participantIds?: string[]; participantNames?: string[]; at: number; endsAt?: number; state: string;
+  lines: Array<{ speaker: string; es: string; gloss: string }> };
 
 let TILE = 32;
 
@@ -61,7 +62,8 @@ class EarthScene extends Phaser.Scene {
   conversations: Conversation[] = [];
   selectedAgentId?: string;
   conversationAgentId?: string;
-  conversationMinimized = false;
+  conversationMinimized = true;
+  conversationRefreshTimer?: number;
   mapPanning = false;
   uiInteractionUntil = 0;
 
@@ -139,11 +141,13 @@ class EarthScene extends Phaser.Scene {
     });
     convex.onUpdate(api.world.recentConversations, {}, (rows: Conversation[]) => {
       this.conversations = rows;
-      if (!this.conversationAgentId) return;
-      const selected = rows.find((row) => (row.a === this.conversationAgentId || row.b === this.conversationAgentId)
-        && row.state === 'active' && (row.endsAt ?? 0) > Date.now());
+      const selected = this.conversationAgentId
+        ? rows.find((row) => this.conversationIncludes(row, this.conversationAgentId!) && this.isConversationActive(row))
+        : undefined;
+      if (this.conversationAgentId && !selected) this.conversationAgentId = undefined;
       this.renderConversation(selected ?? null);
     });
+    this.renderConversation(null);
     this.scale.on('resize', () => this.applyWorldBounds());
   }
 
@@ -601,13 +605,14 @@ class EarthScene extends Phaser.Scene {
     const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
     const position = this.positionFor(citizen);
     this.selectedAgentId = agentId;
-    const activeConversation = this.conversations.find((row) => (row.a === agentId || row.b === agentId)
-      && row.state === 'active' && (row.endsAt ?? 0) > Date.now());
+    const activeConversation = this.conversations.find((row) => this.conversationIncludes(row, agentId)
+      && this.isConversationActive(row));
     if (activeConversation && citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now()) {
       this.conversationAgentId = agentId;
       this.conversationMinimized = false;
     } else {
       this.conversationAgentId = undefined;
+      this.conversationMinimized = true;
       this.renderConversation(null);
     }
     const citizenPayload = {
@@ -640,33 +645,95 @@ class EarthScene extends Phaser.Scene {
     ], 'Verified colors come from locally evidenced skills. Owner identity remains private.');
   }
 
+  conversationIds(conversation: Conversation) {
+    return conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
+  }
+
+  conversationNames(conversation: Conversation) {
+    return conversation.participantNames?.length ? conversation.participantNames : [conversation.aName, conversation.bName];
+  }
+
+  conversationIncludes(conversation: Conversation, agentId: string) {
+    return this.conversationIds(conversation).includes(agentId);
+  }
+
+  isConversationActive(conversation: Conversation) {
+    return conversation.state === 'active' && (conversation.endsAt ?? 0) > Date.now();
+  }
+
+  conversationPeople(conversation: Conversation) {
+    const names = this.conversationNames(conversation);
+    if (names.length < 2) return names[0] ?? 'Citizens';
+    if (names.length === 2) return `${names[0]} with ${names[1]}`;
+    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  }
+
   renderConversation(conversation: Conversation | null) {
     const panel = document.getElementById('conversation');
     if (!panel) return;
-    if (!conversation || !this.conversationAgentId) {
-      panel.style.display = 'none';
-      panel.classList.remove('minimized');
-      this.conversationAgentId = undefined;
-      return;
-    }
+    const active = this.conversations.filter((row) => this.isConversationActive(row));
+    if (this.conversationRefreshTimer) window.clearTimeout(this.conversationRefreshTimer);
+    const nextExpiry = active.reduce<number | undefined>((soonest, row) => {
+      if (!row.endsAt) return soonest;
+      return soonest === undefined || row.endsAt < soonest ? row.endsAt : soonest;
+    }, undefined);
+    if (nextExpiry) this.conversationRefreshTimer = window.setTimeout(() => {
+      const selected = this.conversationAgentId
+        ? this.conversations.find((row) => this.conversationIncludes(row, this.conversationAgentId!) && this.isConversationActive(row))
+        : undefined;
+      if (!selected) this.conversationAgentId = undefined;
+      this.renderConversation(selected ?? null);
+    }, Math.max(25, nextExpiry - Date.now() + 25));
     const head = element('div', 'p-head');
-    head.append(element('b', '', 'Live conversation'));
+    head.append(element('b', '', conversation ? 'Live conversation' : 'Live chat'));
+    if (active.length) head.append(element('span', 'conversation-count', String(active.length)));
     const controls = element('div', 'conversation-controls');
+    if (conversation) {
+      const browse = element('button', '', '≡');
+      browse.type = 'button';
+      browse.setAttribute('aria-label', 'Browse all live chats');
+      browse.onclick = () => {
+        this.conversationAgentId = undefined;
+        this.conversationMinimized = false;
+        this.renderConversation(null);
+      };
+      controls.append(browse);
+    }
     const minimize = element('button', '', this.conversationMinimized ? '□' : '−');
     minimize.type = 'button';
-    minimize.setAttribute('aria-label', this.conversationMinimized ? 'Restore conversation' : 'Minimize conversation');
-    minimize.onclick = () => { this.conversationMinimized = !this.conversationMinimized; this.renderConversation(conversation); };
-    const close = element('button', 'p-x', 'x');
-    close.type = 'button'; close.setAttribute('aria-label', 'Close conversation');
-    close.onclick = () => { this.conversationAgentId = undefined; this.conversationMinimized = false; panel.style.display = 'none'; };
-    controls.append(minimize, close);
+    minimize.setAttribute('aria-label', this.conversationMinimized ? 'Maximize live chat' : 'Minimize live chat');
+    minimize.onclick = () => {
+      this.conversationMinimized = !this.conversationMinimized;
+      this.renderConversation(conversation);
+    };
+    controls.append(minimize);
     head.append(controls);
-    const status = conversation.state === 'active' && (conversation.endsAt ?? 0) > Date.now() ? 'LIVE NOW' : 'ENDED';
-    const people = element('div', 'conversation-people', `${conversation.aName} with ${conversation.bName}`);
-    const topic = element('div', 'p-id', `${status} | ${conversation.topic}`);
-    const lines = conversation.lines.map((line) => element('div', 'conversation-line', line.gloss));
     const body = element('div', 'conversation-body');
-    body.append(people, topic, ...lines);
+    if (conversation && this.isConversationActive(conversation)) {
+      body.append(
+        element('div', 'conversation-people', this.conversationPeople(conversation)),
+        element('div', 'p-id', `LIVE NOW | ${conversation.topic}`),
+        ...conversation.lines.map((line) => element('div', 'conversation-line', line.gloss)),
+      );
+    } else if (active.length) {
+      body.append(element('div', 'conversation-empty', 'Choose a live conversation to listen in.'));
+      for (const row of active) {
+        const choice = element('button', 'conversation-choice');
+        choice.type = 'button';
+        choice.append(
+          element('strong', '', this.conversationPeople(row)),
+          element('span', '', row.topic),
+        );
+        choice.onclick = () => {
+          this.conversationAgentId = this.conversationIds(row)[0];
+          this.conversationMinimized = false;
+          this.renderConversation(row);
+        };
+        body.append(choice);
+      }
+    } else {
+      body.append(element('div', 'conversation-empty', 'No live conversations right now. Watch for the three-dot bubble above a citizen, then tap them to listen.'));
+    }
     panel.replaceChildren(head, body);
     panel.classList.toggle('minimized', this.conversationMinimized);
     panel.style.display = 'block';

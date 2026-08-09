@@ -172,6 +172,8 @@ export default defineSchema({
     b: v.string(),
     aName: v.string(),
     bName: v.string(),
+    participantIds: v.optional(v.array(v.string())),
+    participantNames: v.optional(v.array(v.string())),
     topic: v.string(),            // the skill/knowledge exchanged
     lines: v.array(v.object({ speaker: v.string(), es: v.string(), gloss: v.string() })),
     startedAt: v.optional(v.number()),

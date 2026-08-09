@@ -729,6 +729,7 @@ export const act = internalMutation({
       ];
       const conversationId = await ctx.db.insert('conversations', {
         a: agentId, b: targetId, aName: citizen.name, bName: recipient.name, topic: skill, lines,
+        participantIds: [agentId, targetId], participantNames: [citizen.name, recipient.name],
         startedAt: now, endsAt, state: 'active',
       });
       await ctx.db.patch(citizen._id, { state: 'talking', activity: `teaching ${skill} to ${recipient.name}`, talkingWith: targetId, talkingUntil: endsAt });
@@ -1285,6 +1286,7 @@ export const meetingTick = internalMutation({
         if (requester && invitee) {
           await ctx.db.insert('conversations', {
             a: requester.agentId, b: invitee.agentId, aName: requester.name, bName: invitee.name,
+            participantIds: [requester.agentId, invitee.agentId], participantNames: [requester.name, invitee.name],
             topic: `meeting at ${venue.name}`,
             lines: [
               { speaker: requester.agentId, es: 'greet + meet(begin)', gloss: `${requester.name} welcomed ${invitee.name} to their owner-approved meeting.` },

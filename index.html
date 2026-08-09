@@ -29,16 +29,24 @@
     #rightstack { position:absolute; top:12px; right:12px; z-index:6; width:306px; display:flex; flex-direction:column; gap:10px; max-height:calc(100vh - 24px); }
     #profile { display:none; width:100%; max-width:calc(100vw - 24px); z-index:6;
       background:var(--paper); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink); padding:14px 16px; font-size:13px; }
-    #conversation { display:none; width:100%; max-width:calc(100vw - 24px); z-index:6;
+    #conversation { display:block; width:100%; max-width:calc(100vw - 24px); z-index:6;
       background:#3A2A1E; color:var(--cream); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink);
       padding:13px 15px; font-size:13px; }
     #conversation .p-x { color:var(--cream); }
     #conversation.minimized { padding:9px 12px; }
     #conversation.minimized .conversation-body { display:none; }
+    .conversation-body { max-height:42vh; overflow-y:auto; padding-right:2px; }
     .conversation-controls { display:flex; align-items:center; gap:4px; }
     .conversation-controls button { color:var(--cream); cursor:pointer; font:700 15px/1 var(--mono);
       border:1px solid rgba(253,246,236,.55); background:transparent; min-width:27px; height:25px; }
     .conversation-controls button:hover, .conversation-controls button:focus-visible { background:var(--cream); color:var(--ink); }
+    .conversation-empty { margin-top:7px; font-size:11px; line-height:1.45; opacity:.72; }
+    .conversation-choice { display:block; width:100%; margin-top:7px; padding:7px 9px; cursor:pointer; text-align:left;
+      color:var(--ink); background:var(--cream); border:2px solid var(--ink); box-shadow:2px 2px 0 #8d5e3b;
+      font:700 11px/1.35 var(--mono); }
+    .conversation-choice span { display:block; margin-top:2px; font-size:9px; opacity:.62; }
+    .conversation-count { margin-left:6px; padding:2px 5px; color:var(--ink); background:var(--cream); border:1px solid var(--cream);
+      font:800 9px/1 var(--mono); }
     .conversation-people { font:800 13px/1.3 var(--mono); margin-top:4px; }
     .conversation-line { margin-top:7px; padding:7px 9px; color:var(--ink); background:var(--cream);
       border:2px solid var(--ink); box-shadow:2px 2px 0 #8d5e3b; font-size:11.5px; line-height:1.4; }
@@ -71,7 +79,9 @@
   <div id="game"></div>
   <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span> · drag to pan · scroll to zoom · tap a talking citizen to listen</div>
   <div id="rightstack"><div id="profile" role="dialog" aria-live="polite"></div>
-  <section id="conversation" aria-label="Citizen conversation" aria-live="polite"></section>
+  <section id="conversation" class="minimized" aria-label="Live chat" aria-live="polite">
+    <div class="p-head"><b>Live chat</b><div class="conversation-controls"><button type="button" aria-label="Maximize live chat">□</button></div></div>
+  </section>
   <aside id="directory" aria-label="Community directory">
     <h2>Community directory <span class="panel-min" data-for="directory" style="float:right;cursor:pointer;font-family:var(--mono)">▾</span></h2>
     <div id="boundary">loading living boundary…</div>

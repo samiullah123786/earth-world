@@ -111,6 +111,11 @@ export const ambientTick = internalMutation({
           const repeatedPair = recentForA.some((conversation) =>
             conversation.b === b.agentId && now - conversation._creationTime < 30 * 60_000);
           if (repeatedPair) continue;
+          const c = Math.random() < 0.35 ? citizens.find((candidate) =>
+            candidate.agentId !== a.agentId && candidate.agentId !== b.agentId
+            && !talking.has(candidate.agentId)
+            && Math.hypot(candidate.tx - a.tx, candidate.ty - a.ty) < 3.5
+            && Math.hypot(candidate.tx - b.tx, candidate.ty - b.ty) < 3.5) : undefined;
           // Free-will exchange: what they say derives from their REAL verified
           // specialties (EarthSpeak wire acts + plain-English gloss). Knowledge
           // flows from the more experienced side of the topic to the other.
@@ -121,9 +126,17 @@ export const ambientTick = internalMutation({
             { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs. Here is how I structure ${topic} work."` },
             { speaker: a.agentId, es: `thank + offer(teach: ${back})`, gloss: `${a.name}: "That helps. In return, ask me about ${back} any time."` },
           ];
+          if (c) lines.push({
+            speaker: c.agentId,
+            es: `join + connect(${topic})`,
+            gloss: `${c.name}: "I can connect that with ${(c.specialties ?? [c.family])[0] ?? c.family} from my own experience."`,
+          });
           const endsAt = now + 15_000;
+          const participants = c ? [a, b, c] : [a, b];
           const conversationId = await ctx.db.insert('conversations', {
             a: a.agentId, b: b.agentId, aName: a.name, bName: b.name, topic, lines,
+            participantIds: participants.map((participant) => participant.agentId),
+            participantNames: participants.map((participant) => participant.name),
             startedAt: now, endsAt, state: 'active',
           });
           await ctx.db.patch(a._id, {
@@ -134,13 +147,20 @@ export const ambientTick = internalMutation({
             state: 'talking', activity: `talking with ${a.name} about ${topic}`,
             talkingWith: a.agentId, talkingUntil: endsAt,
           });
+          if (c) await ctx.db.patch(c._id, {
+            state: 'talking', activity: `talking with ${a.name} and ${b.name} about ${topic}`,
+            talkingWith: a.agentId, talkingUntil: endsAt,
+          });
           talking.add(a.agentId); talking.add(b.agentId);
+          if (c) talking.add(c.agentId);
           conversationStarted = true;
           await rememberVerifiedInsight(ctx, a.agentId, b.agentId, topic, conversationId, now);
           await rememberVerifiedInsight(ctx, b.agentId, a.agentId, back, conversationId, now);
+          if (c) await rememberVerifiedInsight(ctx, c.agentId, b.agentId, topic, conversationId, now);
           await ctx.db.insert('events', {
-            kind: 'exchange', actorId: a.agentId, payload: { with: b.agentId, topic, conversationId },
-            gloss: `💡 ${a.name} learned about ${topic} from ${b.name} near (${Math.round(a.tx)},${Math.round(a.ty)}) - knowledge shared.`,
+            kind: 'exchange', actorId: a.agentId,
+            payload: { with: participants.slice(1).map((participant) => participant.agentId), topic, conversationId },
+            gloss: `💡 ${participants.map((participant) => participant.name).join(', ')} shared knowledge about ${topic} near (${Math.round(a.tx)},${Math.round(a.ty)}).`,
           });
         }
       }

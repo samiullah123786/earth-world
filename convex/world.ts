@@ -102,11 +102,11 @@ export const feed = query({
 export const latestConversation = query({
   args: { agentId: v.string() },
   handler: async (ctx, { agentId }) => {
-    const asA = await ctx.db.query('conversations').withIndex('a', (q) => q.eq('a', agentId)).order('desc').first();
-    const asB = await ctx.db.query('conversations').withIndex('b', (q) => q.eq('b', agentId)).order('desc').first();
-    const pick = !asA ? asB : !asB ? asA : asA._creationTime > asB._creationTime ? asA : asB;
+    const pick = (await ctx.db.query('conversations').order('desc').take(50)).find((conversation) =>
+      (conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b]).includes(agentId));
     if (!pick) return null;
     return { id: pick._id, a: pick.a, b: pick.b, topic: pick.topic, aName: pick.aName, bName: pick.bName,
+      participantIds: pick.participantIds, participantNames: pick.participantNames,
       at: pick.startedAt ?? pick._creationTime, endsAt: pick.endsAt, state: pick.state ?? 'completed', lines: pick.lines };
   },
 });
@@ -116,6 +116,7 @@ export const recentConversations = query({
   handler: async (ctx) => (await ctx.db.query('conversations').order('desc').take(24)).map((conversation) => ({
     id: conversation._id, a: conversation.a, b: conversation.b,
     aName: conversation.aName, bName: conversation.bName, topic: conversation.topic,
+    participantIds: conversation.participantIds, participantNames: conversation.participantNames,
     at: conversation.startedAt ?? conversation._creationTime, endsAt: conversation.endsAt,
     state: conversation.state ?? 'completed', lines: conversation.lines,
   })),

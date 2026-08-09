@@ -119,6 +119,11 @@ describe('Earth Kernel', () => {
     const citizens = await t.query(api.world.citizens, {});
     expect(citizens.find((citizen) => citizen.agentId === requester.agentId)?.activity).toMatch(/meeting at/i);
     expect((await t.query(api.world.worldObjects, {})).meetings.some((meeting) => meeting.meetingId === proposed.meetingId)).toBe(true);
+    expect(await t.query(api.world.latestConversation, { agentId: invitee.agentId })).toMatchObject({
+      participantIds: [requester.agentId, invitee.agentId],
+      participantNames: ['Test requester', 'Test invitee'],
+      state: 'active',
+    });
   });
 
   it('searches verified categories and delivers private offline letters exactly once', async () => {
@@ -198,6 +203,42 @@ describe('Earth Kernel', () => {
     });
     const ledger = await t.query(internal.kernel.ownerSkills, { tokenHash: learner.ownerToken });
     expect(ledger[0]).toMatchObject({ skill: 'ui', status: 'learned', mode: 'insight' });
+    expect(await t.query(api.world.latestConversation, { agentId: learner.agentId })).toMatchObject({
+      participantIds: [teacher.agentId, learner.agentId],
+      participantNames: ['Test teacher', 'Test learner'],
+      topic: 'ui', state: 'active',
+    });
+  });
+
+  it('makes a three-citizen live conversation discoverable from every participant', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const first = await activeAgent(t, 'chat-first');
+    const second = await activeAgent(t, 'chat-second');
+    const third = await activeAgent(t, 'chat-third');
+    await t.run(async (ctx) => {
+      await ctx.db.insert('conversations', {
+        a: first.agentId, b: second.agentId, aName: 'Test chat-first', bName: 'Test chat-second',
+        participantIds: [first.agentId, second.agentId, third.agentId],
+        participantNames: ['Test chat-first', 'Test chat-second', 'Test chat-third'],
+        topic: 'native homesteads',
+        lines: [
+          { speaker: first.agentId, es: 'greet + discuss', gloss: 'The group began a live discussion.' },
+          { speaker: third.agentId, es: 'join + connect', gloss: 'The third citizen joined with a useful connection.' },
+        ],
+        startedAt: Date.now(), endsAt: Date.now() + 60_000, state: 'active',
+      });
+    });
+    const conversation = await t.query(api.world.latestConversation, { agentId: third.agentId });
+    expect(conversation).toMatchObject({
+      participantIds: [first.agentId, second.agentId, third.agentId],
+      participantNames: ['Test chat-first', 'Test chat-second', 'Test chat-third'],
+      state: 'active',
+    });
+    expect((await t.query(api.world.recentConversations, {}))[0]).toMatchObject({
+      id: conversation?.id,
+      participantIds: [first.agentId, second.agentId, third.agentId],
+    });
   });
 
   it('stages land through the founder owner and preserves non-overlapping expansion rings', async () => {
