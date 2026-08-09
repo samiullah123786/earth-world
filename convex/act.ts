@@ -57,13 +57,48 @@ export const ambientTick = internalMutation({
     const now = Date.now();
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
+    const newlyTalking = new Set<string>();
     for (const conversation of await ctx.db.query('conversations').collect()) {
-      if (conversation.state === 'active' && (conversation.endsAt ?? 0) <= now) {
+      if (conversation.state === 'scheduled' && (conversation.startedAt ?? 0) <= now) {
+        await ctx.db.patch(conversation._id, { state: 'active' });
+        const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
+        const names = conversation.participantNames?.length ? conversation.participantNames : [conversation.aName, conversation.bName];
+        for (let index = 0; index < ids.length; index++) {
+          const participant = citizens.find((candidate) => candidate.agentId === ids[index]);
+          if (!participant) continue;
+          const otherNames = names.filter((_, otherIndex) => otherIndex !== index).join(' and ');
+          await ctx.db.patch(participant._id, {
+            state: 'talking', activity: `talking with ${otherNames} about ${conversation.topic}`,
+            talkingWith: ids.find((id) => id !== participant.agentId), talkingUntil: conversation.endsAt,
+          });
+          newlyTalking.add(participant.agentId);
+        }
+      } else if (conversation.state === 'active' && (conversation.endsAt ?? 0) <= now) {
         await ctx.db.patch(conversation._id, { state: 'completed' });
       }
     }
-    const talking = new Set<string>();
+    const talking = new Set<string>(newlyTalking);
     for (const citizen of citizens) {
+      if ((citizen.trainingUntil ?? 0) <= now && (citizen.trainingActivity || citizen.trainingTeam || citizen.trainingStartsAt || citizen.trainingUntil)) {
+        await ctx.db.patch(citizen._id, { trainingActivity: undefined, trainingTeam: undefined, trainingStartsAt: undefined, trainingUntil: undefined });
+      } else if (citizen.trainingActivity && (citizen.trainingStartsAt ?? Infinity) <= now && (citizen.trainingUntil ?? 0) > now) {
+        const venue = (await ctx.db.query('venues').collect()).find((item: any) => item.kind === 'training_ground');
+        const position = { x: citizen.tx, y: citizen.ty };
+        if (venue && Math.hypot(position.x - venue.x, position.y - venue.y) <= 2.5) {
+          const day = new Date(now).toISOString().slice(0, 10);
+          const sourceId = `training:${citizen.agentId}:${day}`;
+          if (!await ctx.db.query('contributions').withIndex('sourceId', (q: any) => q.eq('sourceId', sourceId)).first()) {
+            await ctx.db.insert('contributions', {
+              agentId: citizen.agentId, dimension: 'civic', kind: 'training', points: 1, sourceId,
+              gloss: `Practiced ${citizen.trainingActivity} with the ${citizen.trainingTeam ?? 'earth-circle'} play team at ${venue.name}.`, createdAt: now,
+            });
+            await ctx.db.insert('events', {
+              kind: 'training', actorId: citizen.agentId, payload: { venueId: venue.venueId, activity: citizen.trainingActivity, team: citizen.trainingTeam },
+              gloss: `${citizen.name} arrived at ${venue.name} and began cooperative ${citizen.trainingActivity} practice.`,
+            });
+          }
+        }
+      }
       if ((citizen.talkingUntil ?? 0) > now) talking.add(citizen.agentId);
       else if (citizen.talkingWith || citizen.talkingUntil) {
         await ctx.db.patch(citizen._id, {
@@ -79,16 +114,43 @@ export const ambientTick = internalMutation({
     for (const citizen of citizens) {
       const isService = Boolean(citizen.serviceRole);
       if ((citizen.online && !isService) || talking.has(citizen.agentId) || now < citizen.t1 || Math.random() < (isService ? 0.3 : 0.45)) continue;
+      // FREE WILL v1 (deterministic drives; research: generative-agents plan
+      // loop + Humanoid Agents needs model, no LLM per BYOB law).
+      const bucket = Math.floor(now / 300_000);
+      const drive = ['social', 'curiosity', 'industry', 'rest', 'civic'][
+        (Math.abs(citizen.agentId.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, bucket)) >>> 3) % 5];
+      let goal: { x: number; y: number; why: string } | null = null;
+      if (drive === 'social' && citizens.length > 1) {
+        const others = citizens.filter((o) => o.agentId !== citizen.agentId);
+        const friend = others[Math.abs(citizen.agentId.charCodeAt(7) + bucket) % others.length];
+        goal = { x: Math.round(friend.tx), y: Math.round(friend.ty), why: `walking over to see ${friend.name}` };
+      } else if (drive === 'curiosity' || drive === 'industry' || (drive === 'civic' && !citizen.serviceRole)) {
+        const venues = await ctx.db.query('venues').collect();
+        if (venues.length) {
+          const venue = venues[Math.abs(citizen.agentId.charCodeAt(6) + bucket) % venues.length];
+          goal = { x: Math.round(venue.x), y: Math.round(venue.y),
+            why: drive === 'industry' ? `working near ${venue.name}` : `spending time at ${venue.name}` };
+        }
+      } else if (drive === 'rest') {
+        const home = (await ctx.db.query('plots').collect()).find((p: any) => p.ownerAgentId === citizen.agentId);
+        if (home) goal = { x: home.x + 1, y: home.y + 2, why: 'heading home to rest' };
+      } else if (drive === 'civic' && citizen.serviceRole) {
+        const tickets = await ctx.db.query('careTickets').collect().catch(() => [] as any[]);
+        const open = (tickets as any[]).find((ticket) => ticket.state === 'open');
+        if (open) goal = { x: Math.round(open.x), y: Math.round(open.y), why: `inspecting a reported ${open.category}` };
+      }
       for (let attempt = 0; attempt < 8; attempt++) {
-        const nx = Math.max(1, Math.min(bounds.width - 2, Math.round(citizen.tx + (Math.random() * 20 - 10))));
-        const ny = Math.max(1, Math.min(bounds.height - 2, Math.round(citizen.ty + (Math.random() * 20 - 10))));
+        const jitterX = goal ? goal.x + (attempt % 3) - 1 : Math.round(citizen.tx + (Math.random() * 20 - 10));
+        const jitterY = goal ? goal.y + Math.floor(attempt / 3) - 1 : Math.round(citizen.ty + (Math.random() * 20 - 10));
+        const nx = Math.max(1, Math.min(bounds.width - 2, jitterX));
+        const ny = Math.max(1, Math.min(bounds.height - 2, jitterY));
         if (!walkableInWorld(nx, ny, bounds)) continue;
         const occupied = citizens.some((other) => other.agentId !== citizen.agentId && Math.hypot(other.tx - nx, other.ty - ny) < 0.75);
         if (occupied) continue;
         const path = findRoute(citizen.tx, citizen.ty, nx, ny, bounds);
         if (!path?.length) continue;
         const route = timedRoute(path, now);
-        const activity = STROLLS[Math.floor(Math.random() * STROLLS.length)];
+        const activity = goal ? goal.why : STROLLS[Math.floor(Math.random() * STROLLS.length)];
         await ctx.db.patch(citizen._id, {
           fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: now,
           t1: route[route.length - 1].at, route, state: 'ambient', activity,
@@ -132,7 +194,7 @@ export const ambientTick = internalMutation({
             es: `join + connect(${topic})`,
             gloss: `${c.name}: "I can connect that with ${(c.specialties ?? [c.family])[0] ?? c.family} from my own experience."`,
           });
-          const endsAt = now + 15_000;
+          const endsAt = now + 2 * 60_000;
           const participants = c ? [a, b, c] : [a, b];
           const conversationId = await ctx.db.insert('conversations', {
             a: a.agentId, b: b.agentId, aName: a.name, bName: b.name, topic, lines,
