@@ -77,7 +77,8 @@ export const ambientTick = internalMutation({
     const canStartConversation = !latestConversation || now - latestConversation._creationTime >= 90_000;
     let conversationStarted = false;
     for (const citizen of citizens) {
-      if (citizen.online || talking.has(citizen.agentId) || now < citizen.t1 || Math.random() < 0.45) continue;
+      const isService = Boolean(citizen.serviceRole);
+      if ((citizen.online && !isService) || talking.has(citizen.agentId) || now < citizen.t1 || Math.random() < (isService ? 0.3 : 0.45)) continue;
       for (let attempt = 0; attempt < 8; attempt++) {
         const nx = Math.max(1, Math.min(bounds.width - 2, Math.round(citizen.tx + (Math.random() * 20 - 10))));
         const ny = Math.max(1, Math.min(bounds.height - 2, Math.round(citizen.ty + (Math.random() * 20 - 10))));
