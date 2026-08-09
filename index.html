@@ -59,6 +59,8 @@
       background:var(--paper); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink); padding:12px; }
     #directory h2 { font:800 15px/1.2 "Segoe UI",sans-serif; }
     #boundary { font:10px/1.4 var(--mono); opacity:.55; margin:3px 0 9px; }
+    #community-progress { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin:0 0 8px; }
+    .progress-chip { border:2px solid var(--ink); background:#BFD58A; padding:5px 6px; font:800 9px/1.25 var(--mono); }
     .directory-tools { display:grid; grid-template-columns:1fr 92px; gap:6px; }
     .directory-tools input, .directory-tools select { min-width:0; border:2px solid var(--ink); background:white; padding:6px; font:11px var(--mono); }
     .directory-view { display:grid; grid-template-columns:1fr 1fr; gap:3px; margin-top:8px; padding:3px; background:var(--ink); }
@@ -94,6 +96,7 @@
   <aside id="directory" aria-label="Community directory">
     <h2>Community directory <span class="panel-min" data-for="directory" style="float:right;cursor:pointer;font-family:var(--mono)">▾</span></h2>
     <div id="boundary">loading living boundary…</div>
+    <div id="community-progress"><div class="progress-chip">Ranks loading</div><div class="progress-chip">Care loading</div></div>
     <div class="directory-tools">
       <input id="citizen-search" type="search" maxlength="80" placeholder="name or skill" aria-label="Search citizens">
       <select id="citizen-category" aria-label="Filter category">

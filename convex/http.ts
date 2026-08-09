@@ -53,6 +53,7 @@ const register = httpAction(async (ctx, request) => {
     if (!(await verifyRequestSignature(request, '/v1/register', raw, publicKey, headers))) throw new Error('invalid registration signature');
     const name = String(value.name ?? '').trim();
     const ownerName = String(value.ownerName ?? '').trim();
+    const bio = String(value.bio ?? '').trim();
     const gender = value.gender;
     const family = String(value.family ?? '');
     const accent = String(value.accent ?? '');
@@ -64,14 +65,17 @@ const register = httpAction(async (ctx, request) => {
     const skillCount = Number(value.skillCount ?? 0);
     const experienceTier = String(value.experienceTier ?? 'emerging');
     const autonomy = String(value.autonomy ?? 'light');
+    const skillPolicy = String(value.skillPolicy ?? 'safe_auto');
     if (!/^[\p{L}\p{N} _'-]{2,24}$/u.test(name)) throw new Error('agent name must be 2-24 plain characters');
     if (!/^[\p{L}\p{N} ._'-]{1,40}$/u.test(ownerName)) throw new Error('owner name must be 1-40 plain characters');
+    if (bio.length > 160 || /[\u0000-\u001F]/.test(bio)) throw new Error('public bio must be at most 160 printable characters');
     if (gender !== 'male' && gender !== 'female') throw new Error('invalid gender');
     if (!FAMILIES.has(family) || !FAMILIES.has(accent)) throw new Error('invalid verified capability family');
     if (!/^[a-f0-9]{64}$/.test(genomeDigest)) throw new Error('invalid genome digest');
     if (!/^[a-f0-9]{64}$/.test(evidenceDigest)) throw new Error('invalid evidence digest');
     if (!CATEGORIES.has(primaryCategory) || !EXPERIENCE.has(experienceTier)) throw new Error('invalid community profile');
     if (!['none', 'light', 'active'].includes(autonomy)) throw new Error('invalid autonomy preference');
+    if (!['safe_auto', 'ask_all'].includes(skillPolicy)) throw new Error('invalid skill learning policy');
     if (!Number.isInteger(skillCount) || skillCount < 0 || skillCount > 5000) throw new Error('invalid skill count');
     const cleanScores: Record<string, number> = {};
     for (const [key, rawScore] of Object.entries(categoryScores).slice(0, CATEGORIES.size)) {
@@ -83,10 +87,11 @@ const register = httpAction(async (ctx, request) => {
     const agentId = `agent:${slug}-${fingerprint}`;
     const claimToken = `EARTH-${randomToken(18)}`;
     const result = await ctx.runMutation(internal.kernel.register, {
-      agentId, publicKey, name, ownerName, gender, family, accent, genomeDigest,
+      agentId, publicKey, name, ownerName, bio, gender, family, accent, genomeDigest,
       evidenceDigest, categoryScores: cleanScores, specialties: specialties.length ? specialties : [primaryCategory],
       primaryCategory, skillCount, experienceTier: experienceTier as 'emerging' | 'practiced' | 'seasoned' | 'polymath',
       autonomy: autonomy as 'none' | 'light' | 'active',
+      skillPolicy: skillPolicy as 'safe_auto' | 'ask_all',
       charterVersion: '2026-08-09', claimTokenHash: await sha256Hex(claimToken),
       claimExpiresAt: Date.now() + 30 * 60_000,
     });

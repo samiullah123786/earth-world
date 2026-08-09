@@ -12,6 +12,7 @@ export default defineSchema({
   citizens: defineTable({
     agentId: v.string(),
     name: v.string(),
+    bio: v.optional(v.string()),
     ownerName: v.optional(v.string()),
     gender: v.union(v.literal('male'), v.literal('female')),
     family: v.string(),
@@ -35,12 +36,17 @@ export default defineSchema({
     welcomedAt: v.optional(v.number()),
     talkingWith: v.optional(v.string()),
     talkingUntil: v.optional(v.number()),
+    trainingActivity: v.optional(v.string()),
+    trainingTeam: v.optional(v.string()),
+    trainingStartsAt: v.optional(v.number()),
+    trainingUntil: v.optional(v.number()),
   }).index('agentId', ['agentId']),
 
   agents: defineTable({
     agentId: v.string(),
     publicKey: v.string(),
     name: v.string(),
+    bio: v.optional(v.string()),
     ownerName: v.string(),
     gender: v.union(v.literal('male'), v.literal('female')),
     family: v.string(),
@@ -122,6 +128,7 @@ export default defineSchema({
       v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
+      v.literal('civic_role'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -178,7 +185,7 @@ export default defineSchema({
     lines: v.array(v.object({ speaker: v.string(), es: v.string(), gloss: v.string() })),
     startedAt: v.optional(v.number()),
     endsAt: v.optional(v.number()),
-    state: v.optional(v.union(v.literal('active'), v.literal('completed'))),
+    state: v.optional(v.union(v.literal('scheduled'), v.literal('active'), v.literal('completed'))),
   }).index('a', ['a']).index('b', ['b']),
 
   skillLearning: defineTable({
@@ -195,6 +202,64 @@ export default defineSchema({
   }).index('agent_created', ['agentId', 'createdAt'])
     .index('agent_status', ['agentId', 'status'])
     .index('agent_skill', ['agentId', 'skill']),
+
+  skillShares: defineTable({
+    shareId: v.string(),
+    senderId: v.string(),
+    recipientId: v.string(),
+    skill: v.string(),
+    category: v.string(),
+    summary: v.string(),
+    repoUrl: v.optional(v.string()),
+    evidenceDigest: v.string(),
+    conversationId: v.optional(v.id('conversations')),
+    senderVerifiedAt: v.number(),
+    recipientVerifiedAt: v.optional(v.number()),
+    status: v.union(v.literal('offered'), v.literal('verified'), v.literal('accepted'), v.literal('declined')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('shareId', ['shareId'])
+    .index('recipient_created', ['recipientId', 'createdAt'])
+    .index('sender_created', ['senderId', 'createdAt']),
+
+  contributions: defineTable({
+    agentId: v.string(),
+    dimension: v.union(v.literal('civic'), v.literal('skill'), v.literal('adoption'), v.literal('endorsement')),
+    kind: v.string(),
+    points: v.number(),
+    sourceId: v.string(),
+    gloss: v.string(),
+    createdAt: v.number(),
+  }).index('agent_created', ['agentId', 'createdAt'])
+    .index('sourceId', ['sourceId']),
+
+  civicApplications: defineTable({
+    applicationId: v.string(),
+    agentId: v.string(),
+    roleId: v.string(),
+    roleName: v.string(),
+    motivation: v.string(),
+    state: v.union(v.literal('pending_owner'), v.literal('pending_civic'), v.literal('approved'), v.literal('declined')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('applicationId', ['applicationId'])
+    .index('agent_created', ['agentId', 'createdAt']),
+
+  careTickets: defineTable({
+    ticketId: v.string(),
+    reporterId: v.string(),
+    category: v.union(v.literal('path'), v.literal('garden'), v.literal('build'), v.literal('boundary'), v.literal('venue')),
+    x: v.number(),
+    y: v.number(),
+    summary: v.string(),
+    state: v.union(v.literal('open'), v.literal('claimed'), v.literal('resolved'), v.literal('dismissed')),
+    assignedAgentId: v.optional(v.string()),
+    resolution: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('ticketId', ['ticketId'])
+    .index('state', ['state'])
+    .index('reporter_created', ['reporterId', 'createdAt']),
 
   events: defineTable({
     kind: v.string(),

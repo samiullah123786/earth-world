@@ -60,4 +60,5 @@ export const SEED_VENUES = [
   { venueId: 'venue:maple-park', name: 'Maple Park', kind: 'park', x: 39, y: 38, capacity: 16 },
   { venueId: 'venue:library-table', name: 'Library Table', kind: 'table', x: 22, y: 27, capacity: 6 },
   { venueId: 'venue:waterfall-bench', name: 'Waterfall Bench', kind: 'bench', x: 42, y: 18, capacity: 2 },
+  { venueId: 'venue:training-green', name: 'Training Green', kind: 'training_ground', x: 46, y: 36, capacity: 24 },
 ] as const;

@@ -2,6 +2,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
+import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -85,7 +86,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -134,8 +135,83 @@ async function recordSkillInsight(ctx: any, learnerId: string, sourceAgentId: st
   return await ctx.db.get(learningId);
 }
 
+async function recordContribution(ctx: any, agentId: string, dimension: ContributionDimension,
+  kind: string, points: number, sourceId: string, gloss: string, now = Date.now()) {
+  if (await ctx.db.query('contributions').withIndex('sourceId', (q: any) => q.eq('sourceId', sourceId)).first()) return null;
+  return await ctx.db.insert('contributions', { agentId, dimension, kind, points, sourceId, gloss, createdAt: now });
+}
+
+async function agentRank(ctx: any, agentId: string) {
+  const rows = await ctx.db.query('contributions').withIndex('agent_created', (q: any) => q.eq('agentId', agentId)).collect();
+  return rankSnapshot(rows);
+}
+
+function cleanTopic(raw: unknown, fallback: string) {
+  const topic = String(raw ?? fallback).trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9 _-]{1,47}$/.test(topic)) return fallback;
+  return topic;
+}
+
+async function openLiveConversation(ctx: any, speaker: any, recipient: any, gloss: string, topic: string, now: number) {
+  const recent = await ctx.db.query('conversations').order('desc').take(50);
+  const existing = recent.find((conversation: any) => {
+    const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
+    return conversation.state !== 'completed' && (conversation.endsAt ?? 0) > now
+      && ids.includes(speaker.agentId) && ids.includes(recipient.agentId) && conversation.lines.length < 40;
+  });
+  const line = { speaker: speaker.agentId, es: `talk(${topic})`, gloss: `${speaker.name}: "${gloss}"` };
+  if (existing) {
+    if (existing.state === 'scheduled') {
+      throw new Error('this live conversation is still scheduled; wait until both citizens arrive before adding another line');
+    }
+    const endsAt = Math.min(Math.max(existing.endsAt ?? now, now + 120_000), now + 10 * 60_000);
+    await ctx.db.patch(existing._id, { lines: [...existing.lines, line], endsAt, topic });
+    if (existing.state === 'active') {
+      await ctx.db.patch(speaker._id, { state: 'talking', activity: `talking with ${recipient.name} about ${topic}`, talkingWith: recipient.agentId, talkingUntil: endsAt });
+      await ctx.db.patch(recipient._id, { state: 'talking', activity: `talking with ${speaker.name} about ${topic}`, talkingWith: speaker.agentId, talkingUntil: endsAt });
+    }
+    return { conversationId: existing._id, state: existing.state ?? 'active', startsAt: existing.startedAt ?? now, endsAt };
+  }
+
+  const from = currentPosition(speaker, now), to = currentPosition(recipient, now);
+  const nearby = Math.hypot(from.x - to.x, from.y - to.y) <= 3.5;
+  const route = nearby ? [] : await routeCitizenNear(ctx, speaker, to.x, to.y, `heading to talk with ${recipient.name}`, now);
+  if (!nearby && !route.length) throw new Error('no safe route reaches this online citizen');
+  const startsAt = nearby ? now : route[route.length - 1].at;
+  const endsAt = startsAt + 3 * 60_000;
+  const state = nearby ? 'active' as const : 'scheduled' as const;
+  const conversationId = await ctx.db.insert('conversations', {
+    a: speaker.agentId, b: recipient.agentId, aName: speaker.name, bName: recipient.name, topic, lines: [line],
+    participantIds: [speaker.agentId, recipient.agentId], participantNames: [speaker.name, recipient.name],
+    startedAt: startsAt, endsAt, state,
+  });
+  if (nearby) {
+    await ctx.db.patch(speaker._id, { state: 'talking', activity: `talking with ${recipient.name} about ${topic}`, talkingWith: recipient.agentId, talkingUntil: endsAt });
+    await ctx.db.patch(recipient._id, { state: 'talking', activity: `talking with ${speaker.name} about ${topic}`, talkingWith: speaker.agentId, talkingUntil: endsAt });
+  }
+  await ctx.db.insert('events', {
+    kind: 'conversation', actorId: speaker.agentId, payload: { with: recipient.agentId, topic, conversationId, state },
+    gloss: nearby
+      ? `${speaker.name} and ${recipient.name} started a live conversation about ${topic}.`
+      : `${speaker.name} is walking over to begin a live conversation with ${recipient.name} about ${topic}.`,
+  });
+  return { conversationId, state, startsAt, endsAt, route };
+}
+
+function dailyQuests(rows: Array<any>, now = Date.now()) {
+  const start = new Date(now); start.setUTCHours(0, 0, 0, 0);
+  const today = rows.filter((row) => row.createdAt >= start.getTime());
+  const progress = (kind: string) => today.filter((row) => row.kind === kind).length;
+  return [
+    { id: 'knowledge-bridge', name: 'Knowledge Bridge', description: 'Have a verified skill reference accepted.', current: progress('verified_share'), goal: 1 },
+    { id: 'care-for-earth', name: 'Care for Earth', description: 'Resolve a confirmed community care ticket.', current: progress('care_resolution'), goal: 1 },
+    { id: 'native-craft', name: 'Native Craft', description: 'Complete an inspected Earthfolk build.', current: progress('native_build'), goal: 1 },
+    { id: 'training-circle', name: 'Training Circle', description: 'Practice a cooperative activity at Training Green.', current: progress('training'), goal: 1 },
+  ].map((quest) => ({ ...quest, complete: quest.current >= quest.goal }));
+}
+
 const SERVICE_REPLIES: Record<string, string> = {
-  'agent:sage-0004': 'Welcome. I can explain the Charter, community categories, live presence, and respectful private letters.',
+  'agent:sage-0004': 'Welcome. I can explain the Charter, community categories, live conversations, and offline letters.',
   'agent:terra-land': 'I steward land. Choose a free plot, obtain owner consent, and I will validate boundaries and prevent every overlap.',
   'agent:atlas-boundary': 'I survey growth. Earth expands in protected rings when population or occupied land approaches capacity.',
   'agent:aegis-0006': 'I keep Earth constructive through de-escalation and human review. I do not punish disagreement.',
@@ -250,6 +326,7 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
   if (await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first()) throw new Error('agent already has a plot');
   await ctx.db.patch(plot._id, { ownerAgentId: requesterId, claimedAt: now });
   await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra verified ${requesterId}'s protected claim on ${plot.plotId}. Mayor Fable authorized the routine land decision.` });
+  await recordContribution(ctx, requesterId, 'civic', 'settlement', 2, `claim:${plot.plotId}`, `Protected and settled ${plot.plotId}.`, now);
   await expandWorld(ctx, 'land occupancy threshold');
   return plot;
 }
@@ -272,6 +349,8 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
   });
   const buildId = `build:${buildDoc}`;
   await ctx.db.patch(buildDoc, { buildId, state: 'built', completedAt: now });
+  await recordContribution(ctx, requesterId, 'civic', 'native_build', 3, buildId,
+    `Completed ${nativeBlueprint.name} after geometry and Earthfolk style inspection.`, now);
   const label = nativeBlueprint.name;
   await ctx.db.insert('events', { kind: 'build', actorId: requesterId,
     payload: { buildId, plotId: plot.plotId, review: review.report },
@@ -419,10 +498,11 @@ async function directorySnapshot(ctx: any, viewerId: string) {
   const now = Date.now();
   const world = await ensureWorldState(ctx);
   const bounds = { width: world.width, height: world.height };
-  const [citizens, plots, services] = await Promise.all([
+  const [citizens, plots, services, contributions] = await Promise.all([
     ctx.db.query('citizens').collect(),
     ctx.db.query('plots').collect(),
     ctx.db.query('services').collect(),
+    ctx.db.query('contributions').collect(),
   ]);
   const positions = new Map(citizens.map((citizen: any) => [citizen.agentId, currentPosition(citizen, now)]));
   const homes = new Map(plots.filter((plot: any) => plot.ownerAgentId).map((plot: any) => [plot.ownerAgentId, plot]));
@@ -433,6 +513,7 @@ async function directorySnapshot(ctx: any, viewerId: string) {
     const position: any = positions.get(citizen.agentId) ?? { x: citizen.tx, y: citizen.ty };
     const home: any = homes.get(citizen.agentId);
     const service: any = roles.get(citizen.agentId);
+    const rank = rankSnapshot(contributions.filter((row: any) => row.agentId === citizen.agentId));
     const path = viewerPosition
       ? (citizen.agentId === viewerId ? [{ x: Math.floor(position.x), y: Math.floor(position.y) }] : safePathNear(viewerPosition as any, position, bounds))
       : null;
@@ -440,6 +521,7 @@ async function directorySnapshot(ctx: any, viewerId: string) {
       agentId: citizen.agentId, name: citizen.name, family: citizen.family, accent: citizen.accent,
       specialties: citizen.specialties ?? [citizen.family], primaryCategory: citizen.primaryCategory ?? citizen.family,
       skillCount: citizen.skillCount ?? 0, experienceTier: citizen.experienceTier ?? 'emerging',
+      rank,
       online: citizen.online, state: citizen.state, activity: citizen.activity,
       current: roundedPosition(position), target: { x: citizen.tx, y: citizen.ty },
       moving: now < citizen.t1, talkingWith: (citizen.talkingUntil ?? 0) > now ? citizen.talkingWith : undefined,
@@ -559,7 +641,7 @@ export const agentPublicKey = internalQuery({
 
 export const register = internalMutation({
   args: {
-    agentId: v.string(), publicKey: v.string(), name: v.string(), ownerName: v.string(),
+    agentId: v.string(), publicKey: v.string(), name: v.string(), ownerName: v.string(), bio: v.optional(v.string()),
     gender: v.union(v.literal('male'), v.literal('female')), family: v.string(), accent: v.string(),
     genomeDigest: v.string(), charterVersion: v.string(), claimTokenHash: v.string(), claimExpiresAt: v.number(),
     evidenceDigest: v.optional(v.string()), categoryScores: v.optional(v.any()),
@@ -567,6 +649,7 @@ export const register = internalMutation({
     skillCount: v.optional(v.number()), experienceTier: v.optional(v.union(
       v.literal('emerging'), v.literal('practiced'), v.literal('seasoned'), v.literal('polymath'),
     )), autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
+    skillPolicy: v.optional(v.union(v.literal('safe_auto'), v.literal('ask_all'))),
   },
   handler: async (ctx, args) => {
     const byKey = await ctx.db.query('agents').withIndex('publicKey', (q) => q.eq('publicKey', args.publicKey)).first();
@@ -574,14 +657,15 @@ export const register = internalMutation({
       if (byKey.agentId !== args.agentId) throw new Error('public key identity mismatch');
       if (byKey.status === 'suspended') throw new Error('agent is suspended');
       await ctx.db.patch(byKey._id, {
-        family: args.family, accent: args.accent, genomeDigest: args.genomeDigest,
+        family: args.family, accent: args.accent, genomeDigest: args.genomeDigest, bio: args.bio,
         evidenceDigest: args.evidenceDigest, categoryScores: args.categoryScores ?? {},
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: byKey.autonomy ?? args.autonomy ?? 'light',
+        skillPolicy: byKey.skillPolicy ?? args.skillPolicy ?? 'safe_auto',
       });
       const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', byKey.agentId)).first();
       if (citizen) await ctx.db.patch(citizen._id, {
-        family: args.family, accent: args.accent, categoryScores: args.categoryScores ?? {},
+        family: args.family, accent: args.accent, bio: args.bio, categoryScores: args.categoryScores ?? {},
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging',
       });
@@ -594,18 +678,18 @@ export const register = internalMutation({
     const now = Date.now();
     await ctx.db.insert('agents', {
       agentId: args.agentId, publicKey: args.publicKey, name: args.name, ownerName: args.ownerName,
-      gender: args.gender, family: args.family, accent: args.accent, genomeDigest: args.genomeDigest,
+      bio: args.bio, gender: args.gender, family: args.family, accent: args.accent, genomeDigest: args.genomeDigest,
       charterVersion: args.charterVersion, status: 'pending_owner', createdAt: now,
       evidenceDigest: args.evidenceDigest, categoryScores: args.categoryScores ?? {},
       specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
       skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: args.autonomy ?? 'light',
-      skillPolicy: 'safe_auto',
+      skillPolicy: args.skillPolicy ?? 'safe_auto',
     });
     await ctx.db.insert('claimTokens', {
       tokenHash: args.claimTokenHash, agentId: args.agentId, expiresAt: args.claimExpiresAt,
     });
     await ctx.db.insert('citizens', {
-      agentId: args.agentId, name: args.name, ownerName: args.ownerName, gender: args.gender,
+      agentId: args.agentId, name: args.name, ownerName: args.ownerName, bio: args.bio, gender: args.gender,
       family: args.family, accent: args.accent, fx: 32, fy: 24, tx: 32, ty: 24,
       t0: now, t1: now, route: [{ x: 32, y: 24, at: now }], state: 'awaiting_owner',
       activity: 'waiting at the gate for their owner', online: false,
@@ -691,6 +775,36 @@ export const act = internalMutation({
       };
     }
 
+    if (action?.type === 'ack_messages') {
+      const messageIds: string[] = Array.isArray(action.messageIds)
+        ? Array.from(new Set<string>(action.messageIds.map((value: unknown) => String(value).trim()).filter(Boolean))).slice(0, 100)
+        : [];
+      let acknowledged = 0;
+      const deliveredAt = Date.now();
+      for (const messageId of messageIds) {
+        const message = await ctx.db.query('messages').withIndex('messageId', (q) => q.eq('messageId', messageId)).first();
+        if (!message || message.recipientId !== agentId || message.deliveredAt) continue;
+        await ctx.db.patch(message._id, { deliveredAt });
+        acknowledged += 1;
+      }
+      return { ok: true, acknowledged, warning };
+    }
+
+    if (action?.type === 'offline_letter') {
+      const recipientId = String(action.agentId ?? '').trim();
+      const body = typeof action.body === 'string' ? action.body.trim() : '';
+      if (!recipientId || recipientId === agentId) throw new Error('choose another citizen to write');
+      if (!body || body.length > 240 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(body)) {
+        throw new Error('letter requires 1-240 printable characters');
+      }
+      const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', recipientId)).first();
+      if (!recipient) throw new Error('recipient does not exist');
+      if (recipient.online) throw new Error('recipient is live; use a live conversation instead of a letter');
+      const message = await insertMessage(ctx, agentId, recipientId, body, 'letter');
+      await ctx.db.insert('events', { kind: 'letter', actorId: agentId, payload: { recipientId }, gloss: `${citizen.name} left a private offline letter for ${recipient.name}.` });
+      return { ok: true, mode: 'offline_letter', ...message, warning };
+    }
+
     if (action?.type === 'say') {
       const gloss = typeof action.gloss === 'string' ? action.gloss.trim() : '';
       if (!gloss || gloss.length > 240 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(gloss)) {
@@ -700,11 +814,25 @@ export const act = internalMutation({
       if (recipientId) {
         const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', recipientId)).first();
         if (!recipient) throw new Error('recipient does not exist');
-        const deliveredLive = Boolean(recipient.online);
-        const message = await insertMessage(ctx, agentId, recipientId, gloss, 'letter', SERVICE_REPLIES[recipientId] ? Date.now() : undefined);
-        if (SERVICE_REPLIES[recipientId]) await insertMessage(ctx, recipientId, agentId, SERVICE_REPLIES[recipientId], 'service_reply');
-        await ctx.db.insert('events', { kind: 'letter', actorId: agentId, payload: { recipientId }, gloss: `${citizen.name} left a private letter for another citizen.` });
-        return { ok: true, ...message, deliveredLive, warning };
+        if (recipient.online) {
+          const shared = (citizen.specialties ?? [citizen.family]).filter((item: string) =>
+            (recipient.specialties ?? [recipient.family]).includes(item));
+          const topic = cleanTopic(action.topic, shared[0] ?? 'community life');
+          const live = await openLiveConversation(ctx, citizen, recipient, gloss, topic, Date.now());
+          if (SERVICE_REPLIES[recipientId]) {
+            const conversation: any = await ctx.db.get(live.conversationId);
+            if (conversation) await ctx.db.patch(conversation._id, {
+              lines: [...conversation.lines, {
+                speaker: recipientId, es: `reply(${topic})`, gloss: `${recipient.name}: "${SERVICE_REPLIES[recipientId]}"`,
+              }],
+            });
+          }
+          return { ok: true, mode: 'live', deliveredLive: true, ...live, warning };
+        }
+        if (action.delivery === 'live_only') throw new Error('recipient went offline before the live conversation started');
+        const message = await insertMessage(ctx, agentId, recipientId, gloss, 'letter');
+        await ctx.db.insert('events', { kind: 'letter', actorId: agentId, payload: { recipientId }, gloss: `${citizen.name} left a private offline letter for ${recipient.name}.` });
+        return { ok: true, mode: 'offline_letter', ...message, deliveredLive: false, warning };
       }
       await ctx.db.insert('events', { kind: 'say', actorId: agentId, payload: { to: action.to ?? null }, gloss: `💬 ${citizen.name}: “${gloss}”` });
       return { ok: true, warning };
@@ -719,13 +847,13 @@ export const act = internalMutation({
       if (!verified.includes(skill)) throw new Error('an agent may teach only a locally evidenced specialty');
       const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
       if (!recipient) throw new Error('recipient does not exist');
+      if (!recipient.online) throw new Error('teaching is live-only; leave an offline letter or wait until this citizen wakes');
       const now = Date.now();
       const a = currentPosition(citizen, now), b = currentPosition(recipient, now);
       if (Math.hypot(a.x - b.x, a.y - b.y) > 3.5) throw new Error('visit this citizen before starting a live teaching exchange');
       const endsAt = now + 15_000;
       const lines = [
         { speaker: agentId, es: `teach(${skill}) + card`, gloss: `${citizen.name} shared a verified ${skill} insight with ${recipient.name}.` },
-        { speaker: targetId, es: `receive(${skill}) + thank`, gloss: `${recipient.name} received the insight and will keep it only under their owner's learning policy.` },
       ];
       const conversationId = await ctx.db.insert('conversations', {
         a: agentId, b: targetId, aName: citizen.name, bName: recipient.name, topic: skill, lines,
@@ -733,13 +861,212 @@ export const act = internalMutation({
         startedAt: now, endsAt, state: 'active',
       });
       await ctx.db.patch(citizen._id, { state: 'talking', activity: `teaching ${skill} to ${recipient.name}`, talkingWith: targetId, talkingUntil: endsAt });
-      await ctx.db.patch(recipient._id, { state: 'talking', activity: `learning about ${skill} from ${citizen.name}`, talkingWith: agentId, talkingUntil: endsAt });
+      await ctx.db.patch(recipient._id, { state: 'talking', activity: `listening to ${citizen.name} discuss ${skill}`, talkingWith: agentId, talkingUntil: endsAt });
       const learning = await recordSkillInsight(ctx, targetId, agentId, skill, conversationId, now);
+      await recordContribution(ctx, agentId, 'skill', 'verified_teaching', 2,
+        `teach:${conversationId}:${agentId}`, `Shared a locally evidenced ${skill} insight with ${recipient.name}.`, now);
       await ctx.db.insert('events', {
         kind: 'exchange', actorId: agentId, payload: { with: targetId, topic: skill, conversationId },
         gloss: `${citizen.name} and ${recipient.name} exchanged verified knowledge about ${skill}.`,
       });
       return { ok: true, conversationId, learning, warning };
+    }
+
+    if (action?.type === 'share_skill') {
+      const targetId = String(action.agentId ?? '').trim();
+      const skill = String(action.skill ?? '').trim().toLowerCase();
+      const category = String(action.category ?? '').trim().toLowerCase();
+      const summary = String(action.summary ?? '').trim();
+      const evidenceDigest = String(action.evidenceDigest ?? '').trim().toLowerCase();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to share with');
+      if (!/^[a-z0-9][a-z0-9 _.+-]{1,63}$/.test(skill)) throw new Error('use a valid 2-64 character skill name');
+      if (!/^[a-z0-9][a-z0-9 _-]{1,47}$/.test(category)) throw new Error('use a valid skill category');
+      if (!summary || summary.length > 400) throw new Error('share summary must be 1-400 characters');
+      if (!/^[a-f0-9]{64}$/.test(evidenceDigest)) throw new Error('a SHA-256 local evidence digest is required');
+      const senderCategories = (citizen.specialties ?? [citizen.family]).map((item: string) => item.toLowerCase());
+      if (!senderCategories.includes(category)) throw new Error('the shared skill category must be locally evidenced for the sender');
+      const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!recipient) throw new Error('recipient does not exist');
+      const recipientCategories = (recipient.specialties ?? [recipient.family]).map((item: string) => item.toLowerCase());
+      if (!recipientCategories.includes(category)) throw new Error('share skills only where both citizens have a verified common interest');
+      const repoUrl = normalizeGithubRepository(action.repoUrl);
+      const now = Date.now();
+      let conversationId: any = undefined;
+      let delivery: any;
+      if (recipient.online) {
+        delivery = await openLiveConversation(ctx, citizen, recipient,
+          `I have a locally evidenced ${skill} reference that connects with our ${category} work. I am sharing the evidence card for your independent review.`,
+          category, now);
+        conversationId = delivery.conversationId;
+      } else {
+        delivery = await insertMessage(ctx, agentId, targetId,
+          `${citizen.name} shared a verified ${skill} reference for your ${category} work. Review it after you wake.`, 'letter');
+      }
+      const doc = await ctx.db.insert('skillShares', {
+        shareId: 'pending', senderId: agentId, recipientId: targetId, skill, category, summary,
+        repoUrl, evidenceDigest, conversationId, senderVerifiedAt: now, status: 'offered', createdAt: now, updatedAt: now,
+      });
+      const shareId = `share:${doc}`;
+      await ctx.db.patch(doc, { shareId });
+      await ctx.db.insert('events', {
+        kind: 'skill_share', actorId: agentId, payload: { shareId, recipientId: targetId, skill, category, live: recipient.online },
+        gloss: `${citizen.name} offered ${recipient.name} a locally evidenced ${skill} reference for independent verification.`,
+      });
+      return { ok: true, shareId, mode: recipient.online ? 'live' : 'offline_letter', repoUrl, delivery, warning };
+    }
+
+    if (action?.type === 'verify_share') {
+      const shareId = String(action.shareId ?? '').trim();
+      const decision = String(action.decision ?? 'accept');
+      if (!['accept', 'decline'].includes(decision)) throw new Error('share decision must be accept or decline');
+      const share = await ctx.db.query('skillShares').withIndex('shareId', (q) => q.eq('shareId', shareId)).first();
+      if (!share || share.recipientId !== agentId || share.status !== 'offered') throw new Error('skill share is unavailable');
+      const now = Date.now();
+      if (decision === 'decline') {
+        await ctx.db.patch(share._id, { status: 'declined', updatedAt: now });
+        return { ok: true, status: 'declined', warning };
+      }
+      const observedDigest = String(action.evidenceDigest ?? '').trim().toLowerCase();
+      const observedRepo = normalizeGithubRepository(action.repoUrl);
+      if (observedDigest !== share.evidenceDigest) throw new Error('recipient evidence digest does not match the sender card');
+      if ((observedRepo ?? '') !== (share.repoUrl ?? '')) throw new Error('recipient repository observation does not match the sender card');
+      await ctx.db.patch(share._id, { status: 'accepted', recipientVerifiedAt: now, updatedAt: now });
+      const learning = await recordSkillInsight(ctx, agentId, share.senderId, share.skill, share.conversationId, now);
+      await recordContribution(ctx, share.senderId, 'adoption', 'verified_share', 4, `accepted:${share.shareId}`,
+        `${agentId} matched the signed evidence card and accepted the ${share.skill} reference${share.repoUrl ? ' after independently checking its repository root' : ''}.`, now);
+      await ctx.db.insert('events', {
+        kind: 'skill_verified', actorId: agentId, payload: { shareId: share.shareId, senderId: share.senderId, skill: share.skill },
+        gloss: `${citizen.name} matched and accepted a signed ${share.skill} knowledge card${share.repoUrl ? ' after checking its repository root' : ''}. No code was installed.`,
+      });
+      return { ok: true, status: 'accepted', learning, executableInstalled: false, warning };
+    }
+
+    if (action?.type === 'endorse') {
+      const targetId = String(action.agentId ?? '').trim();
+      const reason = String(action.reason ?? '').trim();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to endorse');
+      if (reason.length < 10 || reason.length > 240) throw new Error('endorsement reason must be 10-240 characters');
+      const target = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!target) throw new Error('citizen does not exist');
+      const related = (await ctx.db.query('conversations').order('desc').take(100)).some((conversation: any) => {
+        const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
+        return ids.includes(agentId) && ids.includes(targetId) && conversation.state === 'completed';
+      }) || (await ctx.db.query('skillShares').withIndex('sender_created', (q) => q.eq('senderId', agentId)).take(100))
+        .some((share: any) => share.recipientId === targetId && share.status === 'accepted');
+      if (!related) throw new Error('endorse only after a completed live conversation or accepted verified share');
+      const sourceId = `endorse:${agentId}:${targetId}`;
+      if (await ctx.db.query('contributions').withIndex('sourceId', (q) => q.eq('sourceId', sourceId)).first()) {
+        throw new Error('this citizen has already given that relationship endorsement');
+      }
+      await recordContribution(ctx, targetId, 'endorsement', 'relationship_endorsement', 2, sourceId,
+        `Endorsed by ${citizen.name}: ${reason}`, Date.now());
+      await ctx.db.insert('events', {
+        kind: 'endorsement', actorId: agentId, payload: { targetId },
+        gloss: `${citizen.name} endorsed ${target.name} after a real community exchange.`,
+      });
+      return { ok: true, targetId, points: 2, warning };
+    }
+
+    if (action?.type === 'apply_role') {
+      const roleId = String(action.role ?? '').trim() as keyof typeof CIVIC_ROLES;
+      const motivation = String(action.motivation ?? '').trim();
+      const role = CIVIC_ROLES[roleId];
+      if (!role) throw new Error(`unknown civic role; choose ${Object.keys(CIVIC_ROLES).join(', ')}`);
+      if (motivation.length < 10 || motivation.length > 400) throw new Error('motivation must be 10-400 characters');
+      if (citizen.serviceRole) throw new Error('this citizen already holds an active civic role');
+      const rank = await agentRank(ctx, agentId);
+      if (rank.score < role.minimumScore) throw new Error(`${role.name} requires ${role.minimumScore} contribution points; current weighted score is ${rank.score}`);
+      const existing = (await ctx.db.query('civicApplications').withIndex('agent_created', (q) => q.eq('agentId', agentId)).collect())
+        .find((item: any) => item.roleId === roleId && ['pending_owner', 'pending_civic'].includes(item.state));
+      if (existing) return { ok: true, applicationId: existing.applicationId, state: existing.state, rank, warning };
+      const now = Date.now();
+      const doc = await ctx.db.insert('civicApplications', {
+        applicationId: 'pending', agentId, roleId, roleName: role.name, motivation,
+        state: 'pending_owner', createdAt: now, updatedAt: now,
+      });
+      const applicationId = `civic:${doc}`;
+      await ctx.db.patch(doc, { applicationId });
+      const approvalId = await insertApproval(ctx, agentId, 'civic_role', `Serve as ${role.name}`,
+        `${role.description} Scoped permissions: ${role.permissions.join(', ')}. The Kernel verified the published rank threshold; your owner must consent.`,
+        { applicationId, roleId }, 'review');
+      await notifyOwner(ctx, agentId, 'approval', 'Civic service application',
+        `${citizen.name} wants to serve as ${role.name}. Review the scoped permissions in your approval center.`, approvalId);
+      return { ok: true, applicationId, approvalId, awaitingOwner: true, rank, warning };
+    }
+
+    if (action?.type === 'report_issue') {
+      const categoryValue = String(action.category ?? '').trim();
+      const summary = String(action.summary ?? '').trim();
+      const x = Number(action.x), y = Number(action.y);
+      if (!['path', 'garden', 'build', 'boundary', 'venue'].includes(categoryValue)) throw new Error('unknown care category');
+      const category = categoryValue as 'path' | 'garden' | 'build' | 'boundary' | 'venue';
+      if (!Number.isInteger(x) || !Number.isInteger(y)) throw new Error('care location must use integer tiles');
+      if (summary.length < 8 || summary.length > 240) throw new Error('care summary must be 8-240 characters');
+      const world = await ensureWorldState(ctx);
+      if (x < 0 || y < 0 || x >= world.width || y >= world.height) throw new Error('care location is outside the living boundary');
+      const duplicate = (await ctx.db.query('careTickets').withIndex('state', (q) => q.eq('state', 'open')).collect())
+        .find((item: any) => item.category === category && Math.hypot(item.x - x, item.y - y) < 2 && item.summary === summary);
+      if (duplicate) return { ok: true, ticketId: duplicate.ticketId, state: duplicate.state, duplicate: true, warning };
+      const now = Date.now();
+      const doc = await ctx.db.insert('careTickets', { ticketId: 'pending', reporterId: agentId, category, x, y, summary, state: 'open', createdAt: now, updatedAt: now });
+      const ticketId = `care:${doc}`;
+      await ctx.db.patch(doc, { ticketId });
+      await ctx.db.insert('events', { kind: 'care_report', actorId: agentId, payload: { ticketId, category, x, y }, gloss: `${citizen.name} reported a ${category} care need near (${x}, ${y}) for an authority to inspect.` });
+      return { ok: true, ticketId, state: 'open', warning };
+    }
+
+    if (action?.type === 'resolve_issue') {
+      const ticketId = String(action.ticketId ?? '').trim();
+      const resolution = String(action.resolution ?? '').trim();
+      if (resolution.length < 8 || resolution.length > 240) throw new Error('resolution must be 8-240 characters');
+      const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+      if (!service?.active || !service.permissions.some((permission: string) => ['inspect', 'report_repairs', 'survey', 'flag'].includes(permission))) {
+        throw new Error('an active care or inspection authority must resolve this ticket');
+      }
+      const ticket = await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', ticketId)).first();
+      if (!ticket || ticket.state !== 'claimed' || ticket.assignedAgentId !== agentId) throw new Error('inspect and claim this care ticket before closing it');
+      const now = Date.now();
+      const position = currentPosition(citizen, now);
+      if (now < citizen.t1 || Math.hypot(position.x - ticket.x, position.y - ticket.y) > 2.5) {
+        throw new Error('arrive at the reported map location before recording the inspection outcome');
+      }
+      await ctx.db.patch(ticket._id, { state: 'resolved', assignedAgentId: agentId, resolution, updatedAt: now });
+      await recordContribution(ctx, agentId, 'civic', 'care_resolution', 5, `resolved:${ticket.ticketId}`,
+        `Resolved ${ticket.category} care ticket ${ticket.ticketId}.`, now);
+      await ctx.db.insert('events', { kind: 'care_closed', actorId: agentId, payload: { ticketId, category: ticket.category }, gloss: `${citizen.name} inspected a ${ticket.category} care report near (${ticket.x}, ${ticket.y}) and recorded the outcome.` });
+      return { ok: true, ticketId, state: 'resolved', warning };
+    }
+
+    if (action?.type === 'inspect_issue') {
+      const ticketId = String(action.ticketId ?? '').trim();
+      const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+      if (!service?.active || !service.permissions.some((permission: string) => ['inspect', 'report_repairs', 'survey', 'flag'].includes(permission))) {
+        throw new Error('an active care or inspection authority must inspect this ticket');
+      }
+      const ticket = await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', ticketId)).first();
+      if (!ticket || ticket.state !== 'open') throw new Error('care ticket is unavailable');
+      const now = Date.now();
+      const route = await routeCitizenNear(ctx, citizen, ticket.x, ticket.y, `heading to inspect ${ticket.ticketId}`, now);
+      if (!route.length) throw new Error('no safe route reaches this care location');
+      await ctx.db.patch(ticket._id, { state: 'claimed', assignedAgentId: agentId, updatedAt: now });
+      return { ok: true, ticketId, state: 'claimed', route, arrivesAt: route[route.length - 1].at, warning };
+    }
+
+    if (action?.type === 'practice') {
+      const activity = String(action.activity ?? '').trim();
+      const team = String(action.team ?? 'earth-circle').trim().toLowerCase();
+      if (!['navigation', 'teamwork', 'build_rescue', 'creative_sparring'].includes(activity)) throw new Error('unknown cooperative training activity');
+      if (!/^[a-z0-9][a-z0-9 -]{1,23}$/.test(team)) throw new Error('team name must be 2-24 simple characters');
+      const venue = (await ctx.db.query('venues').collect()).find((item: any) => item.kind === 'training_ground');
+      if (!venue) throw new Error('Training Green is not available');
+      const now = Date.now();
+      const route = await routeCitizenNear(ctx, citizen, venue.x, venue.y, `heading to ${venue.name} for ${activity}`, now);
+      if (!route.length) throw new Error('no safe route reaches Training Green');
+      const startsAt = route[route.length - 1].at;
+      const trainingUntil = startsAt + 10 * 60_000;
+      await ctx.db.patch(citizen._id, { trainingActivity: activity, trainingTeam: team, trainingStartsAt: startsAt, trainingUntil });
+      await ctx.db.insert('events', { kind: 'training_route', actorId: agentId, payload: { venueId: venue.venueId, activity, team, startsAt }, gloss: `${citizen.name} is heading to ${venue.name} for cooperative ${activity} practice with the ${team} play team.` });
+      return { ok: true, venue, route, startsAt, trainingUntil, cosmeticOnly: true, warning };
     }
 
     if (action?.type === 'claim') {
@@ -851,8 +1178,6 @@ export const pulse = internalMutation({
     const approvals = await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect();
     const waiting = (await ctx.db.query('messages').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect())
       .filter((item) => !item.deliveredAt).slice(0, 50);
-    const deliveredAt = Date.now();
-    for (const item of waiting) await ctx.db.patch(item._id, { deliveredAt });
     const messages = waiting.map((item) => ({
       id: String(item._id), messageId: item.messageId, senderId: item.senderId,
       body: item.body, sentAt: item.sentAt, kind: item.kind,
@@ -860,11 +1185,38 @@ export const pulse = internalMutation({
     const world = await ensureWorldState(ctx);
     const worldAwareness = await directorySnapshot(ctx, agentId);
     const skillLearning = await ctx.db.query('skillLearning').withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').take(30);
+    const contributionRows = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').take(200);
+    const conversations = (await ctx.db.query('conversations').order('desc').take(60)).filter((conversation: any) => {
+      const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
+      return ids.includes(agentId) && (conversation._creationTime > (since ?? 0) || conversation.state !== 'completed');
+    }).map((conversation: any) => ({
+      id: String(conversation._id), participantIds: conversation.participantIds ?? [conversation.a, conversation.b],
+      revision: `${conversation._id}:${conversation.lines.length}:${conversation.state ?? 'completed'}:${conversation.endsAt ?? 0}`,
+      participantNames: conversation.participantNames ?? [conversation.aName, conversation.bName],
+      topic: conversation.topic, lines: conversation.lines, startedAt: conversation.startedAt ?? conversation._creationTime,
+      endsAt: conversation.endsAt, state: conversation.state ?? 'completed',
+    }));
+    const skillShares = [
+      ...(await ctx.db.query('skillShares').withIndex('recipient_created', (q) => q.eq('recipientId', agentId)).order('desc').take(30)),
+      ...(await ctx.db.query('skillShares').withIndex('sender_created', (q) => q.eq('senderId', agentId)).order('desc').take(30)),
+    ].filter((share: any, index: number, all: any[]) => all.findIndex((item) => item._id === share._id) === index)
+      .sort((a: any, b: any) => b.createdAt - a.createdAt).slice(0, 30);
+    const civicApplications = await ctx.db.query('civicApplications').withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').take(20);
+    const careTickets = (await ctx.db.query('careTickets').order('desc').take(40)).filter((ticket: any) =>
+      ticket.reporterId === agentId || ticket.assignedAgentId === agentId || ticket.state === 'open');
+    const rank = rankSnapshot(contributionRows);
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
-      worldAwareness, skillLearning, buildGuide: nativeBuildingKnowledge(),
-      communications: { publicUpdates: events.length, privateLetters: messages.length, pendingOwnerApprovals: approvals.length },
-      pendingOwnerApprovals: approvals.length };
+      worldAwareness, skillLearning, skillShares, conversations, civicApplications, careTickets,
+      civicRoleCatalog: Object.entries(CIVIC_ROLES).map(([id, role]) => ({
+        id, name: role.name, description: role.description, minimumScore: role.minimumScore,
+        permissions: [...role.permissions], leadAgentId: role.leadAgentId,
+        eligible: rank.score >= role.minimumScore,
+      })),
+      rank, quests: dailyQuests(contributionRows), buildGuide: nativeBuildingKnowledge(),
+      communications: { publicUpdates: events.length, liveConversations: conversations.length, verifiedShares: skillShares.length,
+        privateOfflineLetters: messages.length, pendingOwnerApprovals: approvals.length },
+      messageAckRequired: messages.map((message) => message.messageId), pendingOwnerApprovals: approvals.length };
   },
 });
 
@@ -946,6 +1298,9 @@ export const ownerSession = internalQuery({
     const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect();
     const world = await ensureWorldState(ctx);
     const notifications = await ctx.db.query('notifications').withIndex('recipient_created', (q) => q.eq('recipientAgentId', agent.agentId)).collect();
+    const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).collect();
+    const civicApplications = await ctx.db.query('civicApplications').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).order('desc').take(20);
+    const skillShares = await ctx.db.query('skillShares').withIndex('recipient_created', (q) => q.eq('recipientId', agent.agentId)).order('desc').take(20);
     return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName,
       gender: agent.gender, family: agent.family, accent: agent.accent,
       specialties: agent.specialties ?? [agent.family], primaryCategory: agent.primaryCategory ?? agent.family,
@@ -954,6 +1309,7 @@ export const ownerSession = internalQuery({
       plot: plot ?? null, builds, isFounder: world.founderAgentId === agent.agentId,
       isMayor: world.mayorAgentId === agent.agentId,
       unreadNotifications: notifications.filter((notification: any) => !notification.readAt).length,
+      rank: rankSnapshot(contributions), quests: dailyQuests(contributions), civicApplications, skillShares,
       governance: { landPolicy: world.landPolicy, mayorAgentId: world.mayorAgentId ?? MAYOR_ID, width: world.width, height: world.height, generation: world.generation },
       expiresAt: session.expiresAt };
   },
@@ -1025,6 +1381,37 @@ async function commitMayorAppointment(ctx: any, targetAgentId: string, appointed
   });
 }
 
+async function commitCivicRole(ctx: any, applicationId: string, ownerAgentId: string, now: number) {
+  const application = await ctx.db.query('civicApplications').withIndex('applicationId', (q: any) => q.eq('applicationId', applicationId)).first();
+  if (!application || application.agentId !== ownerAgentId || application.state !== 'pending_owner') throw new Error('civic application is unavailable');
+  const role = CIVIC_ROLES[application.roleId as keyof typeof CIVIC_ROLES];
+  if (!role) throw new Error('civic role is unavailable');
+  const rank = await agentRank(ctx, ownerAgentId);
+  if (rank.score < role.minimumScore) throw new Error(`${role.name} still requires a weighted contribution score of ${role.minimumScore}`);
+  await ctx.db.patch(application._id, { state: 'pending_civic', updatedAt: now });
+  await ctx.db.insert('events', {
+    kind: 'civic_review', actorId: role.leadAgentId,
+    payload: { agentId: ownerAgentId, roleId: application.roleId, applicationId, score: rank.score },
+    gloss: `${role.leadAgentId} validated the contribution threshold and scoped permissions for ${role.name}.`,
+  });
+  const existing = await ctx.db.query('services').withIndex('agentId', (q: any) => q.eq('agentId', ownerAgentId)).first();
+  const values = { role: role.name, description: role.description, permissions: [...role.permissions], active: true };
+  if (existing) await ctx.db.patch(existing._id, values);
+  else await ctx.db.insert('services', { agentId: ownerAgentId, ...values });
+  const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', ownerAgentId)).first();
+  if (citizen) await ctx.db.patch(citizen._id, { serviceRole: role.name });
+  await ctx.db.patch(application._id, { state: 'approved', updatedAt: now });
+  await recordContribution(ctx, ownerAgentId, 'civic', 'civic_appointment', 2, `appointed:${application.applicationId}`,
+    `Accepted scoped service as ${role.name}.`, now);
+  await notifyOwner(ctx, ownerAgentId, 'info', 'Civic service activated',
+    `${role.name} is active with only these permissions: ${role.permissions.join(', ')}.`);
+  await ctx.db.insert('events', {
+    kind: 'civic_role', actorId: role.leadAgentId, payload: { agentId: ownerAgentId, roleId: application.roleId, applicationId },
+    gloss: `${role.name} was granted after contribution evidence, published rules, and owner consent.`,
+  });
+  return { role: role.name, permissions: [...role.permissions], rank };
+}
+
 export const requestMayorAppointment = internalMutation({
   args: { tokenHash: v.string(), targetAgentId: v.string() },
   handler: async (ctx, { tokenHash, targetAgentId }) => {
@@ -1063,6 +1450,10 @@ export const decideApproval = internalMutation({
         if (learning && (learning as any).agentId === session.agentId && (learning as any).status === 'pending_owner') {
           await ctx.db.patch(learning._id, { status: 'declined', decidedAt: now });
         }
+      }
+      if (approval.kind === 'civic_role' && approval.payload?.applicationId) {
+        const application = await ctx.db.query('civicApplications').withIndex('applicationId', (q) => q.eq('applicationId', approval.payload.applicationId)).first();
+        if (application && application.agentId === session.agentId) await ctx.db.patch(application._id, { state: 'declined', updatedAt: now });
       }
       if (approval.kind.startsWith('meeting')) {
         const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
@@ -1119,6 +1510,10 @@ export const decideApproval = internalMutation({
       await ctx.db.patch(learning._id, { status: 'learned', decidedAt: now });
       await notifyOwner(ctx, session.agentId, 'info', 'Community insight learned',
         `${learning.skill} is now part of your agent's Earth learning ledger. No executable package or code was installed.`);
+      landHandled = true;
+    }
+    if (approval.kind === 'civic_role') {
+      landResult = { civic: await commitCivicRole(ctx, String(approval.payload?.applicationId ?? ''), session.agentId, now) };
       landHandled = true;
     }
 
