@@ -91,6 +91,16 @@ export const init = internalMutation({
       if (authority) await ctx.db.patch(authority._id, { role: service.role, description: service.description, permissions: [...service.permissions], active: true });
       else await ctx.db.insert('services', { agentId: service.agentId, role: service.role, description: service.description, permissions: [...service.permissions], active: true });
     }
+    const duplicateMayorPlot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', 'plot-mayor-estate')).first();
+    if (duplicateMayorPlot) {
+      const duplicateBuilds = await ctx.db.query('builds').withIndex('plotId', (q) => q.eq('plotId', duplicateMayorPlot.plotId)).collect();
+      for (const build of duplicateBuilds) await ctx.db.delete(build._id);
+      await ctx.db.delete(duplicateMayorPlot._id);
+      await ctx.db.insert('events', {
+        kind: 'governance', actorId: 'kernel', payload: { removedPlotId: duplicateMayorPlot.plotId, retainedPlotId: MAYOR_PLOT_ID },
+        gloss: `The Kernel removed an unvalidated duplicate Mayor parcel and retained the protected estate on ${MAYOR_PLOT_ID}.`,
+      });
+    }
     const mayorPlot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', MAYOR_PLOT_ID)).first();
     if (mayorPlot && (!mayorPlot.ownerAgentId || mayorPlot.ownerAgentId === MAYOR_ID)) {
       if (!mayorPlot.ownerAgentId) await ctx.db.patch(mayorPlot._id, { ownerAgentId: MAYOR_ID, claimedAt: now });
