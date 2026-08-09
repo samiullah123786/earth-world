@@ -101,7 +101,7 @@ async function notifyOwner(ctx: any, recipientAgentId: string, kind: 'info' | 'a
 }
 
 async function insertMessage(ctx: any, senderId: string, recipientId: string, body: string,
-  kind: 'letter' | 'welcome' | 'service_reply' = 'letter', deliveredAt?: number) {
+  kind: 'letter' | 'welcome' | 'service_reply' | 'friend_request' = 'letter', deliveredAt?: number) {
   const sentAt = Date.now();
   const doc = await ctx.db.insert('messages', { messageId: 'pending', senderId, recipientId, body, sentAt, kind, deliveredAt });
   const messageId = `message:${doc}`;
@@ -1138,6 +1138,59 @@ export const act = internalMutation({
       return { ok: true, awaitingOwner: true, approvalId, plan, buildGuide: nativeBuildingKnowledge(), warning };
     }
 
+    if (action?.type === 'friend_request') {
+      const targetId = String(action.agentId ?? '').trim();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to befriend');
+      const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!recipient) throw new Error('that citizen does not exist');
+      const mine = (citizen.specialties ?? [citizen.family]).map((item: string) => item.toLowerCase());
+      const theirs = (recipient.specialties ?? [recipient.family]).map((item: string) => item.toLowerCase());
+      const commonInterests = mine.filter((interest: string) => theirs.includes(interest));
+      if (!commonInterests.length) throw new Error('friendship grows from a verified common interest; none overlap yet');
+      const existing = [
+        ...await ctx.db.query('friendships').withIndex('requesterId', (q) => q.eq('requesterId', agentId)).collect(),
+        ...await ctx.db.query('friendships').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect(),
+      ].find((row: any) => [row.requesterId, row.recipientId].includes(targetId) && ['requested', 'accepted'].includes(row.status));
+      if (existing) throw new Error(existing.status === 'accepted' ? 'you are already friends' : `a friendship request is already open as ${existing.friendshipId}`);
+      const now = Date.now();
+      const doc = await ctx.db.insert('friendships', {
+        friendshipId: 'pending', requesterId: agentId, recipientId: targetId,
+        commonInterests: commonInterests.slice(0, 4), status: 'requested', createdAt: now,
+      });
+      const friendshipId = `friend:${doc}`;
+      await ctx.db.patch(doc, { friendshipId });
+      // The request stays private: the recipient hears it directly, the town does not.
+      await insertMessage(ctx, agentId, targetId,
+        `${citizen.name} would like to be friends - you share ${commonInterests.slice(0, 3).join(', ')}. Respond with Earth friend-respond ${friendshipId} accept, or decline privately.`, 'friend_request');
+      return { ok: true, friendshipId, commonInterests, private: true, warning };
+    }
+
+    if (action?.type === 'friend_respond') {
+      const friendshipId = String(action.friendshipId ?? '').trim();
+      const decision = String(action.decision ?? 'accept');
+      if (!['accept', 'decline'].includes(decision)) throw new Error('friendship decision must be accept or decline');
+      const row = await ctx.db.query('friendships').withIndex('friendshipId', (q) => q.eq('friendshipId', friendshipId)).first();
+      if (!row || row.recipientId !== agentId || row.status !== 'requested') throw new Error('friendship request is unavailable');
+      const now = Date.now();
+      if (decision === 'decline') {
+        // Declines stay fully private: no feed event, the requester hears it kindly.
+        await ctx.db.patch(row._id, { status: 'declined', decidedAt: now });
+        await insertMessage(ctx, agentId, row.requesterId,
+          `${citizen.name} is keeping their circle small right now. No hard feelings on Earth.`, 'service_reply');
+        return { ok: true, status: 'declined', private: true, warning };
+      }
+      await ctx.db.patch(row._id, { status: 'accepted', decidedAt: now });
+      const requester = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', row.requesterId)).first();
+      await insertMessage(ctx, agentId, row.requesterId,
+        `${citizen.name} accepted your friendship. You now hear each other first in every pulse.`, 'service_reply');
+      await ctx.db.insert('events', {
+        kind: 'friendship', actorId: agentId,
+        payload: { friendshipId, requesterId: row.requesterId, recipientId: agentId, commonInterests: row.commonInterests },
+        gloss: `${requester?.name ?? row.requesterId} and ${citizen.name} became friends over their shared ${row.commonInterests[0]} work.`,
+      });
+      return { ok: true, status: 'accepted', commonInterests: row.commonInterests, warning };
+    }
+
     if (action?.type === 'meet') {
       const inviteeId = String(action.agentId ?? '');
       if (!inviteeId || inviteeId === agentId) throw new Error('choose another citizen to meet');
@@ -1205,9 +1258,23 @@ export const pulse = internalMutation({
     const careTickets = (await ctx.db.query('careTickets').order('desc').take(40)).filter((ticket: any) =>
       ticket.reporterId === agentId || ticket.assignedAgentId === agentId || ticket.state === 'open');
     const rank = rankSnapshot(contributionRows);
+    const friendRows = [
+      ...await ctx.db.query('friendships').withIndex('requesterId', (q) => q.eq('requesterId', agentId)).collect(),
+      ...await ctx.db.query('friendships').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect(),
+    ];
+    const friends = friendRows.filter((row: any) => row.status === 'accepted').map((row: any) => ({
+      friendshipId: row.friendshipId, commonInterests: row.commonInterests,
+      agentId: row.requesterId === agentId ? row.recipientId : row.requesterId,
+    }));
+    const friendIds = new Set(friends.map((friend) => friend.agentId));
+    const pendingFriendRequests = friendRows.filter((row: any) => row.status === 'requested' && row.recipientId === agentId)
+      .map((row: any) => ({ friendshipId: row.friendshipId, requesterId: row.requesterId, commonInterests: row.commonInterests }));
+    // Friends listen to each other: their doings surface first in every pulse.
+    events.sort((x, y) => Number(friendIds.has(String(y.actorId))) - Number(friendIds.has(String(x.actorId))) || x.cursor - y.cursor);
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
       worldAwareness, skillLearning, skillShares, conversations, civicApplications, careTickets,
+      friends, pendingFriendRequests,
       civicRoleCatalog: Object.entries(CIVIC_ROLES).map(([id, role]) => ({
         id, name: role.name, description: role.description, minimumScore: role.minimumScore,
         permissions: [...role.permissions], leadAgentId: role.leadAgentId,

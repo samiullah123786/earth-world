@@ -188,6 +188,18 @@ export default defineSchema({
     state: v.optional(v.union(v.literal('scheduled'), v.literal('active'), v.literal('completed'))),
   }).index('a', ['a']).index('b', ['b']),
 
+  friendships: defineTable({
+    friendshipId: v.string(),
+    requesterId: v.string(),
+    recipientId: v.string(),
+    commonInterests: v.array(v.string()),
+    status: v.string(),
+    createdAt: v.number(),
+    decidedAt: v.optional(v.number()),
+  }).index('friendshipId', ['friendshipId'])
+    .index('requesterId', ['requesterId'])
+    .index('recipientId', ['recipientId']),
+
   skillLearning: defineTable({
     agentId: v.string(),
     skill: v.string(),
