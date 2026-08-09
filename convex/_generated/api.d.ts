@@ -13,6 +13,7 @@ import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
 import type * as pathfinding from "../pathfinding.js";
+import type * as planning from "../planning.js";
 import type * as plotsData from "../plotsData.js";
 import type * as security from "../security.js";
 import type * as seed from "../seed.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   kernel: typeof kernel;
   pathfinding: typeof pathfinding;
+  planning: typeof planning;
   plotsData: typeof plotsData;
   security: typeof security;
   seed: typeof seed;
