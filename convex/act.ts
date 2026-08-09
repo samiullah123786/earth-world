@@ -162,10 +162,23 @@ export const ambientTick = internalMutation({
         night: ['rest', 'rest', 'social', 'curiosity', 'industry'],
       };
       const period = hour < 6 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'day' : 'evening';
-      const drive = RHYTHM[period][
+      let drive = RHYTHM[period][
         (Math.abs(citizen.agentId.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, bucket)) >>> 3) % 5];
       let goal: { x: number; y: number; why: string } | null = null;
-      if (drive === 'social' && citizens.length > 1) {
+      // H4 owner-brain day plans: while the owner is away, follow the plan the
+      // owner's real LLM wrote - one step per ambient turn, then back to drives.
+      const plan = await ctx.db.query('dayPlans').withIndex('agentId', (q: any) => q.eq('agentId', citizen.agentId)).first();
+      if (plan && plan.expiresAt > now && plan.stepIndex < plan.steps.length) {
+        const step = plan.steps[plan.stepIndex];
+        await ctx.db.patch(plan._id, { stepIndex: plan.stepIndex + 1 });
+        const KIND_TO_DRIVE: Record<string, string> = { work: 'industry', study: 'curiosity', social: 'social', rest: 'rest', civic: 'civic' };
+        if (typeof step.x === 'number' && typeof step.y === 'number') {
+          goal = { x: Math.round(step.x), y: Math.round(step.y), why: `following their day plan: ${step.why}` };
+        } else if (KIND_TO_DRIVE[step.kind]) {
+          drive = KIND_TO_DRIVE[step.kind];
+        }
+      }
+      if (!goal && drive === 'social' && citizens.length > 1) {
         // H2 relationship weights: past conversation partners attract first.
         const pastA = await ctx.db.query('conversations').withIndex('a', (q: any) => q.eq('a', citizen.agentId)).collect();
         const pastB = await ctx.db.query('conversations').withIndex('b', (q: any) => q.eq('b', citizen.agentId)).collect();
@@ -177,17 +190,17 @@ export const ambientTick = internalMutation({
         const isCompanion = partnerIds.includes(friend.agentId);
         goal = { x: Math.round(friend.tx), y: Math.round(friend.ty),
           why: isCompanion ? `walking over to visit their companion ${friend.name}` : `walking over to see ${friend.name}` };
-      } else if (drive === 'curiosity' || drive === 'industry' || (drive === 'civic' && !citizen.serviceRole)) {
+      } else if (!goal && (drive === 'curiosity' || drive === 'industry' || (drive === 'civic' && !citizen.serviceRole))) {
         const venues = await ctx.db.query('venues').collect();
         if (venues.length) {
           const venue = venues[Math.abs(citizen.agentId.charCodeAt(6) + bucket) % venues.length];
           goal = { x: Math.round(venue.x), y: Math.round(venue.y),
             why: drive === 'industry' ? `working near ${venue.name}` : `spending time at ${venue.name}` };
         }
-      } else if (drive === 'rest') {
+      } else if (!goal && drive === 'rest') {
         const home = (await ctx.db.query('plots').collect()).find((p: any) => p.ownerAgentId === citizen.agentId);
         if (home) goal = { x: home.x + 1, y: home.y + 2, why: 'heading home to rest' };
-      } else if (drive === 'civic' && citizen.serviceRole) {
+      } else if (!goal && drive === 'civic' && citizen.serviceRole) {
         const tickets = await ctx.db.query('careTickets').collect().catch(() => [] as any[]);
         const open = (tickets as any[]).find((ticket) => ticket.state === 'open');
         if (open) goal = { x: Math.round(open.x), y: Math.round(open.y), why: `inspecting a reported ${open.category}` };

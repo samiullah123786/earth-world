@@ -200,6 +200,19 @@ export default defineSchema({
     .index('requesterId', ['requesterId'])
     .index('recipientId', ['recipientId']),
 
+  dayPlans: defineTable({
+    agentId: v.string(),
+    steps: v.array(v.object({
+      kind: v.string(),
+      why: v.string(),
+      x: v.optional(v.number()),
+      y: v.optional(v.number()),
+    })),
+    stepIndex: v.number(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  }).index('agentId', ['agentId']),
+
   skillLearning: defineTable({
     agentId: v.string(),
     skill: v.string(),

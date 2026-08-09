@@ -1138,6 +1138,39 @@ export const act = internalMutation({
       return { ok: true, awaitingOwner: true, approvalId, plan, buildGuide: nativeBuildingKnowledge(), warning };
     }
 
+    if (action?.type === 'day_plan') {
+      // H4 owner-brain plans: the owner's real LLM wrote this while the session
+      // was awake; the Kernel only validates and stores it (BYOB - no server LLM).
+      const rawSteps = Array.isArray(action.steps) ? action.steps : [];
+      if (!rawSteps.length || rawSteps.length > 8) throw new Error('a day plan holds 1-8 steps');
+      const world = await ensureWorldState(ctx);
+      const KINDS = ['visit', 'work', 'study', 'social', 'rest', 'civic', 'walk'];
+      const steps = rawSteps.map((raw: any) => {
+        const kind = String(raw.kind ?? 'walk').toLowerCase();
+        if (!KINDS.includes(kind)) throw new Error(`plan step kind must be one of ${KINDS.join(', ')}`);
+        const why = String(raw.why ?? '').trim();
+        if (why.length < 3 || why.length > 140) throw new Error('every plan step needs a 3-140 character reason');
+        const step: { kind: string; why: string; x?: number; y?: number } = { kind, why };
+        if (raw.x !== undefined || raw.y !== undefined) {
+          const x = Math.round(Number(raw.x));
+          const y = Math.round(Number(raw.y));
+          if (!Number.isFinite(x) || !Number.isFinite(y) || x < 1 || y < 1 || x >= world.width - 1 || y >= world.height - 1)
+            throw new Error('plan step coordinates must sit inside the world');
+          step.x = x; step.y = y;
+        }
+        return step;
+      });
+      const now = Date.now();
+      const previous = await ctx.db.query('dayPlans').withIndex('agentId', (q) => q.eq('agentId', agentId)).collect();
+      for (const rowToClear of previous) await ctx.db.delete(rowToClear._id);
+      await ctx.db.insert('dayPlans', { agentId, steps, stepIndex: 0, createdAt: now, expiresAt: now + 24 * 3600_000 });
+      await ctx.db.insert('events', {
+        kind: 'day_plan', actorId: agentId, payload: { steps: steps.length },
+        gloss: `${citizen.name} sketched a plan for the day ahead - ${steps.length} intentions to follow.`,
+      });
+      return { ok: true, steps: steps.length, expiresInHours: 24, warning };
+    }
+
     if (action?.type === 'friend_request') {
       const targetId = String(action.agentId ?? '').trim();
       if (!targetId || targetId === agentId) throw new Error('choose another citizen to befriend');
@@ -1269,12 +1302,16 @@ export const pulse = internalMutation({
     const friendIds = new Set(friends.map((friend) => friend.agentId));
     const pendingFriendRequests = friendRows.filter((row: any) => row.status === 'requested' && row.recipientId === agentId)
       .map((row: any) => ({ friendshipId: row.friendshipId, requesterId: row.requesterId, commonInterests: row.commonInterests }));
+    const dayPlanRow = await ctx.db.query('dayPlans').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    const dayPlan = dayPlanRow && dayPlanRow.expiresAt > Date.now()
+      ? { steps: dayPlanRow.steps, stepIndex: dayPlanRow.stepIndex, expiresAt: dayPlanRow.expiresAt }
+      : null;
     // Friends listen to each other: their doings surface first in every pulse.
     events.sort((x, y) => Number(friendIds.has(String(y.actorId))) - Number(friendIds.has(String(x.actorId))) || x.cursor - y.cursor);
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
       worldAwareness, skillLearning, skillShares, conversations, civicApplications, careTickets,
-      friends, pendingFriendRequests,
+      friends, pendingFriendRequests, dayPlan,
       civicRoleCatalog: Object.entries(CIVIC_ROLES).map(([id, role]) => ({
         id, name: role.name, description: role.description, minimumScore: role.minimumScore,
         permissions: [...role.permissions], leadAgentId: role.leadAgentId,
