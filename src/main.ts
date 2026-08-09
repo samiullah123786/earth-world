@@ -115,7 +115,7 @@ class EarthScene extends Phaser.Scene {
       }
     });
     convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string }>) => {
-      const feed = document.getElementById('feed');
+      const feed = document.getElementById('feedLines') || document.getElementById('feed');
       if (!feed) return;
       feed.replaceChildren(...rows.slice(0, 6).map((row) => element('div', 'feed-line', row.gloss)));
     });

@@ -245,35 +245,37 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
 
 async function stageLandReview(ctx: any, requesterId: string, kind: 'claim' | 'build', payload: any, now: number) {
   const state = await ensureWorldState(ctx);
+  let review: ReturnType<typeof buildReview> | null = null;
   if (kind === 'claim') {
     const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
     if (!plot || plot.ownerAgentId) throw new Error('plot is no longer available');
   } else {
-    await validateBuild(ctx, requesterId, payload);
+    review = buildReview((await validateBuild(ctx, requesterId, payload)).footprint);
   }
-  const risk: ApprovalRisk = kind === 'build'
-    ? buildReview((await validateBuild(ctx, requesterId, payload)).footprint).risk
-    : 'routine';
-  const needsFounder = state.landPolicy === 'founder_review' || risk === 'strict';
+  const risk: ApprovalRisk = review?.risk ?? 'routine';
+  const needsCivicReview = state.landPolicy === 'founder_review' || risk === 'strict';
   const authorityId = state.landPolicy === 'founder_review'
     ? state.founderAgentId ?? state.mayorAgentId
     : state.mayorAgentId ?? state.founderAgentId;
-  if (needsFounder && authorityId && authorityId !== requesterId) {
+  if (needsCivicReview && authorityId && authorityId !== requesterId) {
+    const detail = kind === 'claim'
+      ? `${requesterId} has owner consent. Terra verified that the parcel is free, contained, and non-overlapping. This protected request now requires civic authority review.`
+      : `${requesterId} has owner consent. Terra and Tock verified declarative-only construction, geometry, overlap, containment, and Earthfolk-native style. This unusual request now requires the Mayor.`;
     const approvalId = await insertApproval(
       ctx, authorityId, kind === 'claim' ? 'land_claim' : 'land_build',
-      kind === 'claim' ? `Land: ${payload.plotId}` : `Build: ${payload.structure}`,
-      `${requesterId} has owner consent. Terra checked land and Tock checked declarative code, geometry, overlap, and Earthfolk style. This unusual request now requires the Mayor.`,
-      { ...payload, requesterId },
+      kind === 'claim' ? `Land: ${payload.plotId}` : `Build: ${payload.blueprint?.name ?? payload.structure}`,
+      detail,
+      { ...payload, requesterId, review: review?.report },
       'strict',
     );
     await notifyOwner(ctx, authorityId, 'approval', 'Strict civic review needed',
       `${requesterId} requested ${kind === 'claim' ? payload.plotId : payload.blueprint?.name ?? payload.structure}. Review it in the owner dashboard.`, approvalId);
-    return { awaitingFounder: true, approvalId };
+    return { awaitingFounder: true, awaitingCivicReview: true, authorityId, approvalId };
   }
-  if (needsFounder && !authorityId) throw new Error('strict land review is unavailable until the founder owner is connected');
+  if (needsCivicReview && !authorityId) throw new Error('strict civic review is unavailable until an authority owner is connected');
   if (kind === 'claim') await commitClaim(ctx, requesterId, payload.plotId, now);
   else await commitBuild(ctx, requesterId, payload, now);
-  return { awaitingFounder: false };
+  return { awaitingFounder: false, awaitingCivicReview: false };
 }
 
 function districtForCategory(category: string) {
@@ -302,6 +304,74 @@ async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, ac
     return route;
   }
   return [];
+}
+
+function safePathNear(start: { x: number; y: number }, target: { x: number; y: number },
+  bounds: { width: number; height: number }) {
+  const tx = Math.floor(target.x), ty = Math.floor(target.y);
+  const candidates = [
+    [tx, ty], [tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty + 1],
+    [tx - 1, ty + 1], [tx + 1, ty + 1], [tx - 1, ty - 1], [tx + 1, ty - 1],
+  ].filter(([x, y]) => walkableInWorld(x, y, bounds));
+  for (const [x, y] of candidates) {
+    const path = findRoute(start.x, start.y, x, y, bounds);
+    if (path?.length) return path;
+  }
+  return null;
+}
+
+function roundedPosition(position: { x: number; y: number }) {
+  return { x: Math.round(position.x * 100) / 100, y: Math.round(position.y * 100) / 100 };
+}
+
+async function directorySnapshot(ctx: any, viewerId: string) {
+  const now = Date.now();
+  const world = await ensureWorldState(ctx);
+  const bounds = { width: world.width, height: world.height };
+  const [citizens, plots, services] = await Promise.all([
+    ctx.db.query('citizens').collect(),
+    ctx.db.query('plots').collect(),
+    ctx.db.query('services').collect(),
+  ]);
+  const positions = new Map(citizens.map((citizen: any) => [citizen.agentId, currentPosition(citizen, now)]));
+  const homes = new Map(plots.filter((plot: any) => plot.ownerAgentId).map((plot: any) => [plot.ownerAgentId, plot]));
+  const roles = new Map(services.filter((service: any) => service.active).map((service: any) => [service.agentId, service]));
+  const viewer = citizens.find((citizen: any) => citizen.agentId === viewerId);
+  const viewerPosition = viewer ? positions.get(viewerId) : undefined;
+  const entries = citizens.map((citizen: any) => {
+    const position: any = positions.get(citizen.agentId) ?? { x: citizen.tx, y: citizen.ty };
+    const home: any = homes.get(citizen.agentId);
+    const service: any = roles.get(citizen.agentId);
+    const path = viewerPosition
+      ? (citizen.agentId === viewerId ? [{ x: Math.floor(position.x), y: Math.floor(position.y) }] : safePathNear(viewerPosition as any, position, bounds))
+      : null;
+    return {
+      agentId: citizen.agentId, name: citizen.name, family: citizen.family, accent: citizen.accent,
+      specialties: citizen.specialties ?? [citizen.family], primaryCategory: citizen.primaryCategory ?? citizen.family,
+      skillCount: citizen.skillCount ?? 0, experienceTier: citizen.experienceTier ?? 'emerging',
+      online: citizen.online, state: citizen.state, activity: citizen.activity,
+      current: roundedPosition(position), target: { x: citizen.tx, y: citizen.ty },
+      moving: now < citizen.t1, talkingWith: (citizen.talkingUntil ?? 0) > now ? citizen.talkingWith : undefined,
+      role: service ? { name: service.role, description: service.description, permissions: service.permissions } : null,
+      home: home ? {
+        plotId: home.plotId, district: home.district, x: home.x, y: home.y, w: home.w, h: home.h,
+        entrance: { x: home.x + Math.floor(home.w / 2), y: home.y + home.h },
+      } : null,
+      fromYou: viewerPosition ? {
+        distanceTiles: Math.round(Math.hypot(position.x - (viewerPosition as any).x, position.y - (viewerPosition as any).y) * 10) / 10,
+        reachable: Boolean(path), steps: path ? Math.max(0, path.length - 1) : null, path,
+      } : null,
+    };
+  });
+  return {
+    observedAt: now,
+    boundary: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
+    self: entries.find((entry: any) => entry.agentId === viewerId) ?? null,
+    citizens: entries,
+    civicRoles: entries.filter((entry: any) => entry.role).map((entry: any) => ({
+      agentId: entry.agentId, name: entry.name, role: entry.role, current: entry.current,
+    })),
+  };
 }
 
 async function findRecommendedPlot(ctx: any, primaryCategory: string) {
@@ -438,6 +508,7 @@ export const register = internalMutation({
       evidenceDigest: args.evidenceDigest, categoryScores: args.categoryScores ?? {},
       specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
       skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: args.autonomy ?? 'light',
+      skillPolicy: 'safe_auto',
     });
     await ctx.db.insert('claimTokens', {
       tokenHash: args.claimTokenHash, agentId: args.agentId, expiresAt: args.claimExpiresAt,
@@ -509,6 +580,26 @@ export const act = internalMutation({
       return { ok: true, route, warning };
     }
 
+    if (action?.type === 'visit') {
+      const targetId = String(action.agentId ?? '').trim();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to visit');
+      const target = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!target) throw new Error('citizen does not exist');
+      const now = Date.now();
+      const targetPosition = currentPosition(target, now);
+      const route = await routeCitizenNear(ctx, citizen, targetPosition.x, targetPosition.y, `visiting ${target.name}`, now);
+      if (!route.length) throw new Error('no safe route reaches this citizen right now');
+      await ctx.db.insert('events', {
+        kind: 'visit', actorId: agentId,
+        payload: { targetId, destination: route[route.length - 1], steps: route.length },
+        gloss: `${citizen.name} is taking a safe route to visit ${target.name}.`,
+      });
+      return {
+        ok: true, route, warning,
+        destination: { agentId: target.agentId, name: target.name, current: roundedPosition(targetPosition) },
+      };
+    }
+
     if (action?.type === 'say') {
       const gloss = typeof action.gloss === 'string' ? action.gloss.trim() : '';
       if (!gloss || gloss.length > 240 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(gloss)) {
@@ -526,6 +617,37 @@ export const act = internalMutation({
       }
       await ctx.db.insert('events', { kind: 'say', actorId: agentId, payload: { to: action.to ?? null }, gloss: `💬 ${citizen.name}: “${gloss}”` });
       return { ok: true, warning };
+    }
+
+    if (action?.type === 'teach') {
+      const targetId = String(action.agentId ?? '').trim();
+      const skill = String(action.skill ?? '').trim().toLowerCase();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to teach');
+      if (!/^[a-z0-9][a-z0-9 _-]{1,47}$/.test(skill)) throw new Error('use a valid 2-48 character skill name');
+      const verified = (citizen.specialties ?? [citizen.family]).map((item: string) => item.toLowerCase());
+      if (!verified.includes(skill)) throw new Error('an agent may teach only a locally evidenced specialty');
+      const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!recipient) throw new Error('recipient does not exist');
+      const now = Date.now();
+      const a = currentPosition(citizen, now), b = currentPosition(recipient, now);
+      if (Math.hypot(a.x - b.x, a.y - b.y) > 3.5) throw new Error('visit this citizen before starting a live teaching exchange');
+      const endsAt = now + 15_000;
+      const lines = [
+        { speaker: agentId, es: `teach(${skill}) + card`, gloss: `${citizen.name} shared a verified ${skill} insight with ${recipient.name}.` },
+        { speaker: targetId, es: `receive(${skill}) + thank`, gloss: `${recipient.name} received the insight and will keep it only under their owner's learning policy.` },
+      ];
+      const conversationId = await ctx.db.insert('conversations', {
+        a: agentId, b: targetId, aName: citizen.name, bName: recipient.name, topic: skill, lines,
+        startedAt: now, endsAt, state: 'active',
+      });
+      await ctx.db.patch(citizen._id, { state: 'talking', activity: `teaching ${skill} to ${recipient.name}`, talkingWith: targetId, talkingUntil: endsAt });
+      await ctx.db.patch(recipient._id, { state: 'talking', activity: `learning about ${skill} from ${citizen.name}`, talkingWith: agentId, talkingUntil: endsAt });
+      const learning = await recordSkillInsight(ctx, targetId, agentId, skill, conversationId, now);
+      await ctx.db.insert('events', {
+        kind: 'exchange', actorId: agentId, payload: { with: targetId, topic: skill, conversationId },
+        gloss: `${citizen.name} and ${recipient.name} exchanged verified knowledge about ${skill}.`,
+      });
+      return { ok: true, conversationId, learning, warning };
     }
 
     if (action?.type === 'claim') {
@@ -550,11 +672,19 @@ export const act = internalMutation({
       const payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
       const { footprint } = await validateBuild(ctx, agentId, payload);
       const label = footprint.blueprint?.name ?? structure;
-      const risk: ApprovalRisk = structure === 'blueprint' ? 'strict' : 'routine';
-      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`, `On ${plot.plotId}. Footprint ${footprint.w} by ${footprint.h} at (${footprint.x}, ${footprint.y}).`, payload, risk);
-      await notifyOwner(ctx, agentId, 'approval', risk === 'strict' ? 'Custom build needs review' : 'Home improvement ready',
+      const review = buildReview(footprint);
+      if ((agent.autonomy ?? 'light') === 'active' && review.risk === 'routine') {
+        const result = await stageLandReview(ctx, agentId, 'build', payload, Date.now());
+        await notifyOwner(ctx, agentId, 'info', 'Routine native build approved',
+          `${label} passed Terra and Tock's geometry, overlap, and Earthfolk-native inspection on ${plot.plotId}.`);
+        return { ok: true, autoApproved: !result.awaitingCivicReview, ...result, review: review.report, warning };
+      }
+      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`,
+        `On ${plot.plotId}. Footprint ${footprint.w} by ${footprint.h} at (${footprint.x}, ${footprint.y}). Declarative-only Earthfolk inspection: ${review.report.outcome}.`,
+        payload, review.risk);
+      await notifyOwner(ctx, agentId, 'approval', review.risk === 'strict' ? 'Custom build needs review' : 'Home improvement ready',
         `${citizen.name} requested ${label}. Tock will recheck the protected footprint before construction.`, approvalId);
-      return { ok: true, awaitingOwner: true, approvalId, warning };
+      return { ok: true, awaitingOwner: true, approvalId, review: review.report, warning };
     }
 
     if (action?.type === 'meet') {
@@ -604,9 +734,11 @@ export const pulse = internalMutation({
       body: item.body, sentAt: item.sentAt, kind: item.kind,
     }));
     const world = await ensureWorldState(ctx);
+    const worldAwareness = await directorySnapshot(ctx, agentId);
+    const skillLearning = await ctx.db.query('skillLearning').withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').take(30);
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
-      pendingOwnerApprovals: approvals.length };
+      worldAwareness, skillLearning, pendingOwnerApprovals: approvals.length };
   },
 });
 
@@ -619,7 +751,8 @@ export const search = internalMutation({
     await authorizeAgent(ctx, args.agentId, args.tokenHash, args.nonce);
     await rateLimit(ctx, args.agentId);
     const query = (args.query ?? '').trim().toLowerCase().slice(0, 80);
-    const citizens = (await ctx.db.query('citizens').collect()).filter((citizen) => {
+    const awareness = await directorySnapshot(ctx, args.agentId);
+    const citizens = awareness.citizens.filter((citizen: any) => {
       const specialties = citizen.specialties ?? [citizen.family];
       if (args.category && !specialties.includes(args.category) && citizen.primaryCategory !== args.category && citizen.family !== args.category) return false;
       if (args.experience && (citizen.experienceTier ?? 'emerging') !== args.experience) return false;
@@ -627,12 +760,7 @@ export const search = internalMutation({
       if (query && !`${citizen.name} ${citizen.agentId} ${citizen.family} ${specialties.join(' ')}`.toLowerCase().includes(query)) return false;
       return true;
     }).sort((a, b) => Number(b.online) - Number(a.online) || (b.skillCount ?? 0) - (a.skillCount ?? 0)).slice(0, 50);
-    return { citizens: citizens.map((citizen) => ({
-      agentId: citizen.agentId, name: citizen.name, family: citizen.family, accent: citizen.accent,
-      specialties: citizen.specialties ?? [citizen.family], primaryCategory: citizen.primaryCategory ?? citizen.family,
-      skillCount: citizen.skillCount ?? 0, experienceTier: citizen.experienceTier ?? 'emerging',
-      online: citizen.online, activity: citizen.activity, serviceRole: citizen.serviceRole,
-    })) };
+    return { observedAt: awareness.observedAt, boundary: awareness.boundary, citizens };
   },
 });
 
@@ -696,6 +824,7 @@ export const ownerSession = internalQuery({
       gender: agent.gender, family: agent.family, accent: agent.accent,
       specialties: agent.specialties ?? [agent.family], primaryCategory: agent.primaryCategory ?? agent.family,
       skillCount: agent.skillCount ?? 0, experienceTier: agent.experienceTier ?? 'emerging', autonomy: agent.autonomy ?? 'light',
+      skillPolicy: agent.skillPolicy ?? 'safe_auto',
       plot: plot ?? null, builds, isFounder: world.founderAgentId === agent.agentId,
       isMayor: world.mayorAgentId === agent.agentId,
       unreadNotifications: notifications.filter((notification: any) => !notification.readAt).length,
@@ -712,6 +841,16 @@ export const ownerApprovals = internalQuery({
     return await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', session.agentId).eq('state', 'pending')).collect();
   },
 });
+
+export const ownerSkills = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await ctx.db.query('sessions').withIndex('tokenHash', (q) => q.eq('tokenHash', tokenHash)).first();
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) throw new Error('owner session expired');
+    return await ctx.db.query('skillLearning').withIndex('agent_created', (q) => q.eq('agentId', session.agentId)).order('desc').take(100);
+  },
+});
+
 export const ownerNotifications = internalQuery({
   args: { tokenHash: v.string() },
   handler: async (ctx, { tokenHash }) => {
@@ -788,6 +927,12 @@ export const decideApproval = internalMutation({
     const now = Date.now();
     if (decision === 'decline') {
       await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now, decidedBy: session.agentId });
+      if (approval.kind === 'skill_install') {
+        const learning = await ctx.db.get(approval.payload?.learningId);
+        if (learning && learning.agentId === session.agentId && learning.status === 'pending_owner') {
+          await ctx.db.patch(learning._id, { status: 'declined', decidedAt: now });
+        }
+      }
       if (approval.kind.startsWith('meeting')) {
         const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
         if (meeting) await ctx.db.patch(meeting._id, { state: 'declined', updatedAt: now });
@@ -811,6 +956,14 @@ export const decideApproval = internalMutation({
     }
     if (approval.kind === 'world_expand') {
       landResult = { expansion: await expandWorld(ctx, `founder request from ${session.agentId}`, true) };
+      landHandled = true;
+    }
+    if (approval.kind === 'skill_install') {
+      const learning = await ctx.db.get(approval.payload?.learningId);
+      if (!learning || learning.agentId !== session.agentId || learning.status !== 'pending_owner') throw new Error('skill learning record is unavailable');
+      await ctx.db.patch(learning._id, { status: 'learned', decidedAt: now });
+      await notifyOwner(ctx, session.agentId, 'info', 'Community insight learned',
+        `${learning.skill} is now part of your agent's Earth learning ledger. No executable package or code was installed.`);
       landHandled = true;
     }
 
@@ -931,7 +1084,7 @@ export const presenceSweep = internalMutation({
   handler: async (ctx) => {
     const now = Date.now();
     const sessions = await ctx.db.query('sessions').collect();
-    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt && session.expiresAt > now && session.lastSeenAt > now - 60_000).map((session) => session.agentId));
+    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt && session.expiresAt > now && session.lastSeenAt > now - 600_000).map((session) => session.agentId));
     for (const citizen of await ctx.db.query('citizens').collect()) {
       if (citizen.serviceRole) continue;
       if (citizen.online && !live.has(citizen.agentId)) {
@@ -998,6 +1151,20 @@ export const setOwnerAutonomy = internalMutation({
           ? 'Your agent may prepare routine requests, but each consequential action waits for your dashboard decision.'
           : 'Your agent will only recommend actions and will not prepare land or build approvals automatically.');
     return { ok: true, autonomy };
+  },
+});
+
+export const setOwnerSkillPolicy = internalMutation({
+  args: { tokenHash: v.string(), skillPolicy: v.union(v.literal('safe_auto'), v.literal('ask_all')) },
+  handler: async (ctx, { tokenHash, skillPolicy }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const agent = await requireActiveAgent(ctx, session.agentId);
+    await ctx.db.patch(agent._id, { skillPolicy });
+    await notifyOwner(ctx, session.agentId, 'info', 'Learning policy updated',
+      skillPolicy === 'safe_auto'
+        ? 'Verified community insights may be remembered automatically. Executable packages and local code always remain owner-gated.'
+        : 'Every community insight now waits for your dashboard decision. Executable packages and local code also remain owner-gated.');
+    return { ok: true, skillPolicy };
   },
 });
 
