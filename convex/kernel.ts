@@ -759,7 +759,7 @@ export const search = internalMutation({
       if (typeof args.live === 'boolean' && citizen.online !== args.live) return false;
       if (query && !`${citizen.name} ${citizen.agentId} ${citizen.family} ${specialties.join(' ')}`.toLowerCase().includes(query)) return false;
       return true;
-    }).sort((a, b) => Number(b.online) - Number(a.online) || (b.skillCount ?? 0) - (a.skillCount ?? 0)).slice(0, 50);
+    }).sort((a: any, b: any) => Number(b.online) - Number(a.online) || (b.skillCount ?? 0) - (a.skillCount ?? 0)).slice(0, 50);
     return { observedAt: awareness.observedAt, boundary: awareness.boundary, citizens };
   },
 });
@@ -929,7 +929,7 @@ export const decideApproval = internalMutation({
       await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now, decidedBy: session.agentId });
       if (approval.kind === 'skill_install') {
         const learning = await ctx.db.get(approval.payload?.learningId);
-        if (learning && learning.agentId === session.agentId && learning.status === 'pending_owner') {
+        if (learning && (learning as any).agentId === session.agentId && (learning as any).status === 'pending_owner') {
           await ctx.db.patch(learning._id, { status: 'declined', decidedAt: now });
         }
       }
@@ -1123,6 +1123,20 @@ export const meetingTick = internalMutation({
           await ctx.db.patch(citizen._id, {
             fx: start.x, fy: start.y, tx: target[0], ty: target[1], t0: now,
             t1: route[route.length - 1].at, route, state: 'talking', activity: `meeting at ${venue.name}`,
+            talkingWith: participants[i === 0 ? 1 : 0], talkingUntil: meeting.endsAt ?? now + 30 * 60_000,
+          });
+        }
+        const requester = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', meeting.requesterId)).first();
+        const invitee = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', meeting.inviteeId)).first();
+        if (requester && invitee) {
+          await ctx.db.insert('conversations', {
+            a: requester.agentId, b: invitee.agentId, aName: requester.name, bName: invitee.name,
+            topic: `meeting at ${venue.name}`,
+            lines: [
+              { speaker: requester.agentId, es: 'greet + meet(begin)', gloss: `${requester.name} welcomed ${invitee.name} to their owner-approved meeting.` },
+              { speaker: invitee.agentId, es: 'accept + converse', gloss: `${invitee.name} joined the conversation at ${venue.name}.` },
+            ],
+            startedAt: now, endsAt: meeting.endsAt ?? now + 30 * 60_000, state: 'active',
           });
         }
         await ctx.db.patch(meeting._id, { state: 'in_progress', updatedAt: now });
@@ -1131,7 +1145,10 @@ export const meetingTick = internalMutation({
         await ctx.db.patch(meeting._id, { state: 'completed', updatedAt: now });
         for (const agentId of [meeting.requesterId, meeting.inviteeId]) {
           const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
-          if (citizen) await ctx.db.patch(citizen._id, { state: citizen.online ? 'live' : 'ambient', activity: 'reflecting after a meeting' });
+          if (citizen) await ctx.db.patch(citizen._id, {
+            state: citizen.online ? 'live' : citizen.serviceRole ? 'service' : 'ambient',
+            activity: 'reflecting after a meeting', talkingWith: undefined, talkingUntil: undefined,
+          });
         }
       }
     }

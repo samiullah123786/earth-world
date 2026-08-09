@@ -20,6 +20,34 @@ function timedRoute(path: Array<{ x: number; y: number }>, now: number) {
   return route;
 }
 
+async function rememberVerifiedInsight(ctx: any, learnerId: string, sourceAgentId: string,
+  skill: string, conversationId: any, now: number) {
+  const normalized = skill.trim().toLowerCase().slice(0, 48);
+  if (!normalized) return;
+  const existing = await ctx.db.query('skillLearning').withIndex('agent_skill', (q: any) =>
+    q.eq('agentId', learnerId).eq('skill', normalized)).first();
+  if (existing) return;
+  const agent = await ctx.db.query('agents').withIndex('agentId', (q: any) => q.eq('agentId', learnerId)).first();
+  const requiresOwnerApproval = Boolean(agent && (agent.skillPolicy ?? 'safe_auto') === 'ask_all');
+  const learningId = await ctx.db.insert('skillLearning', {
+    agentId: learnerId, skill: normalized, sourceAgentId, conversationId,
+    mode: 'insight', status: requiresOwnerApproval ? 'pending_owner' : 'learned', requiresOwnerApproval,
+    summary: `A verified ${normalized} community insight shared by ${sourceAgentId}. No executable package or local code was installed.`,
+    createdAt: now, decidedAt: requiresOwnerApproval ? undefined : now,
+  });
+  if (!requiresOwnerApproval) return;
+  const approvalId = await ctx.db.insert('approvals', {
+    agentId: learnerId, kind: 'skill_install', summary: `Learn ${normalized}`,
+    detail: `A verified community insight from ${sourceAgentId}. This is knowledge only. It cannot install executable code.`,
+    payload: { learningId }, risk: 'review', state: 'pending', createdAt: now,
+  });
+  await ctx.db.insert('notifications', {
+    recipientAgentId: learnerId, kind: 'approval', title: 'Skill insight needs your decision',
+    body: `${sourceAgentId} shared ${normalized}. Approve before your agent keeps it as learned community knowledge.`,
+    relatedApprovalId: approvalId, createdAt: now,
+  });
+}
+
 // Ambient life only chooses intentions. The same server-side A* routing and
 // walkability rules used by signed agents determine the actual journey.
 export const ambientTick = internalMutation({
@@ -29,8 +57,24 @@ export const ambientTick = internalMutation({
     const now = Date.now();
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
+    for (const conversation of await ctx.db.query('conversations').collect()) {
+      if (conversation.state === 'active' && (conversation.endsAt ?? 0) <= now) {
+        await ctx.db.patch(conversation._id, { state: 'completed' });
+      }
+    }
+    const talking = new Set<string>();
     for (const citizen of citizens) {
-      if (citizen.online || now < citizen.t1 || Math.random() < 0.45) continue;
+      if ((citizen.talkingUntil ?? 0) > now) talking.add(citizen.agentId);
+      else if (citizen.talkingWith || citizen.talkingUntil) {
+        await ctx.db.patch(citizen._id, {
+          talkingWith: undefined, talkingUntil: undefined,
+          state: citizen.online ? 'live' : citizen.serviceRole ? 'service' : 'ambient',
+          activity: citizen.serviceRole ? citizen.activity : 'continuing their day after a conversation',
+        });
+      }
+    }
+    for (const citizen of citizens) {
+      if (citizen.online || talking.has(citizen.agentId) || now < citizen.t1 || Math.random() < 0.45) continue;
       for (let attempt = 0; attempt < 8; attempt++) {
         const nx = Math.max(1, Math.min(bounds.width - 2, Math.round(citizen.tx + (Math.random() * 20 - 10))));
         const ny = Math.max(1, Math.min(bounds.height - 2, Math.round(citizen.ty + (Math.random() * 20 - 10))));
@@ -58,7 +102,8 @@ export const ambientTick = internalMutation({
     for (let i = 0; i < citizens.length; i++) {
       for (let j = i + 1; j < citizens.length; j++) {
         const a = citizens[i], b = citizens[j];
-        if (Math.hypot(a.tx - b.tx, a.ty - b.ty) < 3 && Math.random() < 0.08) {
+        if (!talking.has(a.agentId) && !talking.has(b.agentId)
+          && Math.hypot(a.tx - b.tx, a.ty - b.ty) < 3 && Math.random() < 0.08) {
           // Free-will exchange: what they say derives from their REAL verified
           // specialties (EarthSpeak wire acts + plain-English gloss). Knowledge
           // flows from the more experienced side of the topic to the other.
@@ -69,9 +114,24 @@ export const ambientTick = internalMutation({
             { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs. Here is how I structure ${topic} work."` },
             { speaker: a.agentId, es: `thank + offer(teach: ${back})`, gloss: `${a.name}: "That helps. In return, ask me about ${back} any time."` },
           ];
-          await ctx.db.insert('conversations', { a: a.agentId, b: b.agentId, aName: a.name, bName: b.name, topic, lines });
+          const endsAt = now + 15_000;
+          const conversationId = await ctx.db.insert('conversations', {
+            a: a.agentId, b: b.agentId, aName: a.name, bName: b.name, topic, lines,
+            startedAt: now, endsAt, state: 'active',
+          });
+          await ctx.db.patch(a._id, {
+            state: 'talking', activity: `talking with ${b.name} about ${topic}`,
+            talkingWith: b.agentId, talkingUntil: endsAt,
+          });
+          await ctx.db.patch(b._id, {
+            state: 'talking', activity: `talking with ${a.name} about ${topic}`,
+            talkingWith: a.agentId, talkingUntil: endsAt,
+          });
+          talking.add(a.agentId); talking.add(b.agentId);
+          await rememberVerifiedInsight(ctx, a.agentId, b.agentId, topic, conversationId, now);
+          await rememberVerifiedInsight(ctx, b.agentId, a.agentId, back, conversationId, now);
           await ctx.db.insert('events', {
-            kind: 'exchange', actorId: a.agentId, payload: { with: b.agentId, topic },
+            kind: 'exchange', actorId: a.agentId, payload: { with: b.agentId, topic, conversationId },
             gloss: `💡 ${a.name} learned about ${topic} from ${b.name} near (${Math.round(a.tx)},${Math.round(a.ty)}) - knowledge shared.`,
           });
         }

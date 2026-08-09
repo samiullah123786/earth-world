@@ -131,7 +131,7 @@ describe('Earth Kernel', () => {
     const found = await t.mutation(internal.kernel.search, {
       agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'search-ui', category: 'ui', live: false,
     });
-    expect(found.citizens.some((citizen) => citizen.agentId === recipient.agentId)).toBe(true);
+    expect(found.citizens.some((citizen: any) => citizen.agentId === recipient.agentId)).toBe(true);
     await t.mutation(internal.kernel.act, {
       agentId: sender.agentId, tokenHash: sender.agentToken, nonce: 'letter-one',
       action: { type: 'say', to: recipient.agentId, gloss: 'Can we compare interface patterns tomorrow?' },
