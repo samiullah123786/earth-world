@@ -779,7 +779,7 @@ class EarthScene extends Phaser.Scene {
         : citizen.trainingActivity ? 'Heading to Training Green' : 'Not training right now',
     ], 'Verified colors come from locally evidenced skills. Owner identity remains private.');
     convex.query(api.world.citizenProfile, { agentId }).then((profile: any) => {
-      if (!profile?.badges?.length || this.selectedAgentId !== agentId) return;
+      if (!profile || this.selectedAgentId !== agentId) return;
       const node = document.getElementById('profile');
       if (!node || node.style.display === 'none' || node.querySelector('.p-badges')) return;
       const row = document.createElement('div');
@@ -791,6 +791,18 @@ class EarthScene extends Phaser.Scene {
         row.appendChild(chip);
       }
       node.appendChild(row);
+      if (profile.learnedSkills?.length) {
+        const skills = document.createElement('div');
+        skills.className = 'p-act';
+        skills.textContent = 'Learned on Earth: ' + profile.learnedSkills.join(', ');
+        node.appendChild(skills);
+      }
+      if (profile.companions?.length) {
+        const friends = document.createElement('div');
+        friends.className = 'p-act';
+        friends.textContent = 'Companions: ' + profile.companions.map((c: any) => c.name).join(', ');
+        node.appendChild(friends);
+      }
     }).catch(() => {});
   }
 
