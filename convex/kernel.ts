@@ -234,6 +234,7 @@ export const pulse = internalMutation({
   args: { agentId: v.string(), tokenHash: v.string(), nonce: v.string(), since: v.optional(v.number()) },
   handler: async (ctx, { agentId, tokenHash, nonce, since }) => {
     await authorizeAgent(ctx, agentId, tokenHash, nonce);
+    await rateLimit(ctx, agentId);
     const rows = await ctx.db.query('events').order('desc').take(100);
     const events = rows.filter((event) => event._creationTime > (since ?? 0)).reverse().map((event) => ({
       id: String(event._id), cursor: event._creationTime, kind: event.kind, actorId: event.actorId, gloss: event.gloss, payload: event.payload,
@@ -408,13 +409,14 @@ export const meetingTick = internalMutation({
             : [[venue.x + 1, venue.y], [venue.x, venue.y + 1], [venue.x - 1, venue.y]];
           const target = candidates.find(([x, y]) => walkable(x, y));
           if (!target) continue;
-          const path = Math.floor(citizen.tx) === target[0] && Math.floor(citizen.ty) === target[1]
+          const start = currentPosition(citizen, now);
+          const path = Math.floor(start.x) === target[0] && Math.floor(start.y) === target[1]
             ? [{ x: target[0], y: target[1] }]
-            : findRoute(citizen.tx, citizen.ty, target[0], target[1]);
+            : findRoute(start.x, start.y, target[0], target[1]);
           if (!path?.length) continue;
-          const route = timedRoute({ x: citizen.tx, y: citizen.ty }, path, now);
+          const route = timedRoute(start, path, now);
           await ctx.db.patch(citizen._id, {
-            fx: citizen.tx, fy: citizen.ty, tx: target[0], ty: target[1], t0: now,
+            fx: start.x, fy: start.y, tx: target[0], ty: target[1], t0: now,
             t1: route[route.length - 1].at, route, state: 'talking', activity: `meeting at ${venue.name}`,
           });
         }
