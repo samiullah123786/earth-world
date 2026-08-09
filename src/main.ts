@@ -120,12 +120,34 @@ class EarthScene extends Phaser.Scene {
       this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), this.minimumZoom(state.width, state.height), 3));
     });
 
+    const meParam = new URLSearchParams(location.search).get('me');
+    if (meParam && /^agent:[a-z0-9-]+$/.test(meParam)) localStorage.setItem('earthMyAgent', meParam);
+    let findBtn = document.getElementById('findme');
+    if (!findBtn) {
+      findBtn = document.createElement('div');
+      findBtn.id = 'findme';
+      findBtn.className = 'hud';
+      findBtn.textContent = '⌖ FIND MY AGENT';
+      findBtn.style.cssText = 'bottom:12px;right:12px;display:none;cursor:pointer;position:absolute;z-index:6';
+      document.body.appendChild(findBtn);
+    }
+    if (findBtn) findBtn.onclick = () => {
+      const mine = localStorage.getItem('earthMyAgent');
+      const target = (mine && this.citizens.find((c) => c.agentId === mine))
+        ?? this.citizens.find((c) => c.online) ?? this.citizens[0];
+      if (target) { this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(target.agentId); }
+    };
     convex.onUpdate(api.world.citizens, {}, (rows: Citizen[]) => {
       this.citizens = rows;
       const liveIds = new Set(rows.map((row) => row.agentId));
       for (const citizen of rows) if (!this.sprites.has(citizen.agentId)) this.spawnCitizen(citizen);
       for (const [agentId, sprite] of this.sprites) {
         if (!liveIds.has(agentId)) { sprite.destroy(true); this.sprites.delete(agentId); }
+      }
+      if (findBtn && rows.length) {
+        const mine = localStorage.getItem('earthMyAgent');
+        findBtn.style.display = 'block';
+        findBtn.textContent = mine && rows.some((c) => c.agentId === mine) ? '⌖ FIND MY AGENT' : '⌖ FIND A LIVE CITIZEN';
       }
       this.renderDirectory();
     });
@@ -555,7 +577,7 @@ class EarthScene extends Phaser.Scene {
         const color = FAMILY_COLORS[plot.district] ?? 0x64748b;
         graphics.lineStyle(plot.ownerAgentId ? 2 : 1, color, plot.ownerAgentId ? 0.62 : 0.22);
         graphics.strokeRect(plot.x * TILE, plot.y * TILE, plot.w * TILE, plot.h * TILE);
-        const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive();
+        const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive({ useHandCursor: true });
         zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showPlot(plot); });
         this.objectLayer.add([graphics, zone]);
       }
