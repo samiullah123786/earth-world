@@ -288,9 +288,10 @@ function districtForCategory(category: string) {
 async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, activity: string, now: number) {
   const world = await ensureWorldState(ctx);
   const bounds = { width: world.width, height: world.height };
+  const baseX = Math.floor(x), baseY = Math.floor(y);
   const candidates = [
-    [x, y], [x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1],
-    [x - 1, y + 1], [x + 1, y + 1], [x - 1, y - 1], [x + 1, y - 1],
+    [baseX - 1, baseY], [baseX + 1, baseY], [baseX, baseY - 1], [baseX, baseY + 1],
+    [baseX - 1, baseY + 1], [baseX + 1, baseY + 1], [baseX - 1, baseY - 1], [baseX + 1, baseY - 1], [baseX, baseY],
   ].filter(([tx, ty]) => walkableInWorld(tx, ty, bounds));
   const start = currentPosition(citizen, now);
   for (const [tx, ty] of candidates) {
@@ -310,8 +311,8 @@ function safePathNear(start: { x: number; y: number }, target: { x: number; y: n
   bounds: { width: number; height: number }) {
   const tx = Math.floor(target.x), ty = Math.floor(target.y);
   const candidates = [
-    [tx, ty], [tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty + 1],
-    [tx - 1, ty + 1], [tx + 1, ty + 1], [tx - 1, ty - 1], [tx + 1, ty - 1],
+    [tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty + 1],
+    [tx - 1, ty + 1], [tx + 1, ty + 1], [tx - 1, ty - 1], [tx + 1, ty - 1], [tx, ty],
   ].filter(([x, y]) => walkableInWorld(x, y, bounds));
   for (const [x, y] of candidates) {
     const path = findRoute(start.x, start.y, x, y, bounds);
@@ -671,12 +672,23 @@ export const act = internalMutation({
       if (!plot) throw new Error('claim a plot before building');
       const payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
       const { footprint } = await validateBuild(ctx, agentId, payload);
+      const pendingBuilds = (await ctx.db.query('approvals').collect()).filter((approval: any) =>
+        approval.state === 'pending'
+        && ['build', 'land_build'].includes(approval.kind)
+        && (approval.payload?.requesterId ?? approval.agentId) === agentId
+        && approval.payload?.plotId === plot.plotId);
+      for (const pending of pendingBuilds) {
+        const reserved = buildFootprint(plot, pending.payload);
+        if (overlapsRect(footprint, reserved)) throw new Error('build footprint overlaps a structure already pending civic review');
+      }
       const label = footprint.blueprint?.name ?? structure;
       const review = buildReview(footprint);
       if ((agent.autonomy ?? 'light') === 'active' && review.risk === 'routine') {
         const result = await stageLandReview(ctx, agentId, 'build', payload, Date.now());
-        await notifyOwner(ctx, agentId, 'info', 'Routine native build approved',
-          `${label} passed Terra and Tock's geometry, overlap, and Earthfolk-native inspection on ${plot.plotId}.`);
+        await notifyOwner(ctx, agentId, 'info', result.awaitingCivicReview ? 'Native build moved to civic review' : 'Routine native build approved',
+          result.awaitingCivicReview
+            ? `${label} passed Terra and Tock's inspection on ${plot.plotId}. The current land policy requires one final civic decision.`
+            : `${label} passed Terra and Tock's geometry, overlap, and Earthfolk-native inspection on ${plot.plotId}.`);
         return { ok: true, autoApproved: !result.awaitingCivicReview, ...result, review: review.report, warning };
       }
       const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`,

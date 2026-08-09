@@ -62,6 +62,7 @@ describe('Earth Kernel', () => {
       tokenHash: agent.ownerToken, approvalId: build.approvalId, decision: 'approve',
     });
     await t.mutation(internal.kernel.grantFounder, { agentId: agent.agentId });
+    await t.mutation(internal.kernel.setOwnerGovernance, { tokenHash: agent.ownerToken, landPolicy: 'founder_review' });
     const studio = await t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'studio-nonce',
       action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Signal Studio', kind: 'studio', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
@@ -152,6 +153,55 @@ describe('Earth Kernel', () => {
     expect(feed.some((event) => event.gloss.includes('compare interface'))).toBe(false);
   });
 
+  it('gives signed map awareness and routes a visit by stable citizen id', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const viewer = await activeAgent(t, 'map-viewer');
+    const neighbor = await activeAgent(t, 'map-neighbor');
+    const found = await t.mutation(internal.kernel.search, {
+      agentId: viewer.agentId, tokenHash: viewer.agentToken, nonce: 'map-directory', query: 'terra',
+    });
+    expect(found.boundary).toMatchObject({ width: 64, height: 48 });
+    expect(found.citizens[0]).toMatchObject({
+      agentId: 'agent:terra-land', current: { x: expect.any(Number), y: expect.any(Number) },
+      role: { name: 'Land Steward' }, fromYou: { reachable: true, steps: expect.any(Number) },
+    });
+    const visit = await t.mutation(internal.kernel.act, {
+      agentId: viewer.agentId, tokenHash: viewer.agentToken, nonce: 'visit-neighbor',
+      action: { type: 'visit', agentId: neighbor.agentId },
+    });
+    expect(visit).toMatchObject({ ok: true, destination: { agentId: neighbor.agentId } });
+    expect((visit.route ?? []).length).toBeGreaterThan(0);
+    const pulse = await t.mutation(internal.kernel.pulse, {
+      agentId: viewer.agentId, tokenHash: viewer.agentToken, nonce: 'awareness-pulse', since: 0,
+    });
+    expect(pulse.worldAwareness.self.agentId).toBe(viewer.agentId);
+    expect(pulse.worldAwareness.civicRoles).toHaveLength(6);
+    expect(pulse.worldAwareness.citizens.some((citizen: any) => citizen.agentId === neighbor.agentId)).toBe(true);
+  });
+
+  it('owner-gates community insights when requested and never installs executable code', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const teacher = await activeAgent(t, 'teacher');
+    const learner = await activeAgent(t, 'learner');
+    await t.mutation(internal.kernel.setOwnerSkillPolicy, { tokenHash: learner.ownerToken, skillPolicy: 'ask_all' });
+    const taught = await t.mutation(internal.kernel.act, {
+      agentId: teacher.agentId, tokenHash: teacher.agentToken, nonce: 'teach-ui',
+      action: { type: 'teach', agentId: learner.agentId, skill: 'ui' },
+    });
+    expect(taught.learning).toMatchObject({ status: 'pending_owner', mode: 'insight', requiresOwnerApproval: true });
+    expect(taught.learning.summary).toMatch(/No executable package or local code was installed/i);
+    const approvals = await t.query(internal.kernel.ownerApprovals, { tokenHash: learner.ownerToken });
+    const decision = approvals.find((approval) => approval.kind === 'skill_install');
+    expect(decision).toBeTruthy();
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: learner.ownerToken, approvalId: decision!._id, decision: 'approve',
+    });
+    const ledger = await t.query(internal.kernel.ownerSkills, { tokenHash: learner.ownerToken });
+    expect(ledger[0]).toMatchObject({ skill: 'ui', status: 'learned', mode: 'insight' });
+  });
+
   it('stages land through the founder owner and preserves non-overlapping expansion rings', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});
@@ -182,8 +232,12 @@ describe('Earth Kernel', () => {
       const a = expanded.plots[i], b = expanded.plots[j];
       expect(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y).toBe(true);
     }
-    const route = findRoute(10, 10, 70, 50, { width: 80, height: 64 });
-    expect(route?.every(({ x, y }) => walkableInWorld(x, y, { width: 80, height: 64 }))).toBe(true);
+    let route = null;
+    for (let x = 64; x < 80 && !route; x++) for (let y = 48; y < 64 && !route; y++) {
+      if (walkableInWorld(x, y, { width: 80, height: 64 })) route = findRoute(10, 10, x, y, { width: 80, height: 64 });
+    }
+    expect(route).not.toBeNull();
+    expect(route!.every(({ x, y }) => walkableInWorld(x, y, { width: 80, height: 64 }))).toBe(true);
     await expect(t.mutation(internal.kernel.setOwnerGovernance, {
       tokenHash: resident.ownerToken, landPolicy: 'risk_based',
     })).rejects.toThrow(/designated founder/i);

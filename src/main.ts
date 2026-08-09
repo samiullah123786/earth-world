@@ -165,14 +165,24 @@ class EarthScene extends Phaser.Scene {
     if (!this.expansionRT || this.expansionRT.width !== width * TILE || this.expansionRT.height !== height * TILE) {
       this.expansionRT?.destroy();
       this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0).setDepth(-3);
+      const mirror = (value: number, size: number) => {
+        const period = Math.max(1, size * 2 - 2);
+        const wrapped = ((value % period) + period) % period;
+        return wrapped < size ? wrapped : period - wrapped;
+      };
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
           if (x < this.baseWidth && y < this.baseHeight) continue;
-          const grass = this.grassFrames[(x * 31 + y * 17) % 19 < 10 ? 0 : 1];
-          this.expansionRT.drawFrame('tiles', grass, x * TILE, y * TILE);
-          const sprinkle = (x * 131 + y * 77 + generation * 13) % 97;
-          if (sprinkle === 0) this.expansionRT.drawFrame('tiles', 941, x * TILE, y * TILE);
-          else if (sprinkle === 1) this.expansionRT.drawFrame('tiles', 850, x * TILE, y * TILE);
+          const sx = mirror(x, this.baseWidth);
+          const sy = mirror(y, this.baseHeight);
+          for (const layer of map.bgtiles) {
+            const frame = layer[sx]?.[sy];
+            if (frame !== -1 && frame !== undefined) this.expansionRT.drawFrame('tiles', frame, x * TILE, y * TILE);
+          }
+          for (const layer of map.objmap) {
+            const frame = layer[sx]?.[sy];
+            if (frame !== -1 && frame !== undefined) this.expansionRT.drawFrame('tiles', frame, x * TILE, y * TILE);
+          }
         }
       }
     }

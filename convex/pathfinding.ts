@@ -5,13 +5,21 @@ export type GridPoint = { x: number; y: number };
 
 export type WorldBounds = { width: number; height: number };
 
+// Seamless world extension: land beyond the founding map is the founding map
+// reflected outward. Forests, rivers and paths continue instead of stopping at
+// a border, and because the client renders with the same reflection, what the
+// eye sees and what the pathfinder walks are always the same land.
+export function mirrorCoord(value: number, size: number) {
+  const period = Math.max(1, size * 2 - 2);
+  const wrapped = ((value % period) + period) % period;
+  return wrapped < size ? wrapped : period - wrapped;
+}
+
 export function walkableInWorld(x: number, y: number, bounds: WorldBounds = { width: W, height: H }) {
   const tx = Math.floor(x), ty = Math.floor(y);
   if (tx < 0 || ty < 0 || tx >= bounds.width || ty >= bounds.height) return false;
-  // The hand-authored founding map keeps its river, trees, and buildings.
-  // New boundary rings are surveyed open ground until later registries add
-  // structures; this makes expansion deterministic and routable.
-  return tx >= W || ty >= H ? true : walkable(tx, ty);
+  if (tx < W && ty < H) return walkable(tx, ty);
+  return walkable(mirrorCoord(tx, W), mirrorCoord(ty, H));
 }
 
 export function findRoute(
