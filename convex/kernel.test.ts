@@ -157,7 +157,7 @@ describe('Earth Kernel', () => {
     expect(feed.some((event) => event.gloss.includes('compare interface'))).toBe(false);
   });
 
-  it('reconciles a citizen live badge from their active agent session', async () => {
+  it('reconciles a citizen live badge from their valid agent session', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});
     const agent = await activeAgent(t, 'presence');
@@ -173,7 +173,7 @@ describe('Earth Kernel', () => {
       const session = (await ctx.db.query('sessions').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).collect())
         .find((candidate) => candidate.kind === 'agent');
       if (!session) throw new Error('agent session missing');
-      await ctx.db.patch(session._id, { lastSeenAt: Date.now() - 61 * 60_000 });
+      await ctx.db.patch(session._id, { expiresAt: Date.now() - 1 });
     });
     await t.mutation(internal.kernel.presenceSweep, {});
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)?.online).toBe(false);
