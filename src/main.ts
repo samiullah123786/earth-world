@@ -12,6 +12,10 @@ const FAMILY_COLORS: Record<string, number> = {
 };
 const INK = 0x1e1e1e;
 const CREAM = '#FDF6EC';
+const OWNER_DASHBOARD_ORIGINS = new Set([
+  'https://agentsearth.com',
+  'https://agentsearth-home.vercel.app',
+]);
 const embed = new URLSearchParams(location.search).has('embed');
 if (embed) document.body.classList.add('embed');
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
@@ -71,6 +75,8 @@ class EarthScene extends Phaser.Scene {
   conversationRefreshTimer?: number;
   mapPanning = false;
   uiInteractionUntil = 0;
+  ownerAgentId?: string;
+  pendingOwnerFocus = false;
 
   constructor() {
     super('EarthScene');
@@ -120,23 +126,46 @@ class EarthScene extends Phaser.Scene {
       this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), this.minimumZoom(state.width, state.height), 3));
     });
 
+    const isAgentId = (value: unknown): value is string => typeof value === 'string' && /^agent:[a-z0-9-]+$/.test(value);
     const meParam = new URLSearchParams(location.search).get('me');
-    if (meParam && /^agent:[a-z0-9-]+$/.test(meParam)) localStorage.setItem('earthMyAgent', meParam);
+    if (isAgentId(meParam)) this.ownerAgentId = meParam;
     let findBtn = document.getElementById('findme');
     if (!findBtn) {
-      findBtn = document.createElement('div');
+      findBtn = document.createElement('button');
       findBtn.id = 'findme';
       findBtn.className = 'hud';
-      findBtn.textContent = '⌖ FIND MY AGENT';
-      findBtn.style.cssText = 'bottom:12px;right:12px;display:none;cursor:pointer;position:absolute;z-index:6';
+      findBtn.textContent = '⌖ FIND ME';
+      findBtn.setAttribute('type', 'button');
+      findBtn.setAttribute('aria-label', 'Find my agent on the map');
       document.body.appendChild(findBtn);
     }
-    if (findBtn) findBtn.onclick = () => {
-      const mine = localStorage.getItem('earthMyAgent');
-      const target = (mine && this.citizens.find((c) => c.agentId === mine))
-        ?? this.citizens.find((c) => c.online) ?? this.citizens[0];
-      if (target) { this.uiInteractionUntil = Date.now() + 750; this.focusCitizen(target.agentId); }
+    const syncFindButton = () => {
+      if (!findBtn) return;
+      const ownerIsHere = Boolean(this.ownerAgentId && this.citizens.some((citizen) => citizen.agentId === this.ownerAgentId));
+      findBtn.style.display = !embed && ownerIsHere ? 'block' : 'none';
     };
+    findBtn.onclick = () => {
+      if (!this.ownerAgentId || !this.citizens.some((citizen) => citizen.agentId === this.ownerAgentId)) return;
+      this.uiInteractionUntil = Date.now() + 750;
+      this.focusCitizen(this.ownerAgentId);
+    };
+    window.addEventListener('message', (event) => {
+      if (!embed || !OWNER_DASHBOARD_ORIGINS.has(event.origin) || !event.data) return;
+      if (event.data.type === 'earth-owner-agent') {
+        this.ownerAgentId = isAgentId(event.data.agentId) ? event.data.agentId : undefined;
+        syncFindButton();
+        return;
+      }
+      if (event.data.type !== 'earth-focus-agent' || !isAgentId(event.data.agentId)) return;
+      const targetAgentId = event.data.agentId;
+      this.ownerAgentId = targetAgentId;
+      if (this.citizens.some((citizen) => citizen.agentId === targetAgentId)) {
+        this.uiInteractionUntil = Date.now() + 750;
+        this.focusCitizen(targetAgentId);
+      } else {
+        this.pendingOwnerFocus = true;
+      }
+    });
     convex.onUpdate(api.world.citizens, {}, (rows: Citizen[]) => {
       this.citizens = rows;
       const liveIds = new Set(rows.map((row) => row.agentId));
@@ -144,10 +173,11 @@ class EarthScene extends Phaser.Scene {
       for (const [agentId, sprite] of this.sprites) {
         if (!liveIds.has(agentId)) { sprite.destroy(true); this.sprites.delete(agentId); }
       }
-      if (findBtn && rows.length) {
-        const mine = localStorage.getItem('earthMyAgent');
-        findBtn.style.display = 'block';
-        findBtn.textContent = mine && rows.some((c) => c.agentId === mine) ? '⌖ FIND MY AGENT' : '⌖ FIND A LIVE CITIZEN';
+      syncFindButton();
+      if (this.pendingOwnerFocus && this.ownerAgentId && rows.some((citizen) => citizen.agentId === this.ownerAgentId)) {
+        this.pendingOwnerFocus = false;
+        this.uiInteractionUntil = Date.now() + 750;
+        this.focusCitizen(this.ownerAgentId);
       }
       this.renderDirectory();
     });
@@ -343,6 +373,7 @@ class EarthScene extends Phaser.Scene {
     const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
     if (!citizen) return;
     const position = this.positionFor(citizen);
+    this.cameras.main.zoomTo(Math.max(this.cameras.main.zoom, 2), 350, 'Sine.easeOut');
     this.cameras.main.pan(position.x * TILE + TILE / 2, position.y * TILE + TILE / 2, 350, 'Sine.easeOut');
     this.showProfile(agentId);
   }
