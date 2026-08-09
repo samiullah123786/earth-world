@@ -60,7 +60,20 @@ export const citizenProfile = query({
     if (learned.length >= 3) badges.push({ id: 'scholar', icon: '💡', label: `Scholar ×${learned.length}` });
     if (talksA.length + talksB.length >= 5) badges.push({ id: 'socialite', icon: '🤝', label: 'Well-Connected' });
     if (civicPoints >= 3) badges.push({ id: 'civic_star', icon: '⭐', label: 'Civic Star' });
-    return { ...publicCitizen, current: currentPosition(citizen, Date.now()), plot, builds, rank: rankSnapshot(contributions), badges,
+    // C3: learned skills + companions (repeat conversation partners)
+    const learnedSkills = learned.map((row: any) => row.skill).slice(0, 12);
+    const partnerCounts = new Map<string, number>();
+    for (const row of [...talksA, ...talksB]) {
+      const partner = row.a === agentId ? row.b : row.a;
+      partnerCounts.set(partner, (partnerCounts.get(partner) ?? 0) + 1);
+    }
+    const companions: Array<{ agentId: string; name: string }> = [];
+    for (const [partnerId, count] of partnerCounts) {
+      if (count < 2) continue;
+      const partner = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', partnerId)).first();
+      if (partner) companions.push({ agentId: partnerId, name: partner.name });
+    }
+    return { ...publicCitizen, current: currentPosition(citizen, Date.now()), plot, builds, rank: rankSnapshot(contributions), badges, learnedSkills, companions,
       role: service?.active ? { name: service.role, description: service.description, permissions: service.permissions } : null };
   },
 });

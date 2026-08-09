@@ -152,13 +152,31 @@ export const ambientTick = internalMutation({
       // FREE WILL v1 (deterministic drives; research: generative-agents plan
       // loop + Humanoid Agents needs model, no LLM per BYOB law).
       const bucket = Math.floor(now / 300_000);
-      const drive = ['social', 'curiosity', 'industry', 'rest', 'civic'][
+      // H3 day rhythm (Humanoid Agents needs model): mornings lean industrious,
+      // evenings social, nights restful - deterministic, no LLM.
+      const hour = new Date(now).getUTCHours();
+      const RHYTHM: Record<string, string[]> = {
+        morning: ['industry', 'industry', 'curiosity', 'civic', 'social'],
+        day: ['curiosity', 'industry', 'social', 'civic', 'rest'],
+        evening: ['social', 'social', 'curiosity', 'rest', 'civic'],
+        night: ['rest', 'rest', 'social', 'curiosity', 'industry'],
+      };
+      const period = hour < 6 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'day' : 'evening';
+      const drive = RHYTHM[period][
         (Math.abs(citizen.agentId.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, bucket)) >>> 3) % 5];
       let goal: { x: number; y: number; why: string } | null = null;
       if (drive === 'social' && citizens.length > 1) {
+        // H2 relationship weights: past conversation partners attract first.
+        const pastA = await ctx.db.query('conversations').withIndex('a', (q: any) => q.eq('a', citizen.agentId)).collect();
+        const pastB = await ctx.db.query('conversations').withIndex('b', (q: any) => q.eq('b', citizen.agentId)).collect();
+        const partnerIds = [...new Set([...pastA.map((c: any) => c.b), ...pastB.map((c: any) => c.a)])];
         const others = citizens.filter((o) => o.agentId !== citizen.agentId);
-        const friend = others[Math.abs(citizen.agentId.charCodeAt(7) + bucket) % others.length];
-        goal = { x: Math.round(friend.tx), y: Math.round(friend.ty), why: `walking over to see ${friend.name}` };
+        const companions = others.filter((o) => partnerIds.includes(o.agentId));
+        const pool = companions.length && (bucket % 3 !== 0) ? companions : others;
+        const friend = pool[Math.abs(citizen.agentId.charCodeAt(7) + bucket) % pool.length];
+        const isCompanion = partnerIds.includes(friend.agentId);
+        goal = { x: Math.round(friend.tx), y: Math.round(friend.ty),
+          why: isCompanion ? `walking over to visit their companion ${friend.name}` : `walking over to see ${friend.name}` };
       } else if (drive === 'curiosity' || drive === 'industry' || (drive === 'civic' && !citizen.serviceRole)) {
         const venues = await ctx.db.query('venues').collect();
         if (venues.length) {
@@ -220,8 +238,8 @@ export const ambientTick = internalMutation({
           const topic = (b.specialties ?? [b.family])[Math.floor(Math.random() * (b.specialties?.length || 1))] ?? b.family;
           const back = (a.specialties ?? [a.family])[0] ?? a.family;
           const lines = [
-            { speaker: a.agentId, es: `greet + ask(learn: ${topic})`, gloss: `${a.name}: "How do you approach ${topic}? I want to understand it better."` },
-            { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs. Here is how I structure ${topic} work."` },
+            { speaker: a.agentId, es: `greet + ask(learn: ${topic})`, gloss: `${a.name}: "How do you approach ${topic}? I want to understand how you actually structure that work, not just the theory."` },
+            { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs. I practice ${topic} through my verified work, and the biggest lesson was sequencing: needs first, tools second."` },
             { speaker: a.agentId, es: `thank + offer(teach: ${back})`, gloss: `${a.name}: "That helps. In return, ask me about ${back} any time."` },
           ];
           if (c) lines.push({
