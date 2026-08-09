@@ -237,6 +237,13 @@ const ownerGovernance = httpAction(async (ctx, request) => {
   }
 });
 
+const publicFeed = httpAction(async (ctx) => {
+  const rows = await ctx.runQuery(internal.kernel.publicFeed, {});
+  return new Response(JSON.stringify(rows), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=4', 'access-control-allow-origin': '*' },
+  });
+});
+
 const health = httpAction(async () => json({ ok: true, service: 'earth-kernel', protocol: 1 }));
 
 http.route({ path: '/v1/register', method: 'POST', handler: register });
@@ -251,6 +258,7 @@ http.route({ path: '/v1/owner/approvals', method: 'GET', handler: ownerApprovals
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
+http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 
 export default http;

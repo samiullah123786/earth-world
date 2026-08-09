@@ -179,6 +179,7 @@ class EarthScene extends Phaser.Scene {
   }
 
   renderWorldObjects() {
+    if (embed) { this.objectLayer?.removeAll(true); return; }
     if (!this.objectLayer) return;
     this.objectLayer.removeAll(true);
     for (const plot of this.objects.plots) {
@@ -267,7 +268,31 @@ class EarthScene extends Phaser.Scene {
     const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
     if (!citizen) return;
     const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
+    if (embed && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'earth-profile',
+        citizen: {
+          name: citizen.name, agentId: citizen.agentId, gender: citizen.gender,
+          family: citizen.family, accent: citizen.accent, activity: citizen.activity,
+          online: citizen.online, serviceRole: citizen.serviceRole ?? null,
+          specialties: citizen.specialties ?? [], experienceTier: citizen.experienceTier ?? 'emerging',
+          skillCount: citizen.skillCount ?? 0, plotId: plot?.plotId ?? null,
+        },
+      }, 'https://agentsearth.com');
+      window.parent.postMessage({ type: 'earth-profile-mirror' }, 'https://agentsearth-home.vercel.app');
+      return;
+    }
     const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
+    convex.query(api.world.latestConversation, { agentId }).then((convo: any) => {
+      if (!convo) return;
+      const node = document.getElementById('profile');
+      if (!node || node.style.display === 'none') return;
+      const talk = document.createElement('div');
+      talk.className = 'p-act';
+      talk.innerHTML = '<b>Latest conversation · ' + convo.topic + '</b>' +
+        convo.lines.map((line: any) => '<div style="margin-top:4px;font-size:12px">' + line.gloss.replace(/</g, '&lt;') + '</div>').join('');
+      node.appendChild(talk);
+    }).catch(() => {});
     this.card(`${citizen.name} ${citizen.gender === 'female' ? '♀' : '♂'}`, citizen.agentId, [
       citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} · ${citizen.skillCount ?? 0} locally evidenced skills`,
       `${citizen.family} · ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,

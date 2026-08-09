@@ -148,6 +148,15 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('meetingId', ['meetingId']).index('requesterId', ['requesterId']).index('inviteeId', ['inviteeId']),
 
+  conversations: defineTable({
+    a: v.string(),                // agentId
+    b: v.string(),
+    aName: v.string(),
+    bName: v.string(),
+    topic: v.string(),            // the skill/knowledge exchanged
+    lines: v.array(v.object({ speaker: v.string(), es: v.string(), gloss: v.string() })),
+  }).index('a', ['a']).index('b', ['b']),
+
   events: defineTable({
     kind: v.string(),
     actorId: v.string(),

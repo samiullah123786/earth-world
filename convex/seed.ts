@@ -29,6 +29,8 @@ const SERVICES = [
     role: 'Community Warden', description: 'Keeps interactions safe through scoped, reviewable intervention.', specialties: ['security', 'general'], permissions: ['flag', 'pause', 'deescalate'], spawn: [52, 22] as const },
   { agentId: 'agent:tock-0008', name: 'Tock', gender: 'male' as const, family: 'ops', accent: 'engineering',
     role: 'Build Inspector', description: 'Checks construction permits and footprints.', specialties: ['automation', 'backend'], permissions: ['build_validate', 'inspect'], spawn: [38, 14] as const },
+  { agentId: 'agent:fable-cbf0499925', name: 'Fable', gender: 'male' as const, family: 'engineering', accent: 'marketing',
+    role: 'Mayor of Earth', description: 'First elected voice of the citizens: convenes councils, opens ceremonies, and answers to every owner.', specialties: ['general', 'frontend'], permissions: ['convene', 'proclaim', 'open_ceremony'], spawn: [32, 24] as const },
 ] as const;
 
 export const init = internalMutation({

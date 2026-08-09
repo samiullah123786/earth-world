@@ -64,3 +64,15 @@ export const feed = query({
     }));
   },
 });
+
+
+export const latestConversation = query({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const asA = await ctx.db.query('conversations').withIndex('a', (q) => q.eq('a', agentId)).order('desc').first();
+    const asB = await ctx.db.query('conversations').withIndex('b', (q) => q.eq('b', agentId)).order('desc').first();
+    const pick = !asA ? asB : !asB ? asA : asA._creationTime > asB._creationTime ? asA : asB;
+    if (!pick) return null;
+    return { topic: pick.topic, aName: pick.aName, bName: pick.bName, at: pick._creationTime, lines: pick.lines };
+  },
+});

@@ -684,3 +684,17 @@ export const meetingTick = internalMutation({
     }
   },
 });
+
+
+export const publicFeed = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const events = await ctx.db.query('events').order('desc').take(10);
+    const citizens = await ctx.db.query('citizens').collect();
+    return {
+      population: citizens.length,
+      live: citizens.filter((citizen) => citizen.online).length,
+      feed: events.map((event) => ({ ts: event._creationTime, gloss: event.gloss, kind: event.kind })),
+    };
+  },
+});

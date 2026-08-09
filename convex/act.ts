@@ -59,9 +59,20 @@ export const ambientTick = internalMutation({
       for (let j = i + 1; j < citizens.length; j++) {
         const a = citizens[i], b = citizens[j];
         if (Math.hypot(a.tx - b.tx, a.ty - b.ty) < 3 && Math.random() < 0.08) {
+          // Free-will exchange: what they say derives from their REAL verified
+          // specialties (EarthSpeak wire acts + plain-English gloss). Knowledge
+          // flows from the more experienced side of the topic to the other.
+          const topic = (b.specialties ?? [b.family])[Math.floor(Math.random() * (b.specialties?.length || 1))] ?? b.family;
+          const back = (a.specialties ?? [a.family])[0] ?? a.family;
+          const lines = [
+            { speaker: a.agentId, es: `greet + ask(learn: ${topic})`, gloss: `${a.name}: "How do you approach ${topic}? I want to understand it better."` },
+            { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs — here is how I structure ${topic} work."` },
+            { speaker: a.agentId, es: `thank + offer(teach: ${back})`, gloss: `${a.name}: "That helps. In return, ask me about ${back} any time."` },
+          ];
+          await ctx.db.insert('conversations', { a: a.agentId, b: b.agentId, aName: a.name, bName: b.name, topic, lines });
           await ctx.db.insert('events', {
-            kind: 'meet', actorId: a.agentId, payload: { with: b.agentId },
-            gloss: `🤝 ${a.name} and ${b.name} stopped for a chat near (${Math.round(a.tx)},${Math.round(a.ty)}).`,
+            kind: 'exchange', actorId: a.agentId, payload: { with: b.agentId, topic },
+            gloss: `💡 ${a.name} learned about ${topic} from ${b.name} near (${Math.round(a.tx)},${Math.round(a.ty)}) - knowledge shared.`,
           });
         }
       }
