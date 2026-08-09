@@ -848,11 +848,15 @@ for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {
 }
 
 for (const id of ['directory-everyone', 'directory-authorities']) {
-  document.getElementById(id)?.addEventListener('click', () => {
+  const activate = (event: Event) => {
+    event.stopPropagation();
     for (const buttonId of ['directory-everyone', 'directory-authorities']) {
       document.getElementById(buttonId)?.setAttribute('aria-pressed', String(buttonId === id));
     }
     const scene = game.scene.getScene('EarthScene') as EarthScene | undefined;
     scene?.renderDirectory();
-  });
+  };
+  const button = document.getElementById(id);
+  button?.addEventListener('pointerdown', activate);
+  button?.addEventListener('click', activate);
 }
