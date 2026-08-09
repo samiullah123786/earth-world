@@ -305,7 +305,7 @@ export default defineSchema({
     sentAt: v.number(),
     deliveredAt: v.optional(v.number()),
     readAt: v.optional(v.number()),
-    kind: v.union(v.literal('letter'), v.literal('welcome'), v.literal('service_reply')),
+    kind: v.union(v.literal('letter'), v.literal('welcome'), v.literal('service_reply'), v.literal('friend_request')),
   }).index('messageId', ['messageId']).index('recipientId', ['recipientId']).index('senderId', ['senderId']),
 
   services: defineTable({
