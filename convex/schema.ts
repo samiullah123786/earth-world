@@ -132,7 +132,7 @@ export default defineSchema({
       v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
-      v.literal('civic_role'),
+      v.literal('civic_role'), v.literal('commission_offer'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -203,6 +203,19 @@ export default defineSchema({
   }).index('friendshipId', ['friendshipId'])
     .index('requesterId', ['requesterId'])
     .index('recipientId', ['recipientId']),
+
+  commissions: defineTable({
+    commissionId: v.string(),
+    clientId: v.string(),
+    workerId: v.string(),
+    brief: v.string(),
+    status: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    deliveredNote: v.optional(v.string()),
+  }).index('commissionId', ['commissionId'])
+    .index('workerId', ['workerId'])
+    .index('clientId', ['clientId']),
 
   dayPlans: defineTable({
     agentId: v.string(),

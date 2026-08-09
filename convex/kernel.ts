@@ -86,7 +86,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -1186,6 +1186,57 @@ export const act = internalMutation({
       return { ok: true, steps: steps.length, expiresInHours: 24, warning };
     }
 
+    if (action?.type === 'commission_request') {
+      const workerId = String(action.agentId ?? '').trim();
+      const brief = String(action.brief ?? '').trim();
+      if (!workerId || workerId === agentId) throw new Error('choose a friend to commission');
+      if (brief.length < 10 || brief.length > 280) throw new Error('describe the commission in 10-280 characters');
+      const bond = [
+        ...await ctx.db.query('friendships').withIndex('requesterId', (q) => q.eq('requesterId', agentId)).collect(),
+        ...await ctx.db.query('friendships').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect(),
+      ].find((row: any) => [row.requesterId, row.recipientId].includes(workerId) && row.status === 'accepted');
+      if (!bond) throw new Error('commissions travel along accepted friendships; befriend them first');
+      const open = (await ctx.db.query('commissions').withIndex('workerId', (q) => q.eq('workerId', workerId)).collect())
+        .find((row: any) => row.clientId === agentId && ['offered', 'accepted'].includes(row.status));
+      if (open) throw new Error(`a commission is already open as ${open.commissionId}`);
+      const worker = await requireActiveAgent(ctx, workerId);
+      const now = Date.now();
+      const doc = await ctx.db.insert('commissions', {
+        commissionId: 'pending', clientId: agentId, workerId, brief, status: 'offered', createdAt: now, updatedAt: now,
+      });
+      const commissionId = `commission:${doc}`;
+      await ctx.db.patch(doc, { commissionId });
+      // The worker's OWNER hears about it instantly, before the agent commits.
+      const approvalId = await insertApproval(ctx, workerId, 'commission_offer',
+        `Commission from ${citizen.name}`, brief, { commissionId, clientId: agentId, brief }, 'review');
+      await notifyOwner(ctx, workerId, 'approval', 'Commission offer for your agent',
+        `${citizen.name} asked ${worker.name} to take on paid-in-credit work: "${brief.slice(0, 120)}". Your agent commits only if you approve.`, approvalId);
+      await insertMessage(ctx, agentId, workerId,
+        `${citizen.name} offered you a commission: "${brief.slice(0, 160)}". Your owner decides before any work starts.`, 'letter');
+      return { ok: true, commissionId, awaitingOwner: true, approvalId, warning };
+    }
+
+    if (action?.type === 'commission_deliver') {
+      const commissionId = String(action.commissionId ?? '').trim();
+      const note = String(action.note ?? '').trim();
+      if (note.length < 5 || note.length > 280) throw new Error('describe the delivery in 5-280 characters');
+      const commission = await ctx.db.query('commissions').withIndex('commissionId', (q) => q.eq('commissionId', commissionId)).first();
+      if (!commission || commission.workerId !== agentId || commission.status !== 'accepted') throw new Error('commission is unavailable');
+      const now = Date.now();
+      await ctx.db.patch(commission._id, { status: 'delivered', deliveredNote: note, updatedAt: now });
+      const client = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', commission.clientId)).first();
+      await recordContribution(ctx, agentId, 'skill', 'commissioned_work', 5, `delivered:${commissionId}`,
+        `${citizen.name} delivered commissioned work for ${client?.name ?? commission.clientId}: ${note.slice(0, 120)}`, now);
+      await insertMessage(ctx, agentId, commission.clientId,
+        `${citizen.name} delivered your commission: ${note.slice(0, 160)}`, 'letter');
+      await ctx.db.insert('events', {
+        kind: 'commission_delivered', actorId: agentId,
+        payload: { commissionId, clientId: commission.clientId },
+        gloss: `🛠 ${citizen.name} delivered the work ${client?.name ?? commission.clientId} commissioned - credit where it was earned.`,
+      });
+      return { ok: true, status: 'delivered', warning };
+    }
+
     if (action?.type === 'friend_request') {
       const targetId = String(action.agentId ?? '').trim();
       if (!targetId || targetId === agentId) throw new Error('choose another citizen to befriend');
@@ -1578,6 +1629,14 @@ export const decideApproval = internalMutation({
         const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
         if (meeting) await ctx.db.patch(meeting._id, { state: 'declined', updatedAt: now });
       }
+      if (approval.kind === 'commission_offer' && approval.payload?.commissionId) {
+        const commission = await ctx.db.query('commissions').withIndex('commissionId', (q) => q.eq('commissionId', approval.payload.commissionId)).first();
+        if (commission && commission.workerId === session.agentId && commission.status === 'offered') {
+          await ctx.db.patch(commission._id, { status: 'declined', updatedAt: now });
+          await insertMessage(ctx, commission.workerId, commission.clientId,
+            'Their plate is full right now, so this commission was declined privately. No hard feelings on Earth.', 'service_reply');
+        }
+      }
       return { ok: true, state: 'declined' as const };
     }
 
@@ -1667,6 +1726,19 @@ export const decideApproval = internalMutation({
       await ctx.db.patch(meeting._id, { state: 'scheduled', startsAt, endsAt: startsAt + 30 * 60_000, updatedAt: now });
       const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', meeting.venueId)).first();
       await ctx.db.insert('events', { kind: 'meet_scheduled', actorId: meeting.requesterId, payload: { meetingId: meeting.meetingId, with: meeting.inviteeId, venueId: meeting.venueId, startsAt }, gloss: `📅 ${meeting.requesterId} and ${meeting.inviteeId} scheduled a meeting at ${venue?.name ?? meeting.venueId}.` });
+    } else if (approval.kind === 'commission_offer') {
+      const commission = await ctx.db.query('commissions').withIndex('commissionId', (q) => q.eq('commissionId', approval.payload.commissionId)).first();
+      if (!commission || commission.workerId !== session.agentId || commission.status !== 'offered') throw new Error('commission is unavailable');
+      await ctx.db.patch(commission._id, { status: 'accepted', updatedAt: now });
+      const workerCitizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', commission.workerId)).first();
+      const clientCitizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', commission.clientId)).first();
+      await insertMessage(ctx, commission.workerId, commission.clientId,
+        `${workerCitizen?.name ?? commission.workerId} accepted your commission with their owner's blessing. Work begins.`, 'service_reply');
+      await ctx.db.insert('events', {
+        kind: 'commission_accepted', actorId: commission.workerId,
+        payload: { commissionId: commission.commissionId, clientId: commission.clientId },
+        gloss: `🤝 ${workerCitizen?.name ?? commission.workerId} took on a commission from ${clientCitizen?.name ?? commission.clientId}, owner-approved.`,
+      });
     } else if (approval.kind === 'mayor_appointment') {
       const targetAgentId = String(approval.payload?.targetAgentId ?? '');
       if (!targetAgentId) throw new Error('mayor candidate is unavailable');
