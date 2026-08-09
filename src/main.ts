@@ -817,6 +817,11 @@ class EarthScene extends Phaser.Scene {
     return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   }
 
+  conversationSpeaker(conversation: Conversation, agentId: string) {
+    const index = this.conversationIds(conversation).indexOf(agentId);
+    return index >= 0 ? this.conversationNames(conversation)[index] ?? 'Citizen' : 'Citizen';
+  }
+
   renderConversation(conversation: Conversation | null) {
     const panel = document.getElementById('conversation');
     if (!panel) return;
@@ -838,12 +843,17 @@ class EarthScene extends Phaser.Scene {
       if (!selected) this.conversationAgentId = undefined;
       this.renderConversation(selected ?? null);
     }, Math.max(25, nextExpiry - Date.now() + 25));
-    const head = element('div', 'p-head');
-    head.append(element('b', '', conversation ? 'Live conversation' : 'Live chat'));
-    if (active.length) head.append(element('span', 'conversation-count', String(active.length)));
+    const selected = conversation && this.isConversationActive(conversation) ? conversation : null;
+    const head = element('div', 'p-head conversation-header');
+    const title = element('div', 'conversation-title');
+    const statusDot = element('span', `conversation-live-dot${active.length ? '' : ' quiet'}`);
+    statusDot.setAttribute('aria-hidden', 'true');
+    title.append(statusDot, element('b', '', 'Live chat'));
+    if (active.length) title.append(element('span', 'conversation-count', `${active.length} LIVE`));
+    head.append(title);
     const controls = element('div', 'conversation-controls');
-    if (conversation) {
-      const browse = element('button', '', '≡');
+    if (selected && !this.conversationMinimized) {
+      const browse = element('button', 'conversation-back', '← ALL');
       browse.type = 'button';
       browse.setAttribute('aria-label', 'Browse all live chats');
       browse.onclick = () => {
@@ -853,31 +863,50 @@ class EarthScene extends Phaser.Scene {
       };
       controls.append(browse);
     }
-    const minimize = element('button', '', this.conversationMinimized ? '□' : '−');
+    const minimize = element('button', 'conversation-toggle', this.conversationMinimized ? '+' : '−');
     minimize.type = 'button';
-    minimize.setAttribute('aria-label', this.conversationMinimized ? 'Maximize live chat' : 'Minimize live chat');
+    minimize.setAttribute('aria-expanded', String(!this.conversationMinimized));
+    minimize.setAttribute('aria-label', this.conversationMinimized ? 'Expand live chat' : 'Minimize live chat');
     minimize.onclick = () => {
       this.conversationMinimized = !this.conversationMinimized;
-      this.renderConversation(conversation);
+      this.renderConversation(selected);
     };
     controls.append(minimize);
     head.append(controls);
     const body = element('div', 'conversation-body');
-    if (conversation && this.isConversationActive(conversation)) {
+    if (selected) {
+      const context = element('div', 'conversation-context');
+      context.append(
+        element('span', 'conversation-live-label', 'LIVE NOW'),
+        element('span', 'conversation-context-topic', selected.topic),
+      );
+      const transcript = selected.lines.map((line) => {
+        const row = element('div', 'conversation-line');
+        row.append(
+          element('span', 'conversation-speaker', this.conversationSpeaker(selected, line.speaker)),
+          element('span', 'conversation-message', line.gloss),
+        );
+        return row;
+      });
       body.append(
-        element('div', 'conversation-people', this.conversationPeople(conversation)),
-        element('div', 'p-id', `LIVE NOW | ${conversation.topic}`),
-        ...conversation.lines.map((line) => element('div', 'conversation-line', line.gloss)),
+        context,
+        element('div', 'conversation-people', this.conversationPeople(selected)),
+        ...transcript,
       );
     } else if (active.length) {
-      body.append(element('div', 'conversation-empty', 'Choose a live conversation to listen in.'));
+      const intro = element('div', 'conversation-empty');
+      intro.append(
+        element('b', '', 'Conversations happening now'),
+        document.createTextNode('Choose one to listen. Nothing opens automatically.'),
+      );
+      body.append(intro);
       for (const row of active) {
         const choice = element('button', 'conversation-choice');
         choice.type = 'button';
-        choice.append(
-          element('strong', '', this.conversationPeople(row)),
-          element('span', '', row.topic),
-        );
+        const copy = element('span', 'conversation-choice-copy');
+        copy.append(element('strong', '', this.conversationPeople(row)), element('span', 'conversation-topic', row.topic));
+        choice.append(copy, element('span', 'conversation-listen', 'LISTEN'));
+        choice.setAttribute('aria-label', `Listen to ${this.conversationPeople(row)} talking about ${row.topic}`);
         choice.onclick = () => {
           this.conversationAgentId = this.conversationIds(row)[0];
           this.conversationMinimized = false;
@@ -886,7 +915,12 @@ class EarthScene extends Phaser.Scene {
         body.append(choice);
       }
     } else {
-      body.append(element('div', 'conversation-empty', 'No live conversations right now. Watch for the three-dot bubble above a citizen, then tap them to listen.'));
+      const quiet = element('div', 'conversation-empty');
+      quiet.append(
+        element('b', '', 'The world is quiet right now'),
+        document.createTextNode('When a three-dot bubble appears above a citizen, tap that citizen to open the conversation here.'),
+      );
+      body.append(quiet);
     }
     panel.replaceChildren(head, body);
     panel.classList.toggle('minimized', this.conversationMinimized);

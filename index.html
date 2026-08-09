@@ -35,27 +35,39 @@
     #rightstack { position:absolute; top:12px; right:12px; z-index:6; width:306px; display:flex; flex-direction:column; gap:10px; max-height:calc(100vh - 24px); }
     #profile { display:none; width:100%; max-width:calc(100vw - 24px); z-index:6;
       background:var(--paper); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink); padding:14px 16px; font-size:13px; }
-    #conversation { display:block; width:100%; max-width:calc(100vw - 24px); z-index:6;
-      background:#3A2A1E; color:var(--cream); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink);
-      padding:13px 15px; font-size:13px; }
-    #conversation .p-x { color:var(--cream); }
-    #conversation.minimized { padding:9px 12px; }
+    #conversation { display:block; width:100%; max-width:calc(100vw - 24px); z-index:6; overflow:hidden;
+      background:var(--paper); color:var(--ink); border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink); font-size:13px; }
     #conversation.minimized .conversation-body { display:none; }
-    .conversation-body { max-height:42vh; overflow-y:auto; padding-right:2px; }
+    .conversation-header { min-height:46px; padding:9px 10px 9px 12px; color:var(--cream); background:#3A2A1E; }
+    .conversation-title { display:flex; min-width:0; align-items:center; gap:8px; }
+    .conversation-live-dot { width:9px; height:9px; flex:0 0 auto; background:#8BE28B; border:1px solid var(--cream); }
+    .conversation-live-dot.quiet { background:#B7A58F; }
+    .conversation-body { max-height:42vh; overflow-y:auto; padding:12px; background:var(--paper); }
     .conversation-controls { display:flex; align-items:center; gap:4px; }
-    .conversation-controls button { color:var(--cream); cursor:pointer; font:700 15px/1 var(--mono);
-      border:1px solid rgba(253,246,236,.55); background:transparent; min-width:27px; height:25px; }
+    .conversation-controls button { min-width:26px; height:24px; padding:0 6px; color:var(--cream); cursor:pointer;
+      border:2px solid var(--cream); background:transparent; font:800 15px/1 var(--mono); }
     .conversation-controls button:hover, .conversation-controls button:focus-visible { background:var(--cream); color:var(--ink); }
-    .conversation-empty { margin-top:7px; font-size:11px; line-height:1.45; opacity:.72; }
-    .conversation-choice { display:block; width:100%; margin-top:7px; padding:7px 9px; cursor:pointer; text-align:left;
+    .conversation-controls .conversation-back { width:auto; padding:0 8px; font-size:9px; letter-spacing:.5px; }
+    .conversation-empty { padding:11px; color:var(--ink); background:var(--cream); border:2px dashed var(--ink); font-size:11px; line-height:1.45; }
+    .conversation-empty b { display:block; margin-bottom:3px; font:800 11px/1.2 var(--mono); }
+    .conversation-choice { display:grid; width:100%; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center;
+      margin-top:8px; padding:9px 10px; cursor:pointer; text-align:left; color:var(--ink); background:var(--cream);
+      border:2px solid var(--ink); box-shadow:2px 2px 0 #8d5e3b; }
+    .conversation-choice:hover, .conversation-choice:focus-visible { transform:translate(-1px,-1px); box-shadow:3px 3px 0 var(--ink); outline:none; }
+    .conversation-choice strong { display:block; font:800 11px/1.3 var(--mono); }
+    .conversation-topic { display:block; margin-top:3px; font-size:9.5px; line-height:1.3; opacity:.65; }
+    .conversation-listen { padding:4px 6px; color:var(--cream); background:#3A2A1E; border:1px solid var(--ink); font:800 8px/1 var(--mono); }
+    .conversation-count { padding:3px 6px; color:var(--ink); background:#8BE28B; border:1px solid var(--cream);
+      font:800 8px/1 var(--mono); white-space:nowrap; }
+    .conversation-context { display:flex; align-items:center; gap:7px; margin-bottom:7px; font:800 9px/1.3 var(--mono); }
+    .conversation-live-label { padding:3px 5px; color:var(--ink); background:#8BE28B; border:2px solid var(--ink); white-space:nowrap; }
+    .conversation-context-topic { overflow:hidden; text-overflow:ellipsis; opacity:.62; white-space:nowrap; }
+    .conversation-people { margin-bottom:9px; font:800 14px/1.3 var(--mono); }
+    .conversation-line { display:grid; grid-template-columns:68px minmax(0,1fr); gap:8px; margin-top:7px; padding:8px 9px;
       color:var(--ink); background:var(--cream); border:2px solid var(--ink); box-shadow:2px 2px 0 #8d5e3b;
-      font:700 11px/1.35 var(--mono); }
-    .conversation-choice span { display:block; margin-top:2px; font-size:9px; opacity:.62; }
-    .conversation-count { margin-left:6px; padding:2px 5px; color:var(--ink); background:var(--cream); border:1px solid var(--cream);
-      font:800 9px/1 var(--mono); }
-    .conversation-people { font:800 13px/1.3 var(--mono); margin-top:4px; }
-    .conversation-line { margin-top:7px; padding:7px 9px; color:var(--ink); background:var(--cream);
-      border:2px solid var(--ink); box-shadow:2px 2px 0 #8d5e3b; font-size:11.5px; line-height:1.4; }
+      font-size:11px; line-height:1.4; }
+    .conversation-speaker { overflow:hidden; text-overflow:ellipsis; color:#315D37; font:800 9px/1.4 var(--mono); }
+    .conversation-message { min-width:0; }
     .p-head { font-size:16px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .p-x { cursor:pointer; font:700 18px/1 var(--mono); border:0; background:transparent; padding:2px 4px; }
     .p-id { font-family:var(--mono); font-size:10.5px; opacity:.55; margin:2px 0 8px; }
@@ -102,7 +114,8 @@
   <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span> · drag to pan · scroll to zoom · tap a talking citizen to listen</div>
   <div id="rightstack"><div id="profile" role="dialog" aria-live="polite"></div>
   <section id="conversation" class="minimized" aria-label="Live chat" aria-live="polite">
-    <div class="p-head"><b>Live chat</b><div class="conversation-controls"><button type="button" aria-label="Maximize live chat">□</button></div></div>
+    <div class="p-head conversation-header"><div class="conversation-title"><span class="conversation-live-dot quiet"></span><b>Live chat</b></div><div class="conversation-controls"><button type="button" aria-expanded="false" aria-label="Expand live chat">+</button></div></div>
+    <div class="conversation-body"></div>
   </section>
   <aside id="directory" aria-label="Community directory">
     <h2>Community directory <button class="panel-min" type="button" data-for="directory" aria-expanded="true" aria-label="Minimize community directory">−</button></h2>
