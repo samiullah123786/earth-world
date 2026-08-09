@@ -43,6 +43,8 @@
     .citizen-tags { font:9.5px/1.35 var(--mono); opacity:.62; margin-top:2px; }
     @media (max-width:760px) { #brand { max-width:calc(100vw - 24px); font-size:10px; } #feed { max-width:calc(100vw - 24px); }
       #directory { top:54px; width:240px; max-height:42vh; } #citizen-list { max-height:23vh; } #profile { top:auto; bottom:110px; } }
+    /* Embed (dashboard tile): pure map — feed + directory live in the full view */
+    body.embed #feed, body.embed #directory, body.embed #brand { display:none; }
   </style>
 </head>
 <body>

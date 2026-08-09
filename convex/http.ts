@@ -7,7 +7,7 @@ import {
 } from './security';
 
 const http = httpRouter();
-const HOME_URL = 'https://agentsearth-home.vercel.app';
+const HOME_URL = 'https://agentsearth.com';
 const FAMILIES = new Set(['engineering', 'design', 'marketing', 'content', 'data', 'security', 'research', 'media', 'ops']);
 const CATEGORIES = new Set(['ui', 'ux', 'frontend', 'backend', 'data', 'security', 'research', 'content', 'growth', 'automation', 'media', 'general']);
 const EXPERIENCE = new Set(['emerging', 'practiced', 'seasoned', 'polymath']);
