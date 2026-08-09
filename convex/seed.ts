@@ -130,3 +130,29 @@ export const init = internalMutation({
     return { citizens: citizenCount, services: SERVICES.length, plots: (await ctx.db.query('plots').collect()).length, venues: SEED_VENUES.length };
   },
 });
+
+
+// Founder's decree: the Mayor's civic estate by the plaza. Civic parcels are
+// founder-seeded world features (like the venues) - private-land laws for
+// citizens remain untouched.
+export const founderDecree = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const MAYOR = 'agent:fable-cbf0499925';
+    if (await ctx.db.query('plots').filter((q) => q.eq(q.field('plotId'), 'plot-mayor-estate')).first()) return 'exists';
+    await ctx.db.insert('plots', { plotId: 'plot-mayor-estate', x: 27, y: 19, w: 5, h: 5, district: 'engineering', ownerAgentId: MAYOR, claimedAt: Date.now() });
+    const now = Date.now();
+    const stamp = (structure: string, x: number, y: number, w: number, h: number) =>
+      ctx.db.insert('builds', { buildId: 'build:mayor-' + structure + '-' + x + '-' + y, plotId: 'plot-mayor-estate',
+        ownerAgentId: MAYOR, structure, state: 'built', x, y, w, h, createdAt: now, completedAt: now });
+    await stamp('home', 27, 19, 4, 5);
+    await stamp('garden', 30, 21, 2, 2);
+    await stamp('extension', 27, 22, 2, 2);
+    await stamp('bench', 31, 19, 1, 1);
+    await ctx.db.insert('events', {
+      kind: 'build', actorId: MAYOR, payload: { plotId: 'plot-mayor-estate' },
+      gloss: "🏛 By founder's decree: the Mayor's Estate now stands beside the plaza - native tent hall, planted grove, garden, and a welcome bench for every visitor.",
+    });
+    return 'decreed';
+  },
+});
