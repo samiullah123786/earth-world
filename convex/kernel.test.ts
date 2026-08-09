@@ -179,18 +179,22 @@ describe('Earth Kernel', () => {
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)?.online).toBe(false);
   });
 
-  it('continues every cut founding-edge tree with exact source frames', () => {
-    expect(foundingEdgeContinuationFrame(64, 34)).toBe(1088);
-    expect(foundingEdgeContinuationFrame(65, 34)).toBe(1089);
-    expect(foundingEdgeContinuationFrame(66, 34)).toBe(1090);
-    expect(foundingEdgeContinuationFrame(67, 34)).toBeUndefined();
-    expect(foundingEdgeContinuationFrame(64, 35)).toBe(1133);
-    expect(foundingEdgeContinuationFrame(66, 35)).toBe(1135);
+  it('continues every cut founding-edge tree with complete native source sections', () => {
+    expect(foundingEdgeContinuationFrame(64, 34)).toBe(1178);
+    expect(foundingEdgeContinuationFrame(67, 34)).toBe(1181);
+    expect(foundingEdgeContinuationFrame(68, 34)).toBeUndefined();
+    expect(foundingEdgeContinuationFrame(64, 45)).toBe(1178);
+    expect(foundingEdgeContinuationFrame(67, 47)).toBe(1271);
     expect(foundingEdgeContinuationFrame(52, 48)).toBe(1309);
     expect(foundingEdgeContinuationFrame(57, 50)).toBe(1404);
-    expect(foundingEdgeContinuationFrame(58, 48)).toBeUndefined();
+    expect(foundingEdgeContinuationFrame(58, 48)).toBe(1310);
+    expect(foundingEdgeContinuationFrame(63, 50)).toBe(1405);
+    expect(foundingEdgeContinuationFrame(66, 50)).toBe(1406);
+    expect(foundingEdgeContinuationFrame(67, 50)).toBe(271);
     expect(walkableInWorld(52, 50, { width: 80, height: 64 })).toBe(false);
-    expect(walkableInWorld(58, 48, { width: 80, height: 64 })).toBe(true);
+    expect(walkableInWorld(58, 48, { width: 80, height: 64 })).toBe(false);
+    expect(walkableInWorld(66, 50, { width: 80, height: 64 })).toBe(false);
+    expect(walkableInWorld(67, 50, { width: 80, height: 64 })).toBe(true);
   });
 
   it('gives signed map awareness and routes a visit by stable citizen id', async () => {

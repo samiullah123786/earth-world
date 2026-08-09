@@ -15,11 +15,29 @@ const SOUTH_CANOPY: Record<number, number[]> = {
   38: [521, 566, 611, 656], 39: [522, 567, 612],
 };
 
-// The southeast canopy reaches beyond the east edge only on its first two
-// rows. The next source frames complete those rows and then become transparent.
-const SOUTHEAST_EAST: Record<number, number[]> = {
-  34: [1088, 1089, 1090],
-  35: [1133, 1134, 1135],
+// The source atlas ends while the southeast grove is still crossing the east
+// boundary. A complete native right edge from the founding map's northeast
+// grove (source x 57..60, y 0..16) supplies the missing 4 by 17 forest wall,
+// including its own canopy, shadows, trunks, and grass taper. Keeping the
+// whole verified strip avoids both half-trees and repeated guessed texture.
+const SOUTHEAST_EAST_WALL: Record<number, number[]> = {
+  34: [1178, 1179, 1180, 1181],
+  35: [1223, 1224, 1225, 1226],
+  36: [1268, 1269, 1270, 1271],
+  37: [1223, 1224, 1225, 1226],
+  38: [1268, 1269, 1270, 1271],
+  39: [1223, 1224, 1225, 1226],
+  40: [1268, 1269, 1270, 1271],
+  41: [1223, 1224, 1225, 1226],
+  42: [1268, 1269, 1270, 1271],
+  43: [1223, 1224, 1225, 1226],
+  44: [1268, 1269, 1270, 1271],
+  45: [1178, 1179, 1180, 1181],
+  46: [1223, 1224, 1225, 1226],
+  47: [1268, 1269, 1270, 1271],
+  48: [1314, 1315, 1316, 271],
+  49: [1359, 1360, 1361, 271],
+  50: [1404, 1405, 1406, 271],
 };
 
 // The southeast tree mass reaches below the south edge only at x 52 through
@@ -31,17 +49,29 @@ const SOUTHEAST_SOUTH: Record<number, number[]> = {
   56: [1313, 1358, 1403], 57: [1314, 1359, 1404],
 };
 
+// A second complete founding-grove root cap (source x 53..60, y 14..16)
+// finishes the lower-right arm that was still flat after the first recovery.
+// The east wall has priority where the two native pieces meet.
+const SOUTHEAST_SOUTH_CAP: Record<number, number[]> = {
+  58: [1310, 1355, 1400], 59: [1311, 1356, 1401],
+  60: [1312, 1357, 1402], 61: [1313, 1358, 1403],
+  62: [1314, 1359, 1404], 63: [1315, 1360, 1405],
+  64: [1316, 1361, 1406], 65: [271, 271, 271],
+};
+
 export function foundingEdgeContinuationFrame(x: number, y: number) {
-  if (y >= FOUNDING_HEIGHT && x < FOUNDING_WIDTH) {
-    const frames = SOUTH_CANOPY[x] ?? SOUTHEAST_SOUTH[x];
-    return frames?.[y - FOUNDING_HEIGHT];
+  if (x >= FOUNDING_WIDTH) {
+    const frame = SOUTHEAST_EAST_WALL[y]?.[x - FOUNDING_WIDTH];
+    if (frame !== undefined) return frame;
   }
-  if (x >= FOUNDING_WIDTH && y < FOUNDING_HEIGHT) {
-    return SOUTHEAST_EAST[y]?.[x - FOUNDING_WIDTH];
+  if (y >= FOUNDING_HEIGHT) {
+    const frames = SOUTH_CANOPY[x] ?? SOUTHEAST_SOUTH[x] ?? SOUTHEAST_SOUTH_CAP[x];
+    return frames?.[y - FOUNDING_HEIGHT];
   }
   return undefined;
 }
 
 export function foundingEdgeContinuationBlocked(x: number, y: number) {
-  return foundingEdgeContinuationFrame(x, y) !== undefined;
+  const frame = foundingEdgeContinuationFrame(x, y);
+  return frame !== undefined && frame !== 271;
 }
