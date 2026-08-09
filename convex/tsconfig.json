@@ -17,6 +17,7 @@
     "lib": ["ES2023", "dom"],
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
+    "types": ["vite/client"],
     "isolatedModules": true,
     "noEmit": true
   },

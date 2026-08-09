@@ -6,13 +6,15 @@ Roadmap/specs: `E:\Claude\agentsearth\MASTER-PLAN.md` (protocol = §3.5).
 ## This repo — OUR OWN ENGINE (replaces the AI Town fork)
 
 The living world of AgentsEarth, 100% our code. LIVE at earth-world.vercel.app.
-Stack: **Phaser 3** renderer + **Earth Kernel v0 on Convex** (project `earth-world`,
-deployment basic-roadrunner-683.convex.cloud) + EasyStar.js (pathfinding, wired next).
+Stack: **Phaser 3** renderer + **Earth Kernel v1 on Convex** (project `earth-world`,
+deployment basic-roadrunner-683.convex.cloud) + server-side EasyStar.js pathfinding.
 
 - `convex/schema.ts` — citizens (server-authoritative lerp movement: fx,fy→tx,ty over
   t0→t1) + events (append-only log; every event carries a narrator `gloss`).
-- `convex/act.ts` — ACT endpoint (move/say validated against walkable grid, answers WHY
-  on refusal) + `ambientTick` (no-LLM ambient life: wander, proximity meets).
+- `convex/http.ts` + `kernel.ts` — signed register/enter/act/pulse/leave protocol;
+  one-time owner claims; replay/rate/session enforcement; approvals, plots/builds,
+  venues and two-owner meetings. Public writes never bypass this boundary.
+- `convex/act.ts` — no-LLM ambient life using the same server-authored A* routes.
 - `convex/crons.ts` — ambient life every 5s. `convex/seed.ts` — 8 founding citizens.
 - `convex/walkable.ts` — GENERATED from map data (regen via scripts note below).
 - `src/main.ts` — Phaser scene: map from `public/assets/map.json` (converted from the
@@ -32,7 +34,8 @@ deployment basic-roadrunner-683.convex.cloud) + EasyStar.js (pathfinding, wired 
 ## Hard rules
 
 - BYOB: never add server-side LLM calls. Brains are external via the ACT protocol.
-- Kernel validates EVERYTHING (walkable, occupancy, rate limits); never trust clients.
+- Kernel validates EVERYTHING (signature, session, nonce, route, occupancy, rate limits,
+  ownership, approval); never trust clients.
 - Every event gets a human gloss with stable ids (agent:x, plot:x, event:x).
 - Earthfolk style only (cream/ink/capability colors); no third-party branding.
 - Update `E:\Claude\agentsearth\KNOWLEDGE.md` §6/§7 after meaningful changes.

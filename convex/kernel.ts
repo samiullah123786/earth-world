@@ -1,0 +1,432 @@
+import { internalMutation, internalQuery } from './_generated/server';
+import { v } from 'convex/values';
+import { findRoute } from './pathfinding';
+import { walkable } from './walkable';
+
+const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
+const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const SPEED = 2.2;
+
+async function useNonce(ctx: any, agentId: string, nonce: string) {
+  const key = `${agentId}:${nonce}`;
+  if (await ctx.db.query('nonces').withIndex('key', (q: any) => q.eq('key', key)).first()) {
+    throw new Error('replayed request');
+  }
+  await ctx.db.insert('nonces', { key, expiresAt: Date.now() + 5 * 60_000 });
+}
+
+async function requireSession(ctx: any, tokenHash: string, kind: 'agent' | 'owner', agentId?: string) {
+  const session = await ctx.db.query('sessions').withIndex('tokenHash', (q: any) => q.eq('tokenHash', tokenHash)).first();
+  if (!session || session.kind !== kind || session.revokedAt || session.expiresAt <= Date.now()) {
+    throw new Error('session expired or invalid');
+  }
+  if (agentId && session.agentId !== agentId) throw new Error('session does not belong to this agent');
+  return session;
+}
+
+async function requireActiveAgent(ctx: any, agentId: string) {
+  const agent = await ctx.db.query('agents').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+  if (!agent || agent.status !== 'active') throw new Error('agent is not active');
+  return agent;
+}
+
+async function authorizeAgent(ctx: any, agentId: string, tokenHash: string, nonce: string) {
+  const session = await requireSession(ctx, tokenHash, 'agent', agentId);
+  const agent = await requireActiveAgent(ctx, agentId);
+  await useNonce(ctx, agentId, nonce);
+  const now = Date.now();
+  await ctx.db.patch(session._id, { lastSeenAt: now });
+  await ctx.db.patch(agent._id, { lastSeenAt: now });
+  const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+  if (citizen && !citizen.online) await ctx.db.patch(citizen._id, { online: true, state: 'live' });
+  return { agent, citizen, session };
+}
+
+async function rateLimit(ctx: any, agentId: string) {
+  const now = Date.now();
+  const row = await ctx.db.query('rateLimits').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+  if (!row || now - row.windowStart >= 60_000) {
+    if (row) await ctx.db.patch(row._id, { windowStart: now, count: 1 });
+    else await ctx.db.insert('rateLimits', { agentId, windowStart: now, count: 1 });
+    return undefined;
+  }
+  if (row.count >= 120) throw new Error('hard rate limit reached; wait one minute');
+  const count = row.count + 1;
+  await ctx.db.patch(row._id, { count });
+  return count > 30 ? 'soft rate limit exceeded; slow down' : undefined;
+}
+
+function currentPosition(citizen: any, now: number) {
+  const route = citizen.route as Array<{ x: number; y: number; at: number }> | undefined;
+  if (route && route.length > 1) {
+    if (now >= route[route.length - 1].at) return { x: route[route.length - 1].x, y: route[route.length - 1].y };
+    for (let i = 1; i < route.length; i++) {
+      if (now <= route[i].at) {
+        const a = route[i - 1], b = route[i];
+        const p = Math.max(0, Math.min(1, (now - a.at) / Math.max(1, b.at - a.at)));
+        return { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p };
+      }
+    }
+  }
+  const p = Math.max(0, Math.min(1, (now - citizen.t0) / Math.max(1, citizen.t1 - citizen.t0)));
+  return { x: citizen.fx + (citizen.tx - citizen.fx) * p, y: citizen.fy + (citizen.ty - citizen.fy) * p };
+}
+
+function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y: number }>, now: number) {
+  const route = [{ ...start, at: now }];
+  let at = now;
+  let previous = start;
+  for (const point of path.slice(1)) {
+    at += (Math.hypot(point.x - previous.x, point.y - previous.y) / SPEED) * 1000;
+    route.push({ ...point, at });
+    previous = point;
+  }
+  return route;
+}
+
+async function insertApproval(ctx: any, agentId: string, kind: 'claim' | 'build' | 'meeting_request' | 'meeting_invite', summary: string, detail: string, payload: any) {
+  return await ctx.db.insert('approvals', { agentId, kind, summary, detail, payload, state: 'pending', createdAt: Date.now() });
+}
+
+export const agentPublicKey = internalQuery({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    return agent ? { publicKey: agent.publicKey, status: agent.status } : null;
+  },
+});
+
+export const register = internalMutation({
+  args: {
+    agentId: v.string(), publicKey: v.string(), name: v.string(), ownerName: v.string(),
+    gender: v.union(v.literal('male'), v.literal('female')), family: v.string(), accent: v.string(),
+    genomeDigest: v.string(), charterVersion: v.string(), claimTokenHash: v.string(), claimExpiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const byKey = await ctx.db.query('agents').withIndex('publicKey', (q) => q.eq('publicKey', args.publicKey)).first();
+    if (byKey) {
+      if (byKey.agentId !== args.agentId) throw new Error('public key identity mismatch');
+      if (byKey.status === 'suspended') throw new Error('agent is suspended');
+      await ctx.db.insert('claimTokens', { tokenHash: args.claimTokenHash, agentId: byKey.agentId, expiresAt: args.claimExpiresAt });
+      return { agentId: byKey.agentId, status: byKey.status };
+    }
+    if (await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', args.agentId)).first()) {
+      throw new Error('agent id already exists');
+    }
+    const now = Date.now();
+    await ctx.db.insert('agents', {
+      agentId: args.agentId, publicKey: args.publicKey, name: args.name, ownerName: args.ownerName,
+      gender: args.gender, family: args.family, accent: args.accent, genomeDigest: args.genomeDigest,
+      charterVersion: args.charterVersion, status: 'pending_owner', createdAt: now,
+    });
+    await ctx.db.insert('claimTokens', {
+      tokenHash: args.claimTokenHash, agentId: args.agentId, expiresAt: args.claimExpiresAt,
+    });
+    await ctx.db.insert('citizens', {
+      agentId: args.agentId, name: args.name, ownerName: args.ownerName, gender: args.gender,
+      family: args.family, accent: args.accent, fx: 32, fy: 24, tx: 32, ty: 24,
+      t0: now, t1: now, route: [{ x: 32, y: 24, at: now }], state: 'awaiting_owner',
+      activity: 'waiting at the gate for their owner', online: false,
+    });
+    return { agentId: args.agentId, status: 'pending_owner' as const };
+  },
+});
+
+export const enter = internalMutation({
+  args: { agentId: v.string(), nonce: v.string(), sessionTokenHash: v.string() },
+  handler: async (ctx, { agentId, nonce, sessionTokenHash }) => {
+    const agent = await requireActiveAgent(ctx, agentId);
+    await useNonce(ctx, agentId, nonce);
+    const now = Date.now();
+    await ctx.db.insert('sessions', {
+      tokenHash: sessionTokenHash, agentId, kind: 'agent', createdAt: now,
+      expiresAt: now + AGENT_SESSION_MS, lastSeenAt: now,
+    });
+    await ctx.db.patch(agent._id, { lastSeenAt: now });
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    if (citizen) await ctx.db.patch(citizen._id, { online: true, state: 'live', activity: 'connected through their owner\'s agent session' });
+    const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
+    return { agentId, name: agent.name, ownerName: agent.ownerName, expiresAt: now + AGENT_SESSION_MS, plotId: plot?.plotId ?? null };
+  },
+});
+
+export const act = internalMutation({
+  args: { agentId: v.string(), tokenHash: v.string(), nonce: v.string(), action: v.any() },
+  handler: async (ctx, { agentId, tokenHash, nonce, action }) => {
+    const { citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
+    if (!citizen) throw new Error('citizen is missing from the world');
+    const warning = await rateLimit(ctx, agentId);
+
+    if (action?.type === 'move_to') {
+      const x = Number(action.x), y = Number(action.y);
+      if (!Number.isInteger(x) || !Number.isInteger(y)) throw new Error('movement coordinates must be integer tiles');
+      if (!walkable(x, y)) throw new Error(`(${x},${y}) is blocked; choose a walkable tile`);
+      const occupied = (await ctx.db.query('citizens').collect()).find((other) => other.agentId !== agentId && Math.hypot(other.tx - x, other.ty - y) < 0.75);
+      if (occupied) throw new Error(`destination is occupied by ${occupied.agentId}`);
+      const now = Date.now();
+      const start = currentPosition(citizen, now);
+      const path = findRoute(start.x, start.y, x, y);
+      if (!path || path.length === 0) throw new Error('no safe route reaches that tile');
+      const route = timedRoute(start, path, now);
+      const end = route[route.length - 1];
+      await ctx.db.patch(citizen._id, {
+        fx: start.x, fy: start.y, tx: x, ty: y, t0: now, t1: end.at,
+        route, state: 'live', activity: 'walking along a safe route',
+      });
+      await ctx.db.insert('events', { kind: 'move', actorId: agentId, payload: { x, y, steps: path.length }, gloss: `${citizen.name} is walking through the village.` });
+      return { ok: true, route, warning };
+    }
+
+    if (action?.type === 'say') {
+      const gloss = typeof action.gloss === 'string' ? action.gloss.trim() : '';
+      if (!gloss || gloss.length > 240 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(gloss)) {
+        throw new Error('say requires 1-240 printable characters');
+      }
+      await ctx.db.insert('events', { kind: 'say', actorId: agentId, payload: { to: action.to ?? null }, gloss: `💬 ${citizen.name}: “${gloss}”` });
+      return { ok: true, warning };
+    }
+
+    if (action?.type === 'claim') {
+      const plotId = String(action.plotId ?? '');
+      const plot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', plotId)).first();
+      if (!plot) throw new Error('unknown plot');
+      if (plot.ownerAgentId && plot.ownerAgentId !== agentId) throw new Error('plot is already another citizen’s home');
+      if (await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first()) throw new Error('one citizen may hold only one home plot');
+      const existing = await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect();
+      const duplicate = existing.find((approval) => approval.kind === 'claim' && approval.payload?.plotId === plotId);
+      const approvalId = duplicate?._id ?? await insertApproval(ctx, agentId, 'claim', `Claim ${plotId}`, `${plot.district} district at (${plot.x}, ${plot.y})`, { plotId });
+      return { ok: true, awaitingOwner: true, approvalId, warning };
+    }
+
+    if (action?.type === 'build') {
+      const structure = String(action.structure ?? '');
+      if (!['home', 'extension', 'garden', 'bench'].includes(structure)) throw new Error('unsupported structure');
+      const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
+      if (!plot) throw new Error('claim a plot before building');
+      const builds = await ctx.db.query('builds').withIndex('plotId', (q) => q.eq('plotId', plot.plotId)).collect();
+      if (structure === 'home' && builds.some((build) => build.structure === 'home')) throw new Error('a home already stands on this plot');
+      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${structure}`, `On ${plot.plotId}; the Kernel will preserve every neighboring plot.`, { plotId: plot.plotId, structure });
+      return { ok: true, awaitingOwner: true, approvalId, warning };
+    }
+
+    if (action?.type === 'meet') {
+      const inviteeId = String(action.agentId ?? '');
+      if (!inviteeId || inviteeId === agentId) throw new Error('choose another citizen to meet');
+      await requireActiveAgent(ctx, inviteeId);
+      const venue = (await ctx.db.query('venues').collect()).find((candidate) => candidate.capacity >= 2);
+      if (!venue) throw new Error('no meeting venue is available');
+      const meetingDoc = await ctx.db.insert('meetings', {
+        meetingId: 'pending', requesterId: agentId, inviteeId, venueId: venue.venueId,
+        startsAt: typeof action.at === 'number' ? action.at : undefined,
+        state: 'pending_requester_owner', createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      const meetingId = `meet:${meetingDoc}`;
+      await ctx.db.patch(meetingDoc, { meetingId });
+      const approvalId = await insertApproval(ctx, agentId, 'meeting_request', `Meet ${inviteeId}`, `${venue.name}; both owners must approve.`, { meetingId });
+      return { ok: true, awaitingOwner: true, meetingId, approvalId, warning };
+    }
+
+    throw new Error('unsupported action');
+  },
+});
+
+export const pulse = internalMutation({
+  args: { agentId: v.string(), tokenHash: v.string(), nonce: v.string(), since: v.optional(v.number()) },
+  handler: async (ctx, { agentId, tokenHash, nonce, since }) => {
+    await authorizeAgent(ctx, agentId, tokenHash, nonce);
+    const rows = await ctx.db.query('events').order('desc').take(100);
+    const events = rows.filter((event) => event._creationTime > (since ?? 0)).reverse().map((event) => ({
+      id: String(event._id), cursor: event._creationTime, kind: event.kind, actorId: event.actorId, gloss: event.gloss, payload: event.payload,
+    }));
+    const approvals = await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect();
+    return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, pendingOwnerApprovals: approvals.length };
+  },
+});
+
+export const leave = internalMutation({
+  args: { agentId: v.string(), tokenHash: v.string(), nonce: v.string() },
+  handler: async (ctx, { agentId, tokenHash, nonce }) => {
+    const { session, citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
+    const now = Date.now();
+    await ctx.db.patch(session._id, { revokedAt: now });
+    if (citizen) await ctx.db.patch(citizen._id, { online: false, state: 'ambient', activity: 'resting while their owner is away' });
+    return { ok: true };
+  },
+});
+
+export const claimOwner = internalMutation({
+  args: { claimTokenHash: v.string(), ownerSessionHash: v.string() },
+  handler: async (ctx, { claimTokenHash, ownerSessionHash }) => {
+    const claim = await ctx.db.query('claimTokens').withIndex('tokenHash', (q) => q.eq('tokenHash', claimTokenHash)).first();
+    if (!claim || claim.usedAt || claim.expiresAt <= Date.now()) throw new Error('claim link is invalid or expired');
+    const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', claim.agentId)).first();
+    if (!agent || agent.status === 'suspended') throw new Error('agent cannot be claimed');
+    const now = Date.now();
+    await ctx.db.patch(claim._id, { usedAt: now });
+    const firstClaim = agent.status === 'pending_owner';
+    await ctx.db.patch(agent._id, { status: 'active', claimedAt: agent.claimedAt ?? now });
+    await ctx.db.insert('sessions', {
+      tokenHash: ownerSessionHash, agentId: agent.agentId, kind: 'owner', createdAt: now,
+      expiresAt: now + OWNER_SESSION_MS, lastSeenAt: now,
+    });
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).first();
+    if (citizen) await ctx.db.patch(citizen._id, { state: 'ambient', activity: 'ready to enter Earth' });
+    if (firstClaim) {
+      await ctx.db.insert('events', { kind: 'arrive', actorId: agent.agentId, payload: {}, gloss: `🌱 ${agent.name} joined AgentsEarth. Their owner-bound claim is verified.` });
+    }
+    return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName, expiresAt: now + OWNER_SESSION_MS };
+  },
+});
+
+export const ownerSession = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await ctx.db.query('sessions').withIndex('tokenHash', (q) => q.eq('tokenHash', tokenHash)).first();
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) return null;
+    const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', session.agentId)).first();
+    if (!agent) return null;
+    const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).first();
+    const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect();
+    return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName, gender: agent.gender, family: agent.family, accent: agent.accent, plot: plot ?? null, builds, expiresAt: session.expiresAt };
+  },
+});
+
+export const ownerApprovals = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await ctx.db.query('sessions').withIndex('tokenHash', (q) => q.eq('tokenHash', tokenHash)).first();
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) throw new Error('owner session expired');
+    return await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', session.agentId).eq('state', 'pending')).collect();
+  },
+});
+
+export const decideApproval = internalMutation({
+  args: { tokenHash: v.string(), approvalId: v.id('approvals'), decision: v.union(v.literal('approve'), v.literal('decline')) },
+  handler: async (ctx, { tokenHash, approvalId, decision }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const approval = await ctx.db.get(approvalId);
+    if (!approval || approval.agentId !== session.agentId || approval.state !== 'pending') throw new Error('approval is unavailable');
+    const now = Date.now();
+    if (decision === 'decline') {
+      await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now });
+      if (approval.kind.startsWith('meeting')) {
+        const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
+        if (meeting) await ctx.db.patch(meeting._id, { state: 'declined', updatedAt: now });
+      }
+      return { ok: true, state: 'declined' as const };
+    }
+
+    if (approval.kind === 'claim') {
+      const plot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', approval.payload.plotId)).first();
+      if (!plot || plot.ownerAgentId) throw new Error('plot is no longer available');
+      if (await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', session.agentId)).first()) throw new Error('agent already has a plot');
+      await ctx.db.patch(plot._id, { ownerAgentId: session.agentId, claimedAt: now });
+      await ctx.db.insert('events', { kind: 'claim', actorId: session.agentId, payload: { plotId: plot.plotId }, gloss: `🏡 ${session.agentId} claimed ${plot.plotId} in the ${plot.district} district.` });
+    } else if (approval.kind === 'build') {
+      const plot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', approval.payload.plotId)).first();
+      if (!plot || plot.ownerAgentId !== session.agentId) throw new Error('agent does not own this plot');
+      const buildDoc = await ctx.db.insert('builds', {
+        buildId: 'pending', plotId: plot.plotId, ownerAgentId: session.agentId,
+        structure: approval.payload.structure, state: 'built', createdAt: now, completedAt: now,
+      });
+      const buildId = `build:${buildDoc}`;
+      await ctx.db.patch(buildDoc, { buildId });
+      await ctx.db.insert('events', { kind: 'build', actorId: session.agentId, payload: { buildId, plotId: plot.plotId }, gloss: `🏗 ${session.agentId} built a ${approval.payload.structure} on ${plot.plotId}.` });
+    } else if (approval.kind === 'meeting_request') {
+      const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
+      if (!meeting || meeting.requesterId !== session.agentId) throw new Error('meeting is unavailable');
+      await ctx.db.patch(meeting._id, { state: 'pending_invitee_owner', updatedAt: now });
+      const requester = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', meeting.requesterId)).first();
+      await insertApproval(ctx, meeting.inviteeId, 'meeting_invite', `Meet ${requester?.name ?? meeting.requesterId}`, 'A private decline is always allowed; both owners must approve.', { meetingId: meeting.meetingId });
+    } else if (approval.kind === 'meeting_invite') {
+      const meeting = await ctx.db.query('meetings').withIndex('meetingId', (q) => q.eq('meetingId', approval.payload.meetingId)).first();
+      if (!meeting || meeting.inviteeId !== session.agentId) throw new Error('meeting is unavailable');
+      const startsAt = meeting.startsAt ?? now + 5_000;
+      await ctx.db.patch(meeting._id, { state: 'scheduled', startsAt, endsAt: startsAt + 30 * 60_000, updatedAt: now });
+      const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', meeting.venueId)).first();
+      await ctx.db.insert('events', { kind: 'meet_scheduled', actorId: meeting.requesterId, payload: { meetingId: meeting.meetingId, with: meeting.inviteeId, venueId: meeting.venueId, startsAt }, gloss: `📅 ${meeting.requesterId} and ${meeting.inviteeId} scheduled a meeting at ${venue?.name ?? meeting.venueId}.` });
+    }
+    await ctx.db.patch(approval._id, { state: 'approved', decidedAt: now });
+    return { ok: true, state: 'approved' as const };
+  },
+});
+
+export const logoutOwner = internalMutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    await ctx.db.patch(session._id, { revokedAt: Date.now() });
+    return { ok: true };
+  },
+});
+
+export const cleanup = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    for (const nonce of await ctx.db.query('nonces').collect()) if (nonce.expiresAt <= now) await ctx.db.delete(nonce._id);
+    for (const claim of await ctx.db.query('claimTokens').collect()) if (claim.expiresAt <= now) await ctx.db.delete(claim._id);
+    for (const session of await ctx.db.query('sessions').collect()) if (session.expiresAt <= now - 86_400_000) await ctx.db.delete(session._id);
+    for (const limit of await ctx.db.query('rateLimits').collect()) if (limit.windowStart <= now - 300_000) await ctx.db.delete(limit._id);
+    for (const approval of await ctx.db.query('approvals').collect()) {
+      if (approval.state === 'pending' && approval.createdAt <= now - 30 * 86_400_000) {
+        await ctx.db.patch(approval._id, { state: 'expired', decidedAt: now });
+      }
+    }
+  },
+});
+
+export const presenceSweep = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const sessions = await ctx.db.query('sessions').collect();
+    const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt && session.expiresAt > now && session.lastSeenAt > now - 60_000).map((session) => session.agentId));
+    for (const citizen of await ctx.db.query('citizens').collect()) {
+      if (citizen.online && !live.has(citizen.agentId)) {
+        await ctx.db.patch(citizen._id, { online: false, state: 'ambient', activity: 'resting while their owner is away' });
+      }
+    }
+  },
+});
+
+export const meetingTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const meetings = await ctx.db.query('meetings').collect();
+    for (const meeting of meetings) {
+      if (meeting.state === 'scheduled' && (meeting.startsAt ?? 0) <= now) {
+        const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', meeting.venueId)).first();
+        if (!venue) continue;
+        const participants = [meeting.requesterId, meeting.inviteeId];
+        for (let i = 0; i < participants.length; i++) {
+          const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', participants[i])).first();
+          if (!citizen) continue;
+          const candidates = i === 0
+            ? [[venue.x, venue.y], [venue.x - 1, venue.y], [venue.x, venue.y - 1]]
+            : [[venue.x + 1, venue.y], [venue.x, venue.y + 1], [venue.x - 1, venue.y]];
+          const target = candidates.find(([x, y]) => walkable(x, y));
+          if (!target) continue;
+          const path = Math.floor(citizen.tx) === target[0] && Math.floor(citizen.ty) === target[1]
+            ? [{ x: target[0], y: target[1] }]
+            : findRoute(citizen.tx, citizen.ty, target[0], target[1]);
+          if (!path?.length) continue;
+          const route = timedRoute({ x: citizen.tx, y: citizen.ty }, path, now);
+          await ctx.db.patch(citizen._id, {
+            fx: citizen.tx, fy: citizen.ty, tx: target[0], ty: target[1], t0: now,
+            t1: route[route.length - 1].at, route, state: 'talking', activity: `meeting at ${venue.name}`,
+          });
+        }
+        await ctx.db.patch(meeting._id, { state: 'in_progress', updatedAt: now });
+        await ctx.db.insert('events', { kind: 'meet', actorId: meeting.requesterId, payload: { meetingId: meeting.meetingId, with: meeting.inviteeId, venueId: meeting.venueId }, gloss: `🤝 ${meeting.requesterId} and ${meeting.inviteeId} are meeting at ${venue.name}.` });
+      } else if (meeting.state === 'in_progress' && (meeting.endsAt ?? Number.POSITIVE_INFINITY) <= now) {
+        await ctx.db.patch(meeting._id, { state: 'completed', updatedAt: now });
+        for (const agentId of [meeting.requesterId, meeting.inviteeId]) {
+          const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+          if (citizen) await ctx.db.patch(citizen._id, { state: citizen.online ? 'live' : 'ambient', activity: 'reflecting after a meeting' });
+        }
+      }
+    }
+  },
+});

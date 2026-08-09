@@ -10,6 +10,11 @@
 
 import type * as act from "../act.js";
 import type * as crons from "../crons.js";
+import type * as http from "../http.js";
+import type * as kernel from "../kernel.js";
+import type * as pathfinding from "../pathfinding.js";
+import type * as plotsData from "../plotsData.js";
+import type * as security from "../security.js";
 import type * as seed from "../seed.js";
 import type * as walkable from "../walkable.js";
 import type * as world from "../world.js";
@@ -23,6 +28,11 @@ import type {
 declare const fullApi: ApiFromModules<{
   act: typeof act;
   crons: typeof crons;
+  http: typeof http;
+  kernel: typeof kernel;
+  pathfinding: typeof pathfinding;
+  plotsData: typeof plotsData;
+  security: typeof security;
   seed: typeof seed;
   walkable: typeof walkable;
   world: typeof world;
