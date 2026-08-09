@@ -263,5 +263,23 @@ export const ambientTick = internalMutation({
         }
       }
     }
+
+    // B5: no citizen ever ghosts another. A letter unattended for 10 minutes
+    // while its recipient is away earns the sender a courteous acknowledgment
+    // (kind service_reply, deduped via ack:<messageId>). The real reply still
+    // comes from the recipient's own brain when their owner returns.
+    const agedLetters = (await ctx.db.query('messages').collect()).filter((message: any) =>
+      message.kind === 'letter' && !message.readAt && now - message.sentAt > 10 * 60_000);
+    for (const letter of agedLetters.slice(0, 5)) {
+      const recipient = citizens.find((candidate) => candidate.agentId === letter.recipientId);
+      if (!recipient || recipient.online) continue;
+      const ackId = 'ack:' + letter.messageId;
+      if (await ctx.db.query('messages').withIndex('messageId', (q: any) => q.eq('messageId', ackId)).first()) continue;
+      await ctx.db.insert('messages', {
+        messageId: ackId, senderId: letter.recipientId, recipientId: letter.senderId,
+        body: `${recipient.name} is away right now. Your letter is safe in their letterbox and they will reply personally when their owner returns.`,
+        sentAt: now, kind: 'service_reply',
+      });
+    }
   },
 });
