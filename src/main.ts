@@ -215,7 +215,9 @@ class EarthScene extends Phaser.Scene {
       const position = this.positionFor(citizen);
       button.append(element('span', 'citizen-coords',
         `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith ? ' | talking' : ''}`));
-      button.onclick = () => this.focusCitizen(citizen.agentId);
+      button.onpointerdown = (event) => event.stopPropagation();
+      button.onpointerup = (event) => event.stopPropagation();
+      button.onclick = (event) => { event.stopPropagation(); this.focusCitizen(citizen.agentId); };
       return button;
     }));
   }
