@@ -23,7 +23,7 @@ type Citizen = {
   fx: number; fy: number; tx: number; ty: number; t0: number; t1: number;
   route?: RoutePoint[]; state: string; activity: string; online: boolean;
   specialties?: string[]; primaryCategory?: string; skillCount?: number;
-  experienceTier?: string; serviceRole?: string;
+  experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
@@ -33,6 +33,8 @@ type WorldState = { width: number; height: number; generation: number; capacity:
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
   services: Array<{ agentId: string; role: string }>; state: WorldState };
+type Conversation = { id: string; a: string; b: string; aName: string; bName: string; topic: string;
+  at: number; endsAt?: number; state: string; lines: Array<{ speaker: string; es: string; gloss: string }> };
 
 let TILE = 32;
 
@@ -50,9 +52,13 @@ class EarthScene extends Phaser.Scene {
     state: { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'service_auto' } };
   objectLayer?: Phaser.GameObjects.Container;
   expansionLayer?: Phaser.GameObjects.Graphics;
+  expansionRT?: Phaser.GameObjects.RenderTexture;
+  grassFrames?: number[];
   baseWidth = 64;
   baseHeight = 48;
   pendingGoto = new URLSearchParams(location.search).get('goto');
+  conversations: Conversation[] = [];
+  selectedAgentId?: string;
 
   constructor() {
     super('EarthScene');
@@ -90,6 +96,9 @@ class EarthScene extends Phaser.Scene {
       this.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / this.cameras.main.zoom;
       this.cameras.main.scrollY -= (pointer.y - pointer.prevPosition.y) / this.cameras.main.zoom;
     });
+    this.input.on('pointerdown', () => document.body.classList.add('is-panning'));
+    this.input.on('pointerup', () => document.body.classList.remove('is-panning'));
+    this.input.on('pointerupoutside', () => document.body.classList.remove('is-panning'));
     this.input.on('wheel', (_pointer: unknown, _objects: unknown, _dx: number, dy: number) => {
       const state = this.objects.state;
       this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), this.minimumZoom(state.width, state.height), 3));
@@ -119,6 +128,14 @@ class EarthScene extends Phaser.Scene {
       if (!feed) return;
       feed.replaceChildren(...rows.slice(0, 6).map((row) => element('div', 'feed-line', row.gloss)));
     });
+    convex.onUpdate(api.world.recentConversations, {}, (rows: Conversation[]) => {
+      this.conversations = rows;
+      const selected = this.selectedAgentId
+        ? rows.find((row) => row.a === this.selectedAgentId || row.b === this.selectedAgentId)
+        : undefined;
+      const active = rows.find((row) => row.state === 'active' && (row.endsAt ?? 0) > Date.now());
+      this.renderConversation(selected ?? active ?? null);
+    });
     this.scale.on('resize', () => this.applyWorldBounds());
   }
 
@@ -133,35 +150,35 @@ class EarthScene extends Phaser.Scene {
   }
 
   renderExpansion() {
-    if (!this.expansionLayer) return;
     const { width, height, generation } = this.objects.state;
-    this.expansionLayer.clear();
-    this.expansionLayer.fillStyle(0x87ad59, 1).fillRect(0, 0, width * TILE, height * TILE);
-    for (let y = 0; y < height; y++) {
+    const map = this.cache.json.get('map');
+    if (!map) return;
+    this.expansionLayer?.clear();
+    if (!this.grassFrames) {
+      const count = new Map<number, number>();
+      for (let x = 0; x < map.width; x++) for (let y = 0; y < map.height; y++) {
+        const g = map.bgtiles[0][x][y];
+        if (g !== -1 && g !== undefined) count.set(g, (count.get(g) ?? 0) + 1);
+      }
+      this.grassFrames = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map((entry) => entry[0]);
+    }
+    if (!this.expansionRT || this.expansionRT.width !== width * TILE || this.expansionRT.height !== height * TILE) {
+      this.expansionRT?.destroy();
+      this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0).setDepth(-3);
       for (let x = 0; x < width; x++) {
-        if (x < this.baseWidth && y < this.baseHeight) continue;
-        const hash = Math.abs((x * 92821) ^ (y * 68917) ^ (generation * 31337));
-        this.expansionLayer.fillStyle(hash % 5 === 0 ? 0x79a44f : 0x8fb760, 1)
-          .fillRect(x * TILE, y * TILE, TILE, TILE);
-        this.expansionLayer.fillStyle(hash % 3 === 0 ? 0xb8d477 : 0x668f45, 0.9)
-          .fillRect(x * TILE + 5 + (hash % 13), y * TILE + 7 + (hash % 9), 3, 3);
-        if (hash % 11 === 0) {
-          this.expansionLayer.fillStyle(0xfdf6ec, 0.95).fillRect(x * TILE + 19, y * TILE + 10, 3, 3);
-          this.expansionLayer.fillStyle(0xf59e0b, 0.95).fillRect(x * TILE + 20, y * TILE + 11, 2, 2);
-        }
-        if (hash % 23 === 0) {
-          this.expansionLayer.fillStyle(0x315d37, 0.95).fillCircle(x * TILE + 16, y * TILE + 15, 9);
-          this.expansionLayer.fillStyle(0x4f7f46, 1).fillCircle(x * TILE + 12, y * TILE + 11, 6);
-          this.expansionLayer.fillStyle(0x6f4b2f, 1).fillRect(x * TILE + 14, y * TILE + 20, 5, 9);
+        for (let y = 0; y < height; y++) {
+          if (x < this.baseWidth && y < this.baseHeight) continue;
+          const grass = this.grassFrames[(x * 31 + y * 17) % 19 < 10 ? 0 : 1];
+          this.expansionRT.drawFrame('tiles', grass, x * TILE, y * TILE);
+          const sprinkle = (x * 131 + y * 77 + generation * 13) % 97;
+          if (sprinkle === 0) this.expansionRT.drawFrame('tiles', 941, x * TILE, y * TILE);
+          else if (sprinkle === 1) this.expansionRT.drawFrame('tiles', 850, x * TILE, y * TILE);
         }
       }
     }
-    this.expansionLayer.fillStyle(0xc9ad73, 0.88);
-    for (let x = this.baseWidth + 1; x < width; x += 4) this.expansionLayer.fillRect(x * TILE + 12, 0, 8, height * TILE);
-    for (let y = this.baseHeight + 1; y < height; y += 4) this.expansionLayer.fillRect(0, y * TILE + 12, width * TILE, 8);
     this.applyWorldBounds();
     const boundary = document.getElementById('boundary');
-    if (boundary) boundary.textContent = `ring ${generation} · ${width} by ${height} tiles · capacity ${this.objects.state.capacity}`;
+    if (boundary) boundary.textContent = `ring ${generation} · ${width}×${height} tiles · capacity ${this.objects.state.capacity}`;
   }
 
   renderDirectory() {
@@ -185,6 +202,9 @@ class EarthScene extends Phaser.Scene {
         element('span', 'citizen-name', `${citizen.online ? '●' : '○'} ${citizen.name}`),
         element('span', 'citizen-tags', `${citizen.serviceRole ?? citizen.experienceTier ?? 'emerging'} · ${(citizen.specialties ?? [citizen.family]).slice(0, 2).join(' / ')}`),
       );
+      const position = this.positionFor(citizen);
+      button.append(element('span', 'citizen-coords',
+        `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith ? ' | talking' : ''}`));
       button.onclick = () => this.focusCitizen(citizen.agentId);
       return button;
     }));
@@ -193,7 +213,8 @@ class EarthScene extends Phaser.Scene {
   focusCitizen(agentId: string) {
     const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
     if (!citizen) return;
-    this.cameras.main.pan(citizen.tx * TILE + TILE / 2, citizen.ty * TILE + TILE / 2, 350, 'Sine.easeOut');
+    const position = this.positionFor(citizen);
+    this.cameras.main.pan(position.x * TILE + TILE / 2, position.y * TILE + TILE / 2, 350, 'Sine.easeOut');
     this.showProfile(agentId);
   }
 
@@ -399,7 +420,12 @@ class EarthScene extends Phaser.Scene {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
       backgroundColor: '#1E1E1E', padding: { x: 4, y: 1 },
     }).setOrigin(0.5);
-    const container = this.add.container(0, 0, [sprite, label]).setSize(20, 28).setInteractive();
+    const bubbleShape = this.add.graphics().setName('talk-bubble-shape');
+    bubbleShape.fillStyle(INK).fillRoundedRect(-14, -52, 28, 16, 5).fillTriangle(-6, -37, 0, -37, -4, -32);
+    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -50, 24, 12, 3);
+    const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -44, 1.6, INK).setName(`talk-dot-${index}`));
+    const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
+    const container = this.add.container(0, 0, [sprite, label, bubble]).setSize(20, 28).setInteractive();
     container.on('pointerdown', () => this.showProfile(citizen.agentId));
     this.sprites.set(citizen.agentId, container);
   }
@@ -416,7 +442,7 @@ class EarthScene extends Phaser.Scene {
     card.style.display = 'block';
   }
 
-  showProfile(agentId: string) {
+  showProfileLegacy(agentId: string) {
     const citizen = this.citizens.find((candidate) => candidate.agentId === agentId);
     if (!citizen) return;
     const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
