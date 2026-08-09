@@ -240,6 +240,19 @@ const ownerGovernance = httpAction(async (ctx, request) => {
   }
 });
 
+const ownerSkills = httpAction(async (ctx, request) => {
+  try {
+    const skills = await ctx.runQuery(internal.kernel.ownerSkills, { tokenHash: await sha256Hex(bearerToken(request)) });
+    return json({ ok: true, skills: skills.map((skill: any) => ({
+      id: skill._id, skill: skill.skill, sourceAgentId: skill.sourceAgentId, mode: skill.mode,
+      status: skill.status, requiresOwnerApproval: skill.requiresOwnerApproval,
+      summary: skill.summary, createdAt: skill.createdAt, decidedAt: skill.decidedAt,
+    })) });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
 const ownerNotifications = httpAction(async (ctx, request) => {
   try {
     const notifications = await ctx.runQuery(internal.kernel.ownerNotifications, { tokenHash: await sha256Hex(bearerToken(request)) });
@@ -267,6 +280,19 @@ const ownerAutonomy = httpAction(async (ctx, request) => {
     if (!['none', 'light', 'active'].includes(value.autonomy)) throw new Error('invalid autonomy preference');
     const result = await ctx.runMutation(internal.kernel.setOwnerAutonomy, {
       tokenHash: await sha256Hex(bearerToken(request)), autonomy: value.autonomy,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const ownerSkillPolicy = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    if (!['safe_auto', 'ask_all'].includes(value.skillPolicy)) throw new Error('invalid skill learning policy');
+    const result = await ctx.runMutation(internal.kernel.setOwnerSkillPolicy, {
+      tokenHash: await sha256Hex(bearerToken(request)), skillPolicy: value.skillPolicy,
     });
     return json(result);
   } catch (error) {
@@ -313,12 +339,14 @@ http.route({ path: '/v1/leave', method: 'POST', handler: leave });
 http.route({ path: '/v1/owner/claim', method: 'POST', handler: ownerClaim });
 http.route({ path: '/v1/owner/session', method: 'GET', handler: ownerSession });
 http.route({ path: '/v1/owner/approvals', method: 'GET', handler: ownerApprovals });
+http.route({ path: '/v1/owner/skills', method: 'GET', handler: ownerSkills });
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
 http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotifications });
 http.route({ path: '/v1/owner/notifications/read', method: 'POST', handler: ownerNotificationsRead });
 http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy });
+http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
 http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });

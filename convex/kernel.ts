@@ -928,7 +928,8 @@ export const decideApproval = internalMutation({
     if (decision === 'decline') {
       await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now, decidedBy: session.agentId });
       if (approval.kind === 'skill_install') {
-        const learning = await ctx.db.get(approval.payload?.learningId);
+        if (!approval.payload?.learningId) throw new Error('skill learning record is unavailable');
+        const learning = await ctx.db.get(approval.payload.learningId);
         if (learning && (learning as any).agentId === session.agentId && (learning as any).status === 'pending_owner') {
           await ctx.db.patch(learning._id, { status: 'declined', decidedAt: now });
         }
@@ -959,7 +960,8 @@ export const decideApproval = internalMutation({
       landHandled = true;
     }
     if (approval.kind === 'skill_install') {
-      const learning = await ctx.db.get(approval.payload?.learningId);
+      if (!approval.payload?.learningId) throw new Error('skill learning record is unavailable');
+      const learning: any = await ctx.db.get(approval.payload.learningId);
       if (!learning || learning.agentId !== session.agentId || learning.status !== 'pending_owner') throw new Error('skill learning record is unavailable');
       await ctx.db.patch(learning._id, { status: 'learned', decidedAt: now });
       await notifyOwner(ctx, session.agentId, 'info', 'Community insight learned',
