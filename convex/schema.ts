@@ -121,7 +121,7 @@ export default defineSchema({
     kind: v.union(
       v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
-      v.literal('mayor_appointment'), v.literal('skill_install'),
+      v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
     ),
     summary: v.string(),
     detail: v.string(),

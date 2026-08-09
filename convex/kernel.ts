@@ -85,7 +85,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'mayor_appointment' | 'skill_install';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -144,6 +144,32 @@ const SERVICE_REPLIES: Record<string, string> = {
 };
 
 const BLUEPRINT_KINDS = new Set(['home', 'studio', 'workshop', 'hall', 'garden', 'art']);
+const BLUEPRINT_ARCHITECTURES = new Set(['native', 'modern-earthfolk']);
+const BLUEPRINT_FEATURES = new Set([
+  'entry-path', 'porch', 'warm-windows', 'flower-bed', 'herb-bed', 'small-plants',
+  'native-tree', 'timber-fence', 'bird-bath', 'pond', 'pet-yard', 'pet-shelter',
+]);
+
+function nativeBuildingKnowledge() {
+  return {
+    standard: 'earthfolk-native-v1',
+    sourceComposition: { x: 9, y: 7, w: 3, h: 3, use: 'standard native home' },
+    architectures: [
+      { id: 'native', review: 'routine when geometry and ownership pass', description: 'Founding-world tent and cottage grammar.' },
+      { id: 'modern-earthfolk', review: 'owner then Mayor', description: 'Modern proportions using the same pixel scale, cream plaster, brown timber, warm light, and planted edges.' },
+    ],
+    kinds: Array.from(BLUEPRINT_KINDS),
+    features: Array.from(BLUEPRINT_FEATURES),
+    materials: ['cream plaster', 'warm brown timber', 'brown roof tile', 'warm window light', 'stone or earth path'],
+    placement: [
+      'whole-tile declarative footprint only', 'keep the south entry readable', 'stay inside the owned plot',
+      'never overlap water, roads, venues, civic space, another structure, or another plot',
+      'capability color is a small verified accent, never a building material',
+    ],
+    companionRule: 'Pet-yard and pet-shelter are supported house features. A living companion registry remains separate and must never be faked by a blueprint.',
+    expansionRule: 'Request 4 to 8 tiles in width or height with expand_plot. The owner consents first, then the Mayor reviews the reserved non-overlapping parcel.',
+  };
+}
 
 function overlapsRect(a: any, b: any) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -166,11 +192,17 @@ function buildFootprint(plot: any, payload: any) {
     const kind = String(raw.kind ?? '');
     const offsetX = Number(raw.offsetX ?? 0), offsetY = Number(raw.offsetY ?? 0);
     const w = Number(raw.w ?? 1), h = Number(raw.h ?? 1);
+    const architecture = String(raw.architecture ?? 'native');
+    const rawFeatures = raw.features ?? [];
     if (!/^[\p{L}\p{N} _'-]{2,32}$/u.test(name)) throw new Error('blueprint name must be 2-32 plain characters');
     if (!BLUEPRINT_KINDS.has(kind)) throw new Error('unsupported blueprint kind');
+    if (!BLUEPRINT_ARCHITECTURES.has(architecture)) throw new Error('unsupported Earthfolk architecture');
+    if (!Array.isArray(rawFeatures) || rawFeatures.length > 8) throw new Error('blueprint features must be a list of at most 8 native features');
+    const features = Array.from(new Set(rawFeatures.map((item: unknown) => String(item).trim())));
+    if (features.some((item) => !BLUEPRINT_FEATURES.has(item))) throw new Error('blueprint contains an unsupported native feature');
     if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
     spec = { offsetX, offsetY, w, h };
-    blueprint = { name, kind, offsetX, offsetY, w, h, style: 'earthfolk-native-v1' };
+    blueprint = { name, kind, architecture, features, offsetX, offsetY, w, h, style: 'earthfolk-native-v1' };
   }
   if (!spec) throw new Error('unsupported structure');
   if (spec.offsetX < 0 || spec.offsetY < 0 || spec.offsetX + spec.w > plot.w || spec.offsetY + spec.h > plot.h) {
@@ -195,14 +227,17 @@ function buildReview(footprint: any) {
   const kind = footprint.blueprint?.kind ?? footprint.structure;
   const custom = footprint.structure === 'blueprint';
   const area = footprint.w * footprint.h;
-  const risk: ApprovalRisk = custom && !(['garden', 'art'].includes(kind) && area <= 2) ? 'strict' : 'routine';
+  const architecture = footprint.blueprint?.architecture ?? 'native';
+  const routineNative = architecture === 'native' && area <= 9;
+  const risk: ApprovalRisk = custom && !routineNative ? 'strict' : 'routine';
   return {
     risk,
     report: {
       standard: 'earthfolk-native-v1', format: 'declarative-only', executableCode: false,
+      architecture, features: footprint.blueprint?.features ?? [], paletteLocked: true,
       geometry: 'pass', collision: 'pass', plotContainment: 'pass', terrainLanguage: 'pass',
       lowerAuthorities: ['Terra Land Steward', 'Tock Build Inspector'],
-      outcome: risk === 'routine' ? 'lower-authority-approved' : 'escalate-to-mayor',
+      outcome: risk === 'routine' ? 'lower-authority-approved' : 'owner-and-mayor-review',
       checkedAt: Date.now(),
     },
   };
@@ -226,7 +261,8 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
   const nativeBlueprint = { ...(footprint.blueprint ?? {
     name: footprint.structure === 'home' ? 'Earthfolk Home' : `Earthfolk ${footprint.structure}`,
     kind: footprint.structure, offsetX: footprint.offsetX, offsetY: footprint.offsetY,
-    w: footprint.w, h: footprint.h, style: 'earthfolk-native-v1',
+    w: footprint.w, h: footprint.h, style: 'earthfolk-native-v1', architecture: 'native',
+    features: footprint.structure === 'home' ? ['entry-path', 'warm-windows', 'small-plants'] : [],
   }), review: review.report };
   const buildDoc = await ctx.db.insert('builds', {
     buildId: 'pending', plotId: plot.plotId, ownerAgentId: requesterId,
@@ -241,6 +277,60 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
     payload: { buildId, plotId: plot.plotId, review: review.report },
     gloss: `Tock completed the final native-code inspection for ${requesterId}'s ${label} on ${plot.plotId}. Every footprint and Earthfolk check passed.` });
   return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint } };
+}
+
+async function planPlotExpansion(ctx: any, requesterId: string, requestedWidth: number, requestedHeight: number, expected?: any) {
+  const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first();
+  if (!plot) throw new Error('claim a plot before requesting more homestead space');
+  if (![requestedWidth, requestedHeight].every(Number.isInteger)) throw new Error('expanded plot dimensions must use whole tiles');
+  if (requestedWidth < plot.w || requestedHeight < plot.h || requestedWidth > 8 || requestedHeight > 8
+    || (requestedWidth === plot.w && requestedHeight === plot.h)) {
+    throw new Error(`request a larger footprint up to 8 by 8 tiles; the current plot is ${plot.w} by ${plot.h}`);
+  }
+  const world = await ensureWorldState(ctx);
+  const [plots, venues, approvals] = await Promise.all([
+    ctx.db.query('plots').collect(), ctx.db.query('venues').collect(), ctx.db.query('approvals').collect(),
+  ]);
+  const reserved = approvals.filter((approval: any) => approval.state === 'pending' && approval.kind === 'plot_expansion'
+    && approval.payload?.stage === 'civic' && approval.payload?.plotId !== plot.plotId && approval.payload?.plan);
+  const origins: Array<{ x: number; y: number }> = [];
+  for (let left = 0; left <= requestedWidth - plot.w; left++) {
+    for (let top = 0; top <= requestedHeight - plot.h; top++) origins.push({ x: plot.x - left, y: plot.y - top });
+  }
+  const candidates = expected ? [expected] : origins.map((origin) => ({ ...origin, w: requestedWidth, h: requestedHeight }));
+  for (const candidate of candidates) {
+    if (![candidate.x, candidate.y, candidate.w, candidate.h].every(Number.isInteger)
+      || candidate.w !== requestedWidth || candidate.h !== requestedHeight
+      || candidate.x > plot.x || candidate.y > plot.y
+      || candidate.x + candidate.w < plot.x + plot.w || candidate.y + candidate.h < plot.y + plot.h
+      || candidate.x < 0 || candidate.y < 0
+      || candidate.x + candidate.w > world.width || candidate.y + candidate.h > world.height) continue;
+    if (plots.some((other: any) => other._id !== plot._id && overlapsRect(candidate, other))) continue;
+    if (venues.some((venue: any) => overlapsRect(candidate, { x: venue.x - 1, y: venue.y - 1, w: 3, h: 3 }))) continue;
+    if (reserved.some((approval: any) => overlapsRect(candidate, approval.payload.plan))) continue;
+    let terrainSafe = true;
+    for (let x = candidate.x; x < candidate.x + candidate.w && terrainSafe; x++) {
+      for (let y = candidate.y; y < candidate.y + candidate.h; y++) {
+        const alreadyOwned = x >= plot.x && x < plot.x + plot.w && y >= plot.y && y < plot.y + plot.h;
+        if (!alreadyOwned && !walkableInWorld(x, y, { width: world.width, height: world.height })) { terrainSafe = false; break; }
+      }
+    }
+    if (terrainSafe) return { plot, plan: { x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h } };
+  }
+  throw new Error('no safe non-overlapping expansion fits around this plot; request a smaller size or ask Terra to survey another ring');
+}
+
+async function commitPlotExpansion(ctx: any, requesterId: string, payload: any, now: number) {
+  await assertRegistryGeometry(ctx);
+  const { plot, plan } = await planPlotExpansion(ctx, requesterId, Number(payload.width), Number(payload.height), payload.plan);
+  await ctx.db.patch(plot._id, plan);
+  await ctx.db.insert('events', {
+    kind: 'plot_expanded', actorId: requesterId, payload: { plotId: plot.plotId, from: { x: plot.x, y: plot.y, w: plot.w, h: plot.h }, to: plan },
+    gloss: `Terra reserved a protected ${plan.w} by ${plan.h} homestead for ${requesterId}. Mayor approval was recorded before the boundary changed.`,
+  });
+  await notifyOwner(ctx, requesterId, 'info', 'Homestead expansion approved',
+    `${plot.plotId} is now ${plan.w} by ${plan.h} tiles. Future builds still require Tock's footprint and native-style inspection.`);
+  return { plotId: plot.plotId, plan };
 }
 
 async function stageLandReview(ctx: any, requesterId: string, kind: 'claim' | 'build', payload: any, now: number) {
@@ -689,14 +779,35 @@ export const act = internalMutation({
           result.awaitingCivicReview
             ? `${label} passed Terra and Tock's inspection on ${plot.plotId}. The current land policy requires one final civic decision.`
             : `${label} passed Terra and Tock's geometry, overlap, and Earthfolk-native inspection on ${plot.plotId}.`);
-        return { ok: true, autoApproved: !result.awaitingCivicReview, ...result, review: review.report, warning };
+        return { ok: true, autoApproved: !result.awaitingCivicReview, ...result, review: review.report,
+          buildGuide: nativeBuildingKnowledge(), warning };
       }
       const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`,
         `On ${plot.plotId}. Footprint ${footprint.w} by ${footprint.h} at (${footprint.x}, ${footprint.y}). Declarative-only Earthfolk inspection: ${review.report.outcome}.`,
         payload, review.risk);
       await notifyOwner(ctx, agentId, 'approval', review.risk === 'strict' ? 'Custom build needs review' : 'Home improvement ready',
         `${citizen.name} requested ${label}. Tock will recheck the protected footprint before construction.`, approvalId);
-      return { ok: true, awaitingOwner: true, approvalId, review: review.report, warning };
+      return { ok: true, awaitingOwner: true, approvalId, review: review.report,
+        buildGuide: nativeBuildingKnowledge(), warning };
+    }
+
+    if (action?.type === 'expand_plot') {
+      const width = Number(action.width), height = Number(action.height);
+      const ownedPlot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
+      if (!ownedPlot) throw new Error('claim a plot before requesting more homestead space');
+      const duplicate = (await ctx.db.query('approvals').collect()).find((approval: any) => approval.state === 'pending'
+        && approval.kind === 'plot_expansion' && approval.payload?.requesterId === agentId && approval.payload?.plotId === ownedPlot.plotId);
+      if (duplicate) return { ok: true, awaitingOwner: duplicate.payload?.stage === 'owner',
+        awaitingCivicReview: duplicate.payload?.stage === 'civic', approvalId: duplicate._id, plan: duplicate.payload.plan,
+        buildGuide: nativeBuildingKnowledge(), warning };
+      const { plot, plan } = await planPlotExpansion(ctx, agentId, width, height);
+      const approvalId = await insertApproval(ctx, agentId, 'plot_expansion',
+        `Expand ${plot.plotId} to ${width} by ${height}`,
+        `Your owner consents first. Terra reserved (${plan.x}, ${plan.y}) through (${plan.x + plan.w - 1}, ${plan.y + plan.h - 1}) without touching another plot, venue, blocked tile, or pending parcel. Mayor review follows.`,
+        { stage: 'owner', requesterId: agentId, plotId: plot.plotId, width, height, plan }, 'strict');
+      await notifyOwner(ctx, agentId, 'approval', 'Your agent requested more homestead space',
+        `${citizen.name} requested ${width} by ${height} tiles around ${plot.plotId}. Approve to forward Terra's safe reservation to the Mayor.`, approvalId);
+      return { ok: true, awaitingOwner: true, approvalId, plan, buildGuide: nativeBuildingKnowledge(), warning };
     }
 
     if (action?.type === 'meet') {
@@ -750,7 +861,9 @@ export const pulse = internalMutation({
     const skillLearning = await ctx.db.query('skillLearning').withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').take(30);
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
-      worldAwareness, skillLearning, pendingOwnerApprovals: approvals.length };
+      worldAwareness, skillLearning, buildGuide: nativeBuildingKnowledge(),
+      communications: { publicUpdates: events.length, privateLetters: messages.length, pendingOwnerApprovals: approvals.length },
+      pendingOwnerApprovals: approvals.length };
   },
 });
 
@@ -939,6 +1052,10 @@ export const decideApproval = internalMutation({
     const now = Date.now();
     if (decision === 'decline') {
       await ctx.db.patch(approval._id, { state: 'declined', decidedAt: now, decidedBy: session.agentId });
+      if (approval.kind === 'plot_expansion' && approval.payload?.stage === 'civic' && approval.payload?.requesterId) {
+        await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
+          `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
+      }
       if (approval.kind === 'skill_install') {
         if (!approval.payload?.learningId) throw new Error('skill learning record is unavailable');
         const learning = await ctx.db.get(approval.payload.learningId);
@@ -969,6 +1086,29 @@ export const decideApproval = internalMutation({
     }
     if (approval.kind === 'world_expand') {
       landResult = { expansion: await expandWorld(ctx, `founder request from ${session.agentId}`, true) };
+      landHandled = true;
+    }
+    if (approval.kind === 'plot_expansion') {
+      const requesterId = String(approval.payload?.requesterId ?? '');
+      if (!requesterId || !approval.payload?.plotId) throw new Error('plot expansion request is unavailable');
+      if (approval.payload?.stage === 'owner') {
+        if (requesterId !== session.agentId) throw new Error('only the requesting owner can forward this land request');
+        const { plan } = await planPlotExpansion(ctx, requesterId, Number(approval.payload.width), Number(approval.payload.height), approval.payload.plan);
+        const world = await ensureWorldState(ctx);
+        const authorityId = world.mayorAgentId ?? world.founderAgentId;
+        if (!authorityId) throw new Error('Mayor review is unavailable');
+        const mayorApprovalId = await insertApproval(ctx, authorityId, 'plot_expansion',
+          `Homestead: ${approval.payload.plotId} to ${plan.w} by ${plan.h}`,
+          `${requesterId}'s owner consented. Terra confirmed the reserved parcel is inside the living boundary, terrain-safe, non-overlapping, and clear of protected venues.`,
+          { ...approval.payload, stage: 'civic', plan }, 'strict');
+        await notifyOwner(ctx, authorityId, 'approval', 'Mayor land decision requested',
+          `${requesterId} requested extra space around ${approval.payload.plotId}. Review Terra's ${plan.w} by ${plan.h} reservation.`, mayorApprovalId);
+        landResult = { awaitingCivicReview: true, authorityId, approvalId: mayorApprovalId, plan };
+      } else if (approval.payload?.stage === 'civic') {
+        landResult = { expansion: await commitPlotExpansion(ctx, requesterId, approval.payload, now) };
+      } else {
+        throw new Error('plot expansion stage is invalid');
+      }
       landHandled = true;
     }
     if (approval.kind === 'skill_install') {

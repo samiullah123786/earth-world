@@ -27,7 +27,8 @@ type Citizen = {
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
-  blueprint?: { name: string; kind: string; style?: string; offsetX?: number; offsetY?: number; w?: number; h?: number }; x?: number; y?: number; w?: number; h?: number };
+  blueprint?: { name: string; kind: string; style?: string; architecture?: string; features?: string[];
+    offsetX?: number; offsetY?: number; w?: number; h?: number }; x?: number; y?: number; w?: number; h?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
@@ -59,6 +60,9 @@ class EarthScene extends Phaser.Scene {
   pendingGoto = new URLSearchParams(location.search).get('goto');
   conversations: Conversation[] = [];
   selectedAgentId?: string;
+  conversationAgentId?: string;
+  conversationMinimized = false;
+  mapPanning = false;
   uiInteractionUntil = 0;
 
   constructor() {
@@ -93,13 +97,17 @@ class EarthScene extends Phaser.Scene {
     this.cameras.main.centerOn((map.width * TILE) / 2, (map.height * TILE) / 2);
     this.cameras.main.setZoom(Math.max(embed ? 1.15 : 1.4, this.minimumZoom(map.width, map.height)));
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (!pointer.isDown) return;
+      if (!pointer.isDown || !this.mapPanning) return;
       this.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / this.cameras.main.zoom;
       this.cameras.main.scrollY -= (pointer.y - pointer.prevPosition.y) / this.cameras.main.zoom;
     });
-    this.input.on('pointerdown', () => document.body.classList.add('is-panning'));
-    this.input.on('pointerup', () => document.body.classList.remove('is-panning'));
-    this.input.on('pointerupoutside', () => document.body.classList.remove('is-panning'));
+    this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
+      this.mapPanning = gameObjects.length === 0 && Date.now() >= this.uiInteractionUntil;
+      document.body.classList.toggle('is-panning', this.mapPanning);
+    });
+    const releasePan = () => { this.mapPanning = false; document.body.classList.remove('is-panning'); };
+    this.input.on('pointerup', releasePan);
+    this.input.on('pointerupoutside', releasePan);
     this.input.on('wheel', (_pointer: unknown, _objects: unknown, _dx: number, dy: number) => {
       const state = this.objects.state;
       this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * (dy > 0 ? 0.9 : 1.1), this.minimumZoom(state.width, state.height), 3));
@@ -131,11 +139,10 @@ class EarthScene extends Phaser.Scene {
     });
     convex.onUpdate(api.world.recentConversations, {}, (rows: Conversation[]) => {
       this.conversations = rows;
-      const selected = this.selectedAgentId
-        ? rows.find((row) => row.a === this.selectedAgentId || row.b === this.selectedAgentId)
-        : undefined;
-      const active = rows.find((row) => row.state === 'active' && (row.endsAt ?? 0) > Date.now());
-      this.renderConversation(selected ?? active ?? null);
+      if (!this.conversationAgentId) return;
+      const selected = rows.find((row) => (row.a === this.conversationAgentId || row.b === this.conversationAgentId)
+        && row.state === 'active' && (row.endsAt ?? 0) > Date.now());
+      this.renderConversation(selected ?? null);
     });
     this.scale.on('resize', () => this.applyWorldBounds());
   }
@@ -177,18 +184,15 @@ class EarthScene extends Phaser.Scene {
       const foundingBlocked = (bx: number, by: number) =>
         map.objmap.some((layer: number[][]) => layer[bx]?.[by] !== -1 && layer[bx]?.[by] !== undefined);
       const grove = (gx: number, gy: number) => hash(Math.floor(gx / 6), Math.floor(gy / 6), 7) % 100 < 30;
-      const edgeForest = (gx: number, gy: number) => {
-        const dx = Math.max(0, gx - (W0 - 1)), dy = Math.max(0, gy - (H0 - 1));
-        const d = Math.max(dx, dy);
-        if (d < 1 || d > 3) return false;
-        if (!foundingBlocked(Math.min(gx, W0 - 1), Math.min(gy, H0 - 1))) return false;
-        return hash(gx, gy, 31) % 4 === 0;
-      };
       const treeAnchor = (gx: number, gy: number) => {
         if (gx < W0 && gy < H0) return false;
-        if (grove(gx, gy) && hash(gx, gy, 11) % 23 === 0) return true;
-        return edgeForest(gx, gy);
+        const d = Math.max(Math.max(0, gx - (W0 - 1)), Math.max(0, gy - (H0 - 1)));
+        if (d <= 4) return false;
+        return grove(gx, gy) && hash(gx, gy, 11) % 23 === 0;
       };
+      // Exact continuation of the two south-border canopy masses (same table as
+      // convex/pathfinding.ts SOUTH_CONTINUATION - computed from the tileset).
+      const SOUTH_CONTINUATION: Record<number, number[]> = { 23: [515, 560, 605, 650], 24: [516, 561, 606, 651], 25: [517, 562, 607, 652], 26: [518, 563, 608, 653], 27: [519, 564, 609, 654], 28: [520, 565, 610, 655], 29: [521, 566, 611, 656], 30: [522, 567, 612], 32: [515, 560, 605, 650], 33: [516, 561, 606, 651], 34: [517, 562, 607, 652], 35: [518, 563, 608, 653], 36: [519, 564, 609, 654], 37: [520, 565, 610, 655], 38: [521, 566, 611, 656], 39: [522, 567, 612] };
       const GRASS = 271, GRASS_ALT = 962;
       // The one verified grass-native tree: the lush 4x4 river-side tree.
       // (Close-up QA killed the other candidates: (20,23) is a mossy boulder,
@@ -203,6 +207,10 @@ class EarthScene extends Phaser.Scene {
       }
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
+          const cont = SOUTH_CONTINUATION[x];
+          if (cont && y >= H0 && y - H0 < cont.length) {
+            this.expansionRT.drawFrame('tiles', cont[y - H0], x * TILE, y * TILE);
+          }
           if (treeAnchor(x, y)) {
             for (let dx = 0; dx < BIG.w; dx++) {
               for (let dy = 0; dy < BIG.h; dy++) {
@@ -246,7 +254,7 @@ class EarthScene extends Phaser.Scene {
       );
       const position = this.positionFor(citizen);
       button.append(element('span', 'citizen-coords',
-        `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith ? ' | talking' : ''}`));
+        `tile ${position.x.toFixed(1)}, ${position.y.toFixed(1)}${citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now() ? ' | talking' : ''}`));
       button.onpointerdown = (event) => { event.stopPropagation(); this.uiInteractionUntil = Date.now() + 750; };
       button.onpointerup = (event) => event.stopPropagation();
       button.onclick = (event) => {
@@ -262,6 +270,60 @@ class EarthScene extends Phaser.Scene {
     const position = this.positionFor(citizen);
     this.cameras.main.pan(position.x * TILE + TILE / 2, position.y * TILE + TILE / 2, 350, 'Sine.easeOut');
     this.showProfile(agentId);
+  }
+
+  drawNativeFeatures(graphics: Phaser.GameObjects.Graphics, build: Build, x: number, y: number, width: number, height: number) {
+    const features = new Set(build.blueprint?.features ?? []);
+    const center = x + width / 2;
+    if (features.has('entry-path')) {
+      graphics.fillStyle(0x6f6250).fillRect(center - 5, y + height - 7, 10, 14);
+      graphics.fillStyle(0xb9a77e).fillRect(center - 3, y + height - 6, 6, 13);
+    }
+    if (features.has('porch')) {
+      graphics.fillStyle(0x4d301e).fillRect(center - 12, y + height - 12, 24, 3);
+      graphics.fillStyle(0xb78350).fillRect(center - 10, y + height - 14, 20, 4);
+    }
+    if (features.has('flower-bed') || features.has('herb-bed')) {
+      const bedColor = features.has('herb-bed') ? 0x315d37 : 0x6f4b2f;
+      graphics.fillStyle(INK).fillRect(x + 3, y + height - 10, Math.max(12, width * 0.28), 8);
+      graphics.fillStyle(bedColor).fillRect(x + 5, y + height - 9, Math.max(8, width * 0.28 - 4), 5);
+      for (let i = 0; i < 4; i++) graphics.fillStyle(i % 2 ? 0xfdf6ec : 0xf5c96a).fillRect(x + 7 + i * 6, y + height - 11 - (i % 2), 3, 3);
+    }
+    if (features.has('small-plants')) {
+      for (const px of [x + 7, x + width - 9]) {
+        graphics.fillStyle(0x315d37).fillRect(px, y + height - 9, 3, 8);
+        graphics.fillStyle(0x75a05b).fillRect(px - 3, y + height - 10, 4, 3).fillRect(px + 2, y + height - 13, 4, 3);
+      }
+    }
+    if (features.has('native-tree') && width >= 64 && height >= 64) {
+      graphics.fillStyle(INK, 0.18).fillEllipse(x + 17, y + 34, 28, 9);
+      graphics.fillStyle(0x5a351f).fillRect(x + 14, y + 15, 7, 24);
+      graphics.fillStyle(0x315d37).fillCircle(x + 17, y + 13, 13);
+      graphics.fillStyle(0x75a05b).fillCircle(x + 12, y + 9, 8).fillCircle(x + 23, y + 10, 8);
+    }
+    if (features.has('timber-fence')) {
+      graphics.lineStyle(2, 0x5a351f).strokeRect(x + 2, y + 2, width - 4, height - 4);
+      for (let fx = x + 3; fx < x + width; fx += 14) graphics.fillStyle(0xb78350).fillRect(fx, y, 3, 8);
+    }
+    if (features.has('bird-bath')) {
+      graphics.fillStyle(INK).fillRect(x + width - 17, y + height - 19, 4, 12).fillEllipse(x + width - 15, y + height - 20, 15, 5);
+      graphics.fillStyle(0x6aa8c8).fillEllipse(x + width - 15, y + height - 21, 10, 3);
+    }
+    if (features.has('pond') && width >= 64) {
+      graphics.fillStyle(INK, 0.28).fillEllipse(x + width - 21, y + height - 13, 29, 13);
+      graphics.fillStyle(0x6aa8c8).fillEllipse(x + width - 23, y + height - 15, 25, 10);
+    }
+    if (features.has('pet-yard')) {
+      graphics.lineStyle(2, 0x8d5e3b).strokeRect(x + width - 27, y + height - 24, 23, 19);
+      graphics.fillStyle(0x75a05b).fillRect(x + width - 24, y + height - 21, 17, 13);
+    }
+    if (features.has('pet-shelter')) {
+      const sx = x + width - 24, sy = y + height - 22;
+      graphics.fillStyle(INK).fillTriangle(sx - 2, sy + 8, sx + 8, sy, sx + 18, sy + 8).fillRect(sx, sy + 7, 16, 12);
+      graphics.fillStyle(0x8d5e3b).fillTriangle(sx, sy + 7, sx + 8, sy + 2, sx + 16, sy + 7);
+      graphics.fillStyle(0xe9d6ad).fillRect(sx + 2, sy + 8, 12, 9);
+      graphics.fillStyle(0x4d301e).fillRect(sx + 6, sy + 11, 5, 6);
+    }
   }
 
   drawNativeStructure(graphics: Phaser.GameObjects.Graphics, build: Build, plot: Plot, x: number, y: number, width: number, height: number) {
@@ -291,6 +353,26 @@ class EarthScene extends Phaser.Scene {
       graphics.fillStyle(0x4d301e).fillRect(x + width / 2 - 3, y + height / 2, 6, height / 2);
       graphics.fillStyle(accent).fillTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
       graphics.lineStyle(2, INK).strokeTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
+      return;
+    }
+
+    const architecture = build.blueprint?.architecture ?? 'native';
+    if (architecture === 'modern-earthfolk') {
+      const wallX = x + 5, wallY = y + Math.max(12, height * 0.3), wallW = width - 10, wallH = height - (wallY - y) - 5;
+      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 5, y + height - 1, width + 8, 11);
+      graphics.fillStyle(INK).fillRect(wallX - 2, wallY - 2, wallW + 4, wallH + 4);
+      graphics.fillStyle(0xe9d6ad).fillRect(wallX, wallY, wallW, wallH);
+      graphics.fillStyle(0x4d301e).fillRect(x + 1, wallY - 8, width - 2, 10);
+      graphics.fillStyle(0x9b6a3f).fillRect(x + 3, wallY - 6, width - 6, 5);
+      graphics.fillStyle(0x6f4328).fillRect(wallX + 5, wallY + 4, 6, wallH - 4);
+      const windowWidth = Math.max(10, Math.min(22, wallW * 0.25));
+      graphics.fillStyle(INK).fillRect(x + width - windowWidth - 12, wallY + 7, windowWidth + 4, 13);
+      graphics.fillStyle(0xf5c96a).fillRect(x + width - windowWidth - 10, wallY + 9, windowWidth, 9);
+      graphics.fillStyle(INK).fillRect(x + width / 2 - 6, wallY + wallH - 15, 12, 15);
+      graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 4, wallY + wallH - 13, 8, 13);
+      graphics.fillStyle(0xcab889).fillRect(x + width / 2 - 5, y + height, 10, 8);
+      graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x64748b).fillRect(wallX + 2, wallY + 2, 5, 3);
+      this.drawNativeFeatures(graphics, build, x, y, width, height);
       return;
     }
 
@@ -325,6 +407,7 @@ class EarthScene extends Phaser.Scene {
     }
     graphics.fillStyle(0xcab889).fillRect(x + width / 2 - 5, y + height, 10, 8);
     graphics.fillStyle(0x8b8067).fillRect(x + width / 2 - 3, y + height + 2, 6, 3);
+    this.drawNativeFeatures(graphics, build, x, y, width, height);
   }
 
   renderVenue(venue: Venue) {
@@ -384,9 +467,20 @@ class EarthScene extends Phaser.Scene {
     const x = (build.x ?? plot.x) * TILE, y = (build.y ?? plot.y) * TILE;
     const width = (build.w ?? 1) * TILE, height = (build.h ?? 1) * TILE;
     if (kind === 'home') {
+      if (build.blueprint?.architecture === 'modern-earthfolk') {
+        const graphics = this.add.graphics();
+        this.drawNativeStructure(graphics, build, plot, x, y, width, height);
+        this.objectLayer?.add(graphics);
+        return;
+      }
       const scale = Math.min(width, height) / (4 * TILE);
       const nativeSize = 4 * TILE * scale;
       this.stampFromMap(9, 7, 3, 3, x + (width - nativeSize) / 2, y + (height - nativeSize) / 2, scale);
+      if (build.blueprint?.features?.length) {
+        const graphics = this.add.graphics();
+        this.drawNativeFeatures(graphics, build, x, y, width, height);
+        this.objectLayer?.add(graphics);
+      }
       return;
     }
     const graphics = this.add.graphics();
@@ -471,7 +565,7 @@ class EarthScene extends Phaser.Scene {
     bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -50, 24, 12, 3);
     const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -44, 1.6, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
-    const container = this.add.container(0, 0, [sprite, label, bubble]).setSize(20, 28).setInteractive();
+    const container = this.add.container(0, 0, [sprite, label, bubble]).setSize(20, 28).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
@@ -494,6 +588,15 @@ class EarthScene extends Phaser.Scene {
     const plot = this.objects.plots.find((candidate) => candidate.ownerAgentId === agentId);
     const position = this.positionFor(citizen);
     this.selectedAgentId = agentId;
+    const activeConversation = this.conversations.find((row) => (row.a === agentId || row.b === agentId)
+      && row.state === 'active' && (row.endsAt ?? 0) > Date.now());
+    if (activeConversation && citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now()) {
+      this.conversationAgentId = agentId;
+      this.conversationMinimized = false;
+    } else {
+      this.conversationAgentId = undefined;
+      this.renderConversation(null);
+    }
     const citizenPayload = {
       name: citizen.name, agentId: citizen.agentId, gender: citizen.gender,
       family: citizen.family, accent: citizen.accent, activity: citizen.activity,
@@ -504,7 +607,9 @@ class EarthScene extends Phaser.Scene {
     };
     if (embed && window.parent !== window) {
       const send = (conversation: any) => {
-        const message = { type: 'earth-profile', citizen: citizenPayload, conversation };
+        const liveConversation = conversation?.state === 'active' && (conversation.endsAt ?? 0) > Date.now()
+          && citizen.talkingWith && (citizen.talkingUntil ?? 0) > Date.now() ? conversation : null;
+        const message = { type: 'earth-profile', citizen: citizenPayload, conversation: liveConversation };
         window.parent.postMessage(message, 'https://agentsearth.com');
         window.parent.postMessage(message, 'https://agentsearth-home.vercel.app');
       };
@@ -512,7 +617,7 @@ class EarthScene extends Phaser.Scene {
       return;
     }
     const buildCount = this.objects.builds.filter((build) => build.ownerAgentId === agentId).length;
-    convex.query(api.world.latestConversation, { agentId }).then((conversation: any) => this.renderConversation(conversation)).catch(() => {});
+    if (activeConversation) this.renderConversation(activeConversation);
     this.card(`${citizen.name} (${citizen.gender})`, citizen.agentId, [
       citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} | ${citizen.skillCount ?? 0} locally evidenced skills`,
       `${citizen.family} | ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,
@@ -525,18 +630,32 @@ class EarthScene extends Phaser.Scene {
   renderConversation(conversation: Conversation | null) {
     const panel = document.getElementById('conversation');
     if (!panel) return;
-    if (!conversation) { panel.style.display = 'none'; return; }
+    if (!conversation || !this.conversationAgentId) {
+      panel.style.display = 'none';
+      panel.classList.remove('minimized');
+      this.conversationAgentId = undefined;
+      return;
+    }
     const head = element('div', 'p-head');
     head.append(element('b', '', 'Live conversation'));
+    const controls = element('div', 'conversation-controls');
+    const minimize = element('button', '', this.conversationMinimized ? '□' : '−');
+    minimize.type = 'button';
+    minimize.setAttribute('aria-label', this.conversationMinimized ? 'Restore conversation' : 'Minimize conversation');
+    minimize.onclick = () => { this.conversationMinimized = !this.conversationMinimized; this.renderConversation(conversation); };
     const close = element('button', 'p-x', 'x');
     close.type = 'button'; close.setAttribute('aria-label', 'Close conversation');
-    close.onclick = () => { panel.style.display = 'none'; this.selectedAgentId = undefined; };
-    head.append(close);
-    const status = conversation.state === 'active' && (conversation.endsAt ?? 0) > Date.now() ? 'LIVE NOW' : 'LATEST';
+    close.onclick = () => { this.conversationAgentId = undefined; this.conversationMinimized = false; panel.style.display = 'none'; };
+    controls.append(minimize, close);
+    head.append(controls);
+    const status = conversation.state === 'active' && (conversation.endsAt ?? 0) > Date.now() ? 'LIVE NOW' : 'ENDED';
     const people = element('div', 'conversation-people', `${conversation.aName} with ${conversation.bName}`);
     const topic = element('div', 'p-id', `${status} | ${conversation.topic}`);
     const lines = conversation.lines.map((line) => element('div', 'conversation-line', line.gloss));
-    panel.replaceChildren(head, people, topic, ...lines);
+    const body = element('div', 'conversation-body');
+    body.append(people, topic, ...lines);
+    panel.replaceChildren(head, body);
+    panel.classList.toggle('minimized', this.conversationMinimized);
     panel.style.display = 'block';
   }
 

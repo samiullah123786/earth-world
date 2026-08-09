@@ -67,9 +67,7 @@ describe('Earth Kernel', () => {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'studio-nonce',
       action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Signal Studio', kind: 'studio', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
     });
-    await t.mutation(internal.kernel.decideApproval, {
-      tokenHash: agent.ownerToken, approvalId: studio.approvalId, decision: 'approve',
-    });
+    expect(studio).toMatchObject({ autoApproved: true, review: { architecture: 'native', outcome: 'lower-authority-approved' } });
     await expect(t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'overlap-nonce',
       action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Overlap Shed', kind: 'workshop', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
@@ -283,5 +281,66 @@ describe('Earth Kernel', () => {
       tokenHash: candidate.ownerToken, approvalId: candidateApprovals[0]._id, decision: 'approve',
     });
     expect((await t.query(api.world.worldObjects, {})).state.mayorAgentId).toBe(candidate.agentId);
+  });
+
+  it('routes larger homesteads and modern Earthfolk homes through owner and Mayor review', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const resident = await activeAgent(t, 'larger-home');
+    const mayor = await activeAgent(t, 'land-mayor');
+    await t.run(async (ctx) => {
+      const state = await ctx.db.query('worldState').first();
+      if (!state) throw new Error('world state missing');
+      await ctx.db.patch(state._id, { mayorAgentId: mayor.agentId });
+    });
+    const claim = await t.mutation(internal.kernel.act, {
+      agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'large-claim',
+      action: { type: 'claim', plotId: 'plot-10-10' },
+    });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: resident.ownerToken, approvalId: claim.approvalId, decision: 'approve',
+    });
+    const request = await t.mutation(internal.kernel.act, {
+      agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'expand-home',
+      action: { type: 'expand_plot', width: 4, height: 3 },
+    });
+    expect(request).toMatchObject({ awaitingOwner: true, plan: { w: 4, h: 3 } });
+    const forwarded = await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: resident.ownerToken, approvalId: request.approvalId, decision: 'approve',
+    });
+    expect(forwarded).toMatchObject({ awaitingCivicReview: true, authorityId: mayor.agentId });
+    const mayorApprovals = await t.query(internal.kernel.ownerApprovals, { tokenHash: mayor.ownerToken });
+    const land = mayorApprovals.find((approval) => approval.kind === 'plot_expansion');
+    expect(land).toBeTruthy();
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: mayor.ownerToken, approvalId: land!._id, decision: 'approve',
+    });
+    expect((await t.query(api.world.worldObjects, {})).plots.find((plot) => plot.plotId === 'plot-10-10')).toMatchObject({ w: 4, h: 3 });
+
+    const home = await t.mutation(internal.kernel.act, {
+      agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'modern-home',
+      action: { type: 'build', structure: 'blueprint', blueprint: {
+        name: 'Courtyard Home', kind: 'home', architecture: 'modern-earthfolk',
+        features: ['entry-path', 'small-plants', 'pet-shelter'], offsetX: 0, offsetY: 0, w: 3, h: 2,
+      } },
+    });
+    expect(home.review).toMatchObject({ architecture: 'modern-earthfolk', outcome: 'owner-and-mayor-review' });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: resident.ownerToken, approvalId: home.approvalId, decision: 'approve',
+    });
+    const buildApproval = (await t.query(internal.kernel.ownerApprovals, { tokenHash: mayor.ownerToken }))
+      .find((approval) => approval.kind === 'land_build');
+    expect(buildApproval).toBeTruthy();
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: mayor.ownerToken, approvalId: buildApproval!._id, decision: 'approve',
+    });
+    const built = (await t.query(api.world.worldObjects, {})).builds.find((candidate) => candidate.blueprint?.name === 'Courtyard Home');
+    expect(built?.blueprint).toMatchObject({ style: 'earthfolk-native-v1', architecture: 'modern-earthfolk', features: ['entry-path', 'small-plants', 'pet-shelter'] });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'foreign-style',
+      action: { type: 'build', structure: 'blueprint', blueprint: {
+        name: 'Foreign Asset', kind: 'art', architecture: 'native', features: ['neon-billboard'], offsetX: 3, offsetY: 2, w: 1, h: 1,
+      } },
+    })).rejects.toThrow(/unsupported native feature/i);
   });
 });
