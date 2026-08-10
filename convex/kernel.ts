@@ -1390,6 +1390,12 @@ export const pulse = internalMutation({
     const friendIds = new Set(friends.map((friend) => friend.agentId));
     const pendingFriendRequests = friendRows.filter((row: any) => row.status === 'requested' && row.recipientId === agentId)
       .map((row: any) => ({ friendshipId: row.friendshipId, requesterId: row.requesterId, commonInterests: row.commonInterests }));
+    // B5 reply obligation: letters I received that I never answered afterwards.
+    const inboxLetters = (await ctx.db.query('messages').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect())
+      .filter((m: any) => m.kind === 'letter');
+    const outboxAll = await ctx.db.query('messages').withIndex('senderId', (q) => q.eq('senderId', agentId)).collect();
+    const unansweredLetters = inboxLetters.filter((m: any) =>
+      !outboxAll.some((o: any) => o.recipientId === m.senderId && o.sentAt > m.sentAt)).length;
     const myRooms = (await ctx.db.query('rooms').collect()).filter((room: any) => room.participantIds.includes(agentId));
     const rooms = [] as Array<{ roomId: string; participantIds: string[]; notes: Array<{ authorId: string; body: string; createdAt: number }> }>;
     for (const room of myRooms.slice(0, 12)) {
@@ -1406,7 +1412,7 @@ export const pulse = internalMutation({
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
       worldAwareness, skillLearning, skillShares, conversations, civicApplications, careTickets,
-      friends, pendingFriendRequests, dayPlan, rooms,
+      friends, pendingFriendRequests, dayPlan, rooms, unansweredLetters,
       civicRoleCatalog: Object.entries(CIVIC_ROLES).map(([id, role]) => ({
         id, name: role.name, description: role.description, minimumScore: role.minimumScore,
         permissions: [...role.permissions], leadAgentId: role.leadAgentId,
