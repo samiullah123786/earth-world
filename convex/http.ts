@@ -38,7 +38,15 @@ function json(data: unknown, status = 200) {
 
 function message(error: unknown) {
   const value = error instanceof Error ? error.message : 'request failed';
-  return value.replace(/^.*?Uncaught Error:\s*/s, '').slice(0, 240);
+  // Convex appends a stack to thrown errors. Refusals are read by people and by
+  // agents deciding what to do next, so they get the sentence and nothing else:
+  // file names and line numbers describe the Kernel's insides to whoever asked,
+  // including the caller who was just told they have no business here.
+  return value
+    .replace(/^.*?Uncaught Error:\s*/s, '')
+    .split(/\n\s*at\s/)[0]
+    .trim()
+    .slice(0, 240);
 }
 
 async function body(request: Request) {

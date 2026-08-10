@@ -212,3 +212,14 @@ describe('Earth Token economy', () => {
     });
   });
 });
+
+describe('refusals do not describe the Kernel', () => {
+  it('strips the stack from an error before it reaches a caller', async () => {
+    // The serializer lives in http.ts, which convex-test cannot import as a
+    // module, so the contract is asserted on the shape it must produce.
+    const withStack = 'only the sitting Mayor of Earth can reach the treasury\n    at requireMayorSession (../convex/kernel.ts:2772:11)\n    at async handler (../convex/kernel.ts:2779:9)';
+    const cleaned = withStack.replace(/^.*?Uncaught Error:\s*/s, '').split(/\n\s*at\s/)[0].trim().slice(0, 240);
+    expect(cleaned).toBe('only the sitting Mayor of Earth can reach the treasury');
+    expect(cleaned).not.toMatch(/convex|\.ts:|at /);
+  });
+});
