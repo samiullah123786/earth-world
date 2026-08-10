@@ -45,7 +45,7 @@ describe('the Earth Bank vault', () => {
     const first = await act(t, depositor, deposit({ storageId: sid }));
     expect(first.assetId).toMatch(/^asset:/);
     expect(first.state).toBe('deposited');
-    expect(first.netWorth).toEqual({ assets: 1, bytes: 512 });
+    expect(first.netWorth).toEqual({ assets: 1, bytes: 512, appraisalPoints: 0 });
     await t.run(async (ctx) => {
       const rows = await ctx.db.query('bankAssets').collect();
       expect(rows).toHaveLength(1);

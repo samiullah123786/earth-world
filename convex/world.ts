@@ -273,7 +273,7 @@ export const bankAssets = query({
       license: row.license, source: row.source, priceTokens: row.priceTokens,
       state: row.state, verdict: row.safety.verdict, flags: row.safety.flags,
       depositorAgentId: row.depositorAgentId, alsoDepositedBy: row.alsoDepositedBy.length,
-      valueRank: row.valueRank, createdAt: row.createdAt,
+      valueRank: row.valueRank, valueNote: row.valueNote?.slice(0, 200), createdAt: row.createdAt,
     }));
   },
 });

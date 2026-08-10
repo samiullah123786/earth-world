@@ -205,7 +205,30 @@ function cleanTopic(raw: unknown, fallback: string) {
   return topic;
 }
 
+/**
+ * Which way to turn to look at a point.
+ *
+ * LPC gives four directions, so a diagonal picks whichever axis dominates -
+ * the same choice a person makes turning toward something off to one side.
+ */
+function facingToward(from: { x: number; y: number }, to: { x: number; y: number }) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) > Math.abs(dy)) return dx >= 0 ? 'right' as const : 'left' as const;
+  return dy >= 0 ? 'front' as const : 'back' as const;
+}
+
+/** Turn a citizen toward a target before it acts on it. */
+async function faceTarget(ctx: any, citizen: any, target: { x: number; y: number }, now: number) {
+  const here = currentPosition(citizen, now);
+  if (Math.abs(target.x - here.x) < 0.05 && Math.abs(target.y - here.y) < 0.05) return;
+  await ctx.db.patch(citizen._id, { facing: facingToward(here, target) });
+}
+
 async function openLiveConversation(ctx: any, speaker: any, recipient: any, gloss: string, topic: string, now: number) {
+  // Two citizens in conversation turn to each other, the way people do.
+  await faceTarget(ctx, speaker, currentPosition(recipient, now), now);
+  await faceTarget(ctx, recipient, currentPosition(speaker, now), now);
   const recent = await ctx.db.query('conversations').order('desc').take(50);
   const existing = recent.find((conversation: any) => {
     const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
@@ -1439,7 +1462,13 @@ export const act = internalMutation({
         .filter((row) => row.state !== 'retired');
       return {
         ok: true, assetId, state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
-        netWorth: { assets: portfolio.length, bytes: portfolio.reduce((total, row) => total + row.sizeBytes, 0) },
+        netWorth: {
+          assets: portfolio.length,
+          bytes: portfolio.reduce((total, row) => total + row.sizeBytes, 0),
+          // Appraisal points: the manager's value ranks summed across this
+          // citizen's masters. Bulk is storage; worth is judged usefulness.
+          appraisalPoints: portfolio.reduce((total, row) => total + (row.valueRank ?? 0), 0),
+        },
         warning,
       };
     }
@@ -1881,6 +1910,7 @@ export const act = internalMutation({
         });
         const fieldId = `field:${doc}`;
         await ctx.db.patch(doc, { fieldId });
+        await faceTarget(ctx, citizen, { x, y }, now);
         await ctx.db.patch(citizen._id, {
           activity: `planting ${crop} at ${zone.name}`,
           activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
@@ -1906,6 +1936,7 @@ export const act = internalMutation({
           tendedBy: [...field.tendedBy, agentId].slice(0, 12),
           readyAt: Math.max(now, field.readyAt - CROP_TEND_RELIEF_MS),
         });
+        await faceTarget(ctx, citizen, { x, y }, now);
         await ctx.db.patch(citizen._id, {
           activity: `watering ${field.crop} at ${zone.name}`,
           activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
@@ -1926,6 +1957,7 @@ export const act = internalMutation({
           throw new Error(`that ${field.crop} needs about ${minutes} more minute(s); water it to bring the harvest closer`);
         }
         await ctx.db.patch(field._id, { harvestedBy: agentId, harvestedAt: now });
+        await faceTarget(ctx, citizen, { x, y }, now);
         await ctx.db.patch(citizen._id, {
           activity: `harvesting ${field.crop} at ${zone.name}`,
           activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
@@ -1949,6 +1981,7 @@ export const act = internalMutation({
       if (recent) {
         throw new Error(`this citizen is resting; gathering is possible again in about ${Math.ceil((GATHER_COOLDOWN_MS - (now - recent.createdAt)) / 60_000)} minute(s)`);
       }
+      await faceTarget(ctx, citizen, { x, y }, now);
       await ctx.db.patch(citizen._id, {
         activity: `working at ${zone.name}`,
         activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,

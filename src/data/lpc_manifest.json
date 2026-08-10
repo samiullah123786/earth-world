@@ -9113,20 +9113,20 @@
       "category": "aegis.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "56f32fc4d2d6887c12bdaca49a96ca3e682fed05ccd3db85677fd8b10d22871e",
+      "sha256": "a7fb946410e8d7e0321748be922566d8c50eaa8a203b258acb7a030370d5231d",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9143,20 +9143,20 @@
       "category": "atlas.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "dc1132b14e09293915da3340770426cc3827f05d915ab0c3c7cd472a2d190507",
+      "sha256": "655741f54c23d3fbda2f73bfae26a6f7fe8ddde743b1149227c0faa62ebe9fd9",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9173,20 +9173,20 @@
       "category": "citizen_female_civic_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "c40f8dd40712cff95d15fc969353161887109dcaec8a7884928d8571f400b2cd",
+      "sha256": "c7da1a3927541135b8e81d1a03c3d1418deffec54f09a2b8723b7a56e81da433",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9203,20 +9203,20 @@
       "category": "citizen_female_civic_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "6a7f1f009676be835c09f5bf3e81e4b694e9d1ce7d7fb6fd3b9ceff944d9646f",
+      "sha256": "64bd53c3181e2aaf33445734bcdfe44cce57c2983b0091e0e57f4f248ebdae4b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9233,20 +9233,20 @@
       "category": "citizen_female_civic_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "6cec866952ae688bf43e70e200b4b471538769fbb107cd3de24db4d668659ee6",
+      "sha256": "874625491436e6df3f5f3aff2ee0fcfa6e6add258ed3d003239bed4c92bd82f3",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9263,20 +9263,20 @@
       "category": "citizen_female_civic_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d8556d9f93544ba95c32a4b29dee25f485662e24a0366433fab42209f32f52b0",
+      "sha256": "9250fcfb766f5c77f37f50a0cee6597732c2b0efb917ee4f18e73b7c5abaaa51",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9293,20 +9293,20 @@
       "category": "citizen_female_civic_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "a3ad4f9500ed119b200d3b4fac7e5dfed5ee3a75846c64fdbbb38cd07e26035e",
+      "sha256": "a40cd5c3c1a346ac0ee887113910ad6b617de6e6ef25999937db9415f816509d",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9323,20 +9323,20 @@
       "category": "citizen_female_civic_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "037e6c5c5af2459525bbf12966f4adfc6f9948883db42947899cdb17950dcbc2",
+      "sha256": "7842c9ff7c6c3a3600bc7e5bfa9e731ff28221ad9e626f189c14352cd46125b2",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9353,20 +9353,20 @@
       "category": "citizen_female_civic_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "65219cc16160287375262f57d868cee689e8f32d0753243c83535b7e2f09e72c",
+      "sha256": "2134c7c077b7b9abfdbf5c063b46a98eda92817694dc6e295af92293d340a187",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9383,20 +9383,20 @@
       "category": "citizen_female_civic_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "c8712f9550ca04b8c45c5e62d874177991c73ed63f77fe123e2e666a529d2539",
+      "sha256": "a307b48568249ffcfb8fe46784c9841d4d316ae4cfd4eff562564923614e61a7",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9413,20 +9413,20 @@
       "category": "citizen_female_civic_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "7aa1c9ddde13e3337b41ae32c34e8f19b691353eeaa996611c46435f6356beb0",
+      "sha256": "e69aea38ce8351fb54f41a93dd2df57039fd732f7ec84b62bb4ae3cfbfc6b61c",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9443,20 +9443,20 @@
       "category": "citizen_female_civic_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0da816edf5f3e1c5a364100505e36b55ceeb8fc741934d31ddef31af25a46455",
+      "sha256": "b2480430ee063068a76bdb09c5a7658baf66df0692b6eb6ddc05e3953361b0a3",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9473,20 +9473,20 @@
       "category": "citizen_female_civic_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "bc28ac64469b99ef0d08ef6ac43d447b9074aebae0922a72a7ef6924ea793788",
+      "sha256": "8ae0855de57476162611992e8cacdb7e099a9463bc3344ecc97e6f184a25ff22",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9503,20 +9503,20 @@
       "category": "citizen_female_civic_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "77795d7dafce10b36752acfdd8907757b6ba9a0aa89c63cb7dc35453e9099455",
+      "sha256": "27ec656b570f5c484695bcb0f25dd5b50b96fc48c9ed6dacff25ef53897977eb",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9533,20 +9533,20 @@
       "category": "citizen_female_civic_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "12f89dd18bd28ae2f382ecb84cf3c3afe9b2968cbcc2a3d569416c2e9c41e4f2",
+      "sha256": "75c14d1189f2dba44fcef03c9698b8478a7b144cef4af06d842287a7baed5297",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9563,20 +9563,20 @@
       "category": "citizen_female_civic_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "3cc78e33aded3b8a2121bff0ca32b99b74c6b94a03746c878aa0b159766d4df8",
+      "sha256": "edefb0f30ccb73cfbc6595f4957f6fff24e2273f1f835fff284baf6db5c78095",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9593,20 +9593,20 @@
       "category": "citizen_female_civic_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "39533de9a366974de476e48156048dd743ea897ee623f09552142566ffc5b088",
+      "sha256": "a83eccbe8efbd5e841c2e126ca67e1fe8e61cf3e8e6df88e2a4545cb71520b30",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9623,20 +9623,20 @@
       "category": "citizen_female_civic_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "04b2b8aa862423d540eada3a7566e04e676ad5c1230c5b22ab1d83a5a6861160",
+      "sha256": "28fa49d393b91996b049c6e92d9430120c23a582e0e0f17c01c484b7d15ce3c9",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9653,20 +9653,20 @@
       "category": "citizen_female_creative_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "55619bdd752d7c6dad5444aae27a3ea71aff4b842880df632800c38add12bea2",
+      "sha256": "82e44eb6cebc94964d04beb4cec155a24aff8f64230356fc59efdbe5ade35af6",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9683,20 +9683,20 @@
       "category": "citizen_female_creative_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "362341a4889e09bc0773d3bf5233a83f5c2e16affe70744d1de6879f435010ef",
+      "sha256": "956d4ea6eb93bda63a677980e80e0bcdb6e2244b17305c119090e115973a98bd",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9713,20 +9713,20 @@
       "category": "citizen_female_creative_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "c3d82420c96f86653e0737e7c9f970f905c275c773f9cdcfbe3b22352810fc62",
+      "sha256": "cf80befbe6ed6a99c9790a24053a799b9cf224b41d33c58201f14375d7d90ba0",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9743,20 +9743,20 @@
       "category": "citizen_female_creative_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "993befa185600be34dc67e50d098e2fe9b96a8d5b299e6cb1f48c71f2a413576",
+      "sha256": "5d563abb68150425c6a7a26f5705bc83270adc98bc6727b1b2a90ba279d63519",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9773,20 +9773,20 @@
       "category": "citizen_female_creative_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "7ba60ce951b0e522e93d67fcc93f01753df33a48c615759fd8754049849effab",
+      "sha256": "9f7766494110bbdfddf6235ea265c29d8785937e1d4d5cdbd51a310447db4a2d",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9803,20 +9803,20 @@
       "category": "citizen_female_creative_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0e3a0dbf166103086da94d8778bd7c0cf5aa3947fe72d02b40970760bec467bd",
+      "sha256": "19478e707a88c1a5f1ce9dc46a47b4845c5063aceb8e438343e4952bb644f729",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9833,20 +9833,20 @@
       "category": "citizen_female_creative_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "f7154733ac20101e7236fc0c57a2ef3370d0c47f82ea3682bc5fa7f2037ebb43",
+      "sha256": "2816582127c639873566070b976b87dd165ec91887457c75e83a750eac1ea279",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9863,20 +9863,20 @@
       "category": "citizen_female_creative_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d68b3cbff9266dd1710a3b45519b67f34dad1fdc197d4b2dc8246c7f329aa401",
+      "sha256": "75bc8f77b63815b7c1a3c5fb490904095b03022999289f794bcf43be54009a91",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9893,20 +9893,20 @@
       "category": "citizen_female_creative_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "231f41bdf4b42c33657ea75597ca1d7e934ce557534a7acbc17002f914924b9f",
+      "sha256": "9d8129adeb61faca283fa4f5ff0f4ac50cfabbb8428092b9309ae0ad37f1e1ef",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9923,20 +9923,20 @@
       "category": "citizen_female_creative_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "25ae8f8e8f1867821997d6054b061f8aa9a0a1e36246391bd7ca8485937710f8",
+      "sha256": "34cd13ffd234d6678ff3afb9e4030106d72534e6b10ea309f36ccfa3aa8dba19",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9953,20 +9953,20 @@
       "category": "citizen_female_creative_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0c9757b94c5d88e570df0fa5e614bcdf97846b60d481218ef2df991474d1b692",
+      "sha256": "2b794730559732c287ac3336ef2273f410ad8c2edb3b198d30cbc55ff0ac97fd",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -9983,20 +9983,20 @@
       "category": "citizen_female_creative_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "615967c32550c60d3bd5300da0edc569ea530418cf1f8e4dfeaf155fe3ce6a25",
+      "sha256": "82deafc31cfac0a9ff00a4ef063430aade64cc043e5468741990de329488a36a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10013,20 +10013,20 @@
       "category": "citizen_female_creative_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e1e8b4c08d8e8ff118a385ce54c2f252f3cb5455871382079864f6048d9e6755",
+      "sha256": "beaba46bb3286d6a8946aba020a0fc061593437fec6a261be88d6b7f9038d43a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10043,20 +10043,20 @@
       "category": "citizen_female_creative_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "8f05bf5bff3d91d99bfe35687054b8eb611c846a2f1f3fb9710fe2afe3c65667",
+      "sha256": "a251fc98939fd946599d56b27c19c348469d7e66cfb60acbe6269695e9327dd3",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10073,20 +10073,20 @@
       "category": "citizen_female_creative_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "3f6bb76b5fa00e8fb2216774f2ff9be6127221becaa176eb9d9aab9412170429",
+      "sha256": "e9efd551a5127f3bc88c3ebdcf3ac2760721d7524cc2804404b72e69b097020b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10103,20 +10103,20 @@
       "category": "citizen_female_creative_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d4d3249f6a981ce55c8ed09b0e43e474a995bbbcea44f6e02ecf39a00d8d889f",
+      "sha256": "7f4261fa37d3cb77943de430078b79af107ec335d1c89091976cd553676efe56",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10133,20 +10133,20 @@
       "category": "citizen_female_engineering_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "4677c0fd90a43e737045bb3659d9a440b475241f8d7a4d4b1ed3fbd33f031033",
+      "sha256": "79d8e619f6d7a284546c0ec0d40f923bcabe3a375ea0ba398df0fd7612f8f29a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10163,20 +10163,20 @@
       "category": "citizen_female_engineering_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "59726cccd735760417d3ad423c094c91bb51e90da756e78c2b8fa3eb83555492",
+      "sha256": "d12a303acec5e2d58e36b059e4984b8e6e609dcff8e0d2cc98f8f387e3079f75",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10193,20 +10193,20 @@
       "category": "citizen_female_engineering_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "4f8a368999c886ba49b13273142fa3ecfc1019e9d0d864126c020763872015b7",
+      "sha256": "72d8b9c72e50462e3fefdcf3d5db14e8e81a446c432379b9fd0c56f1f26eade9",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10223,20 +10223,20 @@
       "category": "citizen_female_engineering_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "75abceaa4482e80aab8b4465d33b3551cf9c145fbea14bdff402cedda6716da6",
+      "sha256": "c2966afa4ece9668af1b7493cbb4a6e7d3e684bffc6724b5e83d03a322d5fd2b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10253,20 +10253,20 @@
       "category": "citizen_female_engineering_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "9634ae5025dec073a418e541f1dda66bf0282457f71a20a237f834b5a1e441c8",
+      "sha256": "a57c9910bb50ff0b7593d514e18193bf31bb8b3f44901f637868bb28802842a0",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10283,20 +10283,20 @@
       "category": "citizen_female_engineering_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "f8e018a5ef1d233a2fc3be926caec998a5496e9566e8a98f32aa8f71613b71fa",
+      "sha256": "2eda8caeb45c25663fc96b74ffc3a398cd8edb674a92377b50b6bf7712da8c5f",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10313,20 +10313,20 @@
       "category": "citizen_female_engineering_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "ab16525d1589c456b62079828119f3a1a63767fe46d81f343c6218940b7c4160",
+      "sha256": "20fb684a45944798a706cb26c7a2a3643a5101dcf657046933f0a03f312b4609",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10343,20 +10343,20 @@
       "category": "citizen_female_engineering_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "7fc7a171d83b08adad3954a794cc9686fbc1660f2b7adb1426875cd1e1f9ae47",
+      "sha256": "6e793a321e54881daa0917d2dfcdab215d7d670fb2f719b86196c4f3daad099a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10373,20 +10373,20 @@
       "category": "citizen_female_engineering_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "95782714fea9c4f09528542da79716a22e3dc3ccf8df7e249c669f3b97b7c1aa",
+      "sha256": "1f6091a8bdd946092d78695010320284c689c3ebee4d2e3a3e0f9b1f5e3177d4",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10403,20 +10403,20 @@
       "category": "citizen_female_engineering_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "820f71cfb71ae557e143e8408421d09ae5b77edfa61dd66ab93bb20e9c1ace3c",
+      "sha256": "bb6268da6fbf9a1d62841411245cf4e00a46a29ed631370345239669b2a96430",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10433,20 +10433,20 @@
       "category": "citizen_female_engineering_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "72381d4581bce1af793b99ed1aa8fb344bd2ac7aa8cc4ea04ba09b36389cfbb6",
+      "sha256": "1b5603f06c0a99634691f43de1d4464e1ca3696aa36e0358e5478c6ec0665210",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10463,20 +10463,20 @@
       "category": "citizen_female_engineering_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "2607c0b9dc9d6035bc1d784f897243d4faaec8325f795c6e3826b52514f83049",
+      "sha256": "509c797accaa026b5f167316d612373896af1b6fa4ed167d99423c4235be6a68",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10493,20 +10493,20 @@
       "category": "citizen_female_engineering_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "f8f1630baf772ab278fd9986685729ebb01c8ae2ef0e1a1c5ce58e16c1e3f9a5",
+      "sha256": "fea5edb52181ba8b6cffdcacea1d7dcdce0a4f598ff643aabe2299aea114f5cc",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10523,20 +10523,20 @@
       "category": "citizen_female_engineering_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d05a924b86b2a0fb7c05fbe4c79433c9f92d80c146a7a85bbaa72bddd2faa228",
+      "sha256": "ee9357fb2527a2e52d16961ee63ceb859cb7fbb277477de74b4bfc520bf29bc6",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10553,20 +10553,20 @@
       "category": "citizen_female_engineering_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d9646b457070cd1c761b66159a276d41154e37613f36f1682ba768933c705147",
+      "sha256": "a8bb08c635d1b4c55c98f05049347808c0ecf3c3dd7435c2337e427c4f8141a8",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10583,20 +10583,20 @@
       "category": "citizen_female_engineering_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "ae60dacd54781f4837d49519c32cdca967e5ad35f05ea73d2b2711936446b184",
+      "sha256": "3db2a0be183e4196f2dfc93203b5b70760824260433458a38e66a4584ea64195",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10613,20 +10613,20 @@
       "category": "citizen_female_scholar_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "5fa564cf3a41bdf3ac546dcdf8c4a78d37b249171bce3923c1eda517b9ecbb0a",
+      "sha256": "c72c5709e73045435a87ea7c33373eb4f0a8b52001e64201a0479323d1c089db",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10643,20 +10643,20 @@
       "category": "citizen_female_scholar_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "9dd4e1be241ec9291125f7e4fa4d410a58a8256867c93ba34accdc6b531b04fa",
+      "sha256": "168fd9c9538fe88a09eb2b82e0dbf39924a2367dfe70e028ca5412bbdc658b9b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10673,20 +10673,20 @@
       "category": "citizen_female_scholar_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "f019d523a81342f6f983e7a7f9bf2cda1d962d41e222153d08b40c88ca236dbc",
+      "sha256": "9f5aa43cfe5911ea9d41fbfc866f48fbaf19c390ec3e99351798a52eabab5f4a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10703,20 +10703,20 @@
       "category": "citizen_female_scholar_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "df1fbbbc9b463fa5c4b3b7d033ad91f948276b55e4f71f9dbadbec646e08558e",
+      "sha256": "2eed70a1144b3f3c24870b9f97fa62f46c90c654aa72684ea4cb9ff8652c866a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10733,20 +10733,20 @@
       "category": "citizen_female_scholar_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "51a094954c0a92fe147771460517697dc6893ad83e5e52b47bd7fb86a8565a32",
+      "sha256": "b889b926cba6e974e826c880b75764365ef74be10d9138f01b17f0cc25607db6",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10763,20 +10763,20 @@
       "category": "citizen_female_scholar_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "920bdf7587573ae22338769bd7c2376bf14aefaa7144e0af7af54ef21412260e",
+      "sha256": "b2d0df84f3e5d868a344b92da2693f48e6f4f9ba1d42244391bab37c538652cf",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10793,20 +10793,20 @@
       "category": "citizen_female_scholar_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "5ae64c7a43ef3fbd584d91628cfd23a76cbee0f8b56228adbe56c8b7f84ddf40",
+      "sha256": "945c3eb2869a26a080fa3aaac0a713730dcdf88fdbac4f0346f438100ac9bd17",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10823,20 +10823,20 @@
       "category": "citizen_female_scholar_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "1763871650858c85afa6876aab646a2c5e109a953759091d972ea96236b4018f",
+      "sha256": "b77adce6d9a8d14e24e9ccd945418373d63eddeab0373475bfd220f7b0c97b78",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10853,20 +10853,20 @@
       "category": "citizen_female_scholar_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e633c32e9f2884b59c46516c60d8e7a887d77746dbcc253d5cf6706bc04b7c37",
+      "sha256": "bd3e2956e0d6f94c278c7119f9ff0565529875ea4bf1654432d6f427420f5eb8",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10883,20 +10883,20 @@
       "category": "citizen_female_scholar_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "bf51da62f44aac5397599a1a69bbc9a19f6ac4a2dc21c7663ae2212eb1619d1c",
+      "sha256": "651afd76d5cc15c14f4cf7f808194cfc39d4dca02bcfd17e653f9f4d76e0031f",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10913,20 +10913,20 @@
       "category": "citizen_female_scholar_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "f30b5c403510158035045ad4388b7bb88ade5f75c8d758be7a609ba252d08abb",
+      "sha256": "fa6326dfbad72abda1f885b5793de7c4914739d424c2fc33f97adb143ec7db75",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10943,20 +10943,20 @@
       "category": "citizen_female_scholar_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0e593929f51a0928e491805098bbd5a4026a946c694eb4fcc8470b268f6da27c",
+      "sha256": "764189aa6d465625c177db2668a8ce4641ed740186bea884de91b3315ec65426",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -10973,20 +10973,20 @@
       "category": "citizen_female_scholar_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "fbfe68d7ac1fb9fc7ed26bd692cfad9c30965f3b05be269fae07f05d50a386d4",
+      "sha256": "7f7ce3442ba7dba6adca65f5302d1462c677add4f5945b13684e5cee6f2b8505",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11003,20 +11003,20 @@
       "category": "citizen_female_scholar_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "869316dffbc89a12d03cd8e70851cc97eb2aa41008381435cd3947096f8bb69a",
+      "sha256": "2a0906475a36403f8cc1176b5f1d030b9d6545fecfd98e5618d3ee0986cee560",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11033,20 +11033,20 @@
       "category": "citizen_female_scholar_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "916b8e76203c39a9690c4327a25778cc671073b720a7c724e6dc82b9fe82d804",
+      "sha256": "c447bfd657f5adb2184733ddd782e4ed1d448d2f80d687f396ae47bbfffe293c",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11063,20 +11063,20 @@
       "category": "citizen_female_scholar_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "a6cdfec14fdd81af54dca47ee6581beff1d547097ec73995769cabf6cf1be6aa",
+      "sha256": "0609ec8254691dbab12ff9ef822b6668d35ac6a534e8a4dc12164ed9f9691df7",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11093,20 +11093,20 @@
       "category": "citizen_male_civic_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "242aa8ee5d6f1cd462b14374f7b44bd503388ddf931583811a64dc1510ad2bc5",
+      "sha256": "38268ed04607130a0ea02fa53f4e8e31bae69499f209f425ae1dfc6940bde910",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11123,20 +11123,20 @@
       "category": "citizen_male_civic_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "6895fa711045387401d062fe0295a207f2446b063d26df0b2706141b001bf97d",
+      "sha256": "a248544fbcf8b6bd0e099339df583ac6ce8698169690c0d3d53ffe6aa9902249",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11153,20 +11153,20 @@
       "category": "citizen_male_civic_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "74e9009e1cd951e446e0400d0bbdbaff7ca1b5ef81e8b3f9d573cdac4cb775cb",
+      "sha256": "5af1bdb812fa5ca95141640048db629de3470f1d3d53a1ca993e66b49af3880c",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11183,20 +11183,20 @@
       "category": "citizen_male_civic_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "883d14d0e7a0d8e08c6d16dd935392b925bc3439e0617a8c150d2136d4755b22",
+      "sha256": "1ae8d1b29b4cc1ae1a0e3d4c050fea1089f992831da80509150e3a0ed7927ad9",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11213,20 +11213,20 @@
       "category": "citizen_male_civic_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "b588c6ed30711c758bc5bb9ea6034982dd00c8df11ca46b6e1ee9f4e7b635960",
+      "sha256": "9270026d1a762e7c130519ea923086b96ecc2fc5ebf671a79e7c7da7f6b13cbd",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11243,20 +11243,20 @@
       "category": "citizen_male_civic_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "94bd922afbc6a0aee1127222a74932ec96b46a9c77980ea03cfd891da2d7135a",
+      "sha256": "c64647f5e6917b65e6f23fd3569e65ef5c3d86ca06207e299c3330adf2a42de0",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11273,20 +11273,20 @@
       "category": "citizen_male_civic_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "c60428791a797b0afa024e2268337ae1c3851744d6361b6f040164cb464db8b0",
+      "sha256": "9af2570f966dca20a2df85db3305b163ab5e56891f7f8e5022310c3abca30a2f",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11303,20 +11303,20 @@
       "category": "citizen_male_civic_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "b0a932863eb385901a7bf69a11eb22aa7141ae3920c33940f427b35d0301fc5d",
+      "sha256": "dc1c58d2031bb95e8277d31bef1f2cc683720fa168b831b85967a57867ddd3c2",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11333,20 +11333,20 @@
       "category": "citizen_male_civic_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d4b88f4d14904c0868045a9a819febdc393d4664d3f7f6d08ea5ad87cc204e13",
+      "sha256": "0e3e7326aa4b125f34b1f103fa3420a2bf7e015d79b07a08c18491e7c12c42fb",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11363,20 +11363,20 @@
       "category": "citizen_male_civic_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "9f9a4e601540ac4bec6df565965e514d28b7826f3ea0454ca8eed7bc85d81449",
+      "sha256": "7c07849b049e7a33c2ff01ba59302a404892152fc610311b5165a86d411ba231",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11393,20 +11393,20 @@
       "category": "citizen_male_civic_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "882975493c0d5c563eb4d8bc5d933a16ab961d72f0a80ee7b969c8305bd4d09a",
+      "sha256": "7d91d351c021f326a2e449cff83e80ede5251af1ccadc44e211c00533375dc8d",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11423,20 +11423,20 @@
       "category": "citizen_male_civic_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "926a8a662208b6c62e237932494ef86e75d83f32386ad98e434a3734d1557405",
+      "sha256": "5f5d8dcba4f3cf2f2449c5fefdf68944af951b87e45583707b09ab4519fbedc6",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11453,20 +11453,20 @@
       "category": "citizen_male_civic_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "cabebc22f9cdbde0e3fef55814bb3ad6484ed2910504c37b2ff6bf0d7f827137",
+      "sha256": "d2100c5656805248951fc88e32a9bdcff034ccaf4c25ca12de304081086dfec4",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11483,20 +11483,20 @@
       "category": "citizen_male_civic_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "990916d2d8ccfb0362f7517470287e452f04ad1b6c07f0e2a8b6aca32f57a624",
+      "sha256": "5f222a7855726a7031c9d6b709642b7d3c5d06c545532899164b878a2c607c87",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11513,20 +11513,20 @@
       "category": "citizen_male_civic_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e936a021c4d97e299af904598d676d4a4250ab1a3ad14fc9b8fb47757971baf3",
+      "sha256": "7a5df573090dc18a65232e018de224651bd34c3fc1437c26545cb169eb8cef16",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11543,20 +11543,20 @@
       "category": "citizen_male_civic_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0cca84e8e46fe227fb329af0c7ba1a92b37a3739d2829a8cbd4bb0465350dc50",
+      "sha256": "a8692abe5796b1ce52f4141b4c2efee44df957b345dd706080404df24f91ea36",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11573,20 +11573,20 @@
       "category": "citizen_male_creative_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "edc0dae7f2bbee649635d9ca1aae48f86a62439d499492eae58940733681e9c8",
+      "sha256": "f1c165800593cb2d66cac6e0c5bd9cbc1ef5634625683a955852462fe04fba2a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11603,20 +11603,20 @@
       "category": "citizen_male_creative_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "43767a7414f3023fa24032847b72a2983b5a1a1dd7c366efd825030955ced8c1",
+      "sha256": "f471b17b1d2ec40983cef8e14fc76fb2227a88587397dd3ee8299350cae281cb",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11633,20 +11633,20 @@
       "category": "citizen_male_creative_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "fd8e7e953fcff9687e2cf2b6e797aec376d545213436a3d88ea0c2ae84e5995a",
+      "sha256": "97359238e3c81da5e4d47432add03e4ee9c8718afe3825f3f9054add0cbb10a3",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11663,20 +11663,20 @@
       "category": "citizen_male_creative_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "da166fa77cda408d5565d327390a6e36220887874162a9cafda370ac7f087279",
+      "sha256": "145b81afb3f6c5d8532565d354436c257b3d4c07660374fdc3568c77440c05ad",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11693,20 +11693,20 @@
       "category": "citizen_male_creative_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "aa1b758319060f9b614cc12dbf769735e887dbf71b9173043468c37ec2295ea1",
+      "sha256": "f2b1d8c7f278abbe4dcad304d293d0ec44e1f425613705d027a191ce1ba83547",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11723,20 +11723,20 @@
       "category": "citizen_male_creative_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "cfba872b481c6d289f0420ac5daaea4b1ea908864f543a0da6da460cc44fa6a6",
+      "sha256": "f50faf30bd6165968251d36f431ae2dafdeed54391abc68ec11ae6729192ea57",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11753,20 +11753,20 @@
       "category": "citizen_male_creative_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "a097db51a2f29dabf33d876be1e2db13fcdb393e8c2f406587635377340cbad6",
+      "sha256": "59458af7adbce24386b1f4d75bce8b0e57d1f1b31ca72e09cf27ba307681ad71",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11783,20 +11783,20 @@
       "category": "citizen_male_creative_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "66821037dc571c1bd393ed6f6fa6cd7f978b681aa30b06a18c3737be2b8c7717",
+      "sha256": "1c7f497dd884d82859590c74a5c810bfc37e2bb5094f96e41fb8b5abd655c108",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11813,20 +11813,20 @@
       "category": "citizen_male_creative_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e64e56268084f16d275c03885a26731538189743bcfae9b199b1847864f81b52",
+      "sha256": "807b157570d8330771180a6a9be5e9d321505a77480eee6b4bf7daed11b075da",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11843,20 +11843,20 @@
       "category": "citizen_male_creative_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "98161acccb92eb0ee0904049ded94117798238cfaacb39e7413b501d4827a301",
+      "sha256": "0bca7a313632f86b6dd6cadff4b8eb7eec59d228edccc5b453e7d2edc1037f3e",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11873,20 +11873,20 @@
       "category": "citizen_male_creative_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "de42847fddf11550b8aaee60fdbfffa3948a6dca731b9762d5c6a349e0feb951",
+      "sha256": "a56adf16056558397b1e3efcf08c2e281444b0902cdf5c3c226ce75d994fd42e",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11903,20 +11903,20 @@
       "category": "citizen_male_creative_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "455e9f62d2269f3d25ee7ca4924c00c9eab2637723a69e56c191529e66f4b266",
+      "sha256": "1b328754e7a3277dd1cf074d172098085c4cc2e7169adaf6326a242060099f61",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11933,20 +11933,20 @@
       "category": "citizen_male_creative_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "47f3a81fe2ddff4aae775370e8717661af77c34092eb9b4f50005f8abd85daad",
+      "sha256": "74b47b62df53ddb5279c40f2b41593240bc5eb40e57fa6b7ce1092eb9e284473",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11963,20 +11963,20 @@
       "category": "citizen_male_creative_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "6d0b7248557057c1b70d419edf9f123a3fd738b07817de7f31184b2422f6ea44",
+      "sha256": "d7c88db6773fe493a14e1c7b6ecea258e70442f5036b88a9cbd803298be7b2fa",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -11993,20 +11993,20 @@
       "category": "citizen_male_creative_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "806dfcca50a7c3c4420a26ba451ce96972888dd245b39de8390d9a878129c47f",
+      "sha256": "fcec67fd149414c4be421cbf2b5442b9b383971e70b00267cf6c703e6e376c8a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12023,20 +12023,20 @@
       "category": "citizen_male_creative_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "3ea429143f037ef1dbd7cff24c3226b40b2ec5c530621c8791cbf81768032eff",
+      "sha256": "4d43a12eb49e1051177de77c2c395475826139a985291280a13124a5d45963fa",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12053,20 +12053,20 @@
       "category": "citizen_male_engineering_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "c6ebe7fba80a9ca43d39de360e9bf1ac981e9eb3e0cc38a70b6f662b2919d12a",
+      "sha256": "5e6fd8cf67aac83d0b3c7457245f7461cd8582c5e87b1abf6461172da61c199c",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12083,20 +12083,20 @@
       "category": "citizen_male_engineering_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "28889311e4ab3c73eab62ffc5b34645636f456cf5f1bc0e3577ad5900d3f1f1d",
+      "sha256": "7893ea15f531c55bd03c2ab307d6825520cb2c1db4888bc5e9e77d973a9a588b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12113,20 +12113,20 @@
       "category": "citizen_male_engineering_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d0950ff6009cb32a2ad2a792437218ece8c3c6ccc289202d710f5e118c22369c",
+      "sha256": "dc0097fc42de5bd15e90deedf8ad39acf66431ee4f624d3017a9b036ca0dc717",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12143,20 +12143,20 @@
       "category": "citizen_male_engineering_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "9b3018cd19661855c738a5a77c7d176279bdb37aeffb664a90e6c6ac53f84436",
+      "sha256": "5d21570d973104e76ca8f5e8c8d10f6d3c0578b879a5944847087bf2b50cd6bb",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12173,20 +12173,20 @@
       "category": "citizen_male_engineering_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "176c0895f7474b1952a7b5ae080f92491de104a256e157dfc5059ae48744fd45",
+      "sha256": "98a2c1925e75e13665a6da39195efe2bbe31e6df159c79757c0ef2ebd0016fe0",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12203,20 +12203,20 @@
       "category": "citizen_male_engineering_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "141c34f12f66c36949849132532b52d78c3c06f26fbdd5686ffb4a9e0ca7e9d5",
+      "sha256": "6d3ef333f6fff444b71998eb653e0ea21599d7dcfde25b2f439bb69c1249f578",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12233,20 +12233,20 @@
       "category": "citizen_male_engineering_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "8b30fcb302ca0e5c124ddd0bdb812889a072931f432d449243f0069f65dea90b",
+      "sha256": "baf5db7e3a84d714019d32d4b121af6d87d3aaf55b741b168b3699f1bd44e48b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12263,20 +12263,20 @@
       "category": "citizen_male_engineering_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "726c618d50e7143b15f6d5ade424d8760554bf894a4f779c91407b1401388d80",
+      "sha256": "65dc3ceb7f0b1b5efbaa430dc60a5584a0a959df91a73c122e67d5853bd700a9",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12293,20 +12293,20 @@
       "category": "citizen_male_engineering_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "60582376d623aec7ccb9b27653349819565010a87388ea21efec7406eee22aeb",
+      "sha256": "787e9430f776029317e1ea740169b5e12da8497670ac828c476a6f44aeecacd3",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12323,20 +12323,20 @@
       "category": "citizen_male_engineering_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e1438d40791213ec0eb856986003022291c8473b109a856b55f11fb6df30d211",
+      "sha256": "c2739a9687691c09a3a868f9d8463f746c60b31726436e815236e3ece8070351",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12353,20 +12353,20 @@
       "category": "citizen_male_engineering_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "dbb50bd1444c7b007e794446597e7e936221bdebabe8879509b580825d578ac2",
+      "sha256": "12de16ef620940756f86d4a45d6795f53daf5919032c4cfb2c816c3b6154c9eb",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12383,20 +12383,20 @@
       "category": "citizen_male_engineering_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "2ed18a8fa522fbb84b122e9c08fb153d1808853ae29819e6778f426520b2300d",
+      "sha256": "f004a9310ba5e49aae5a755cb843490dcf2cc591554e7f8c0c25ce18cc4611fd",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12413,20 +12413,20 @@
       "category": "citizen_male_engineering_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "000ba60e85a9a4edb6b67d9cc4ce5cdbde371f13686f6758460a3101e041cbcb",
+      "sha256": "08d0e32e0375b8687c16cd6ac2dc04a6f2d30c615510637800a8d82a2512c7d7",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12443,20 +12443,20 @@
       "category": "citizen_male_engineering_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "28c299750b9c99637b32de5b8654c822e20bd15196cd60b9e65f9f7f76bd3de2",
+      "sha256": "67df426de0bd51c7272e78b048a2e51df416563dce5ce95191490e896f4943f4",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12473,20 +12473,20 @@
       "category": "citizen_male_engineering_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "930030fd169e6beba7d9d3da088284623e1804f819005d8bad538172f4ed7ddb",
+      "sha256": "3f79420817bd11915bd9ef6367902ead65843ff9fb1d4d657a996c77b3c630bc",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12503,20 +12503,20 @@
       "category": "citizen_male_engineering_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "7330dcebb2ac647bca06c9e8032b0f6aaf2d430a871803655f2271044dd6494a",
+      "sha256": "5803596476b12e1534898747d3dd865b7ca5085c5fb58333bd29800a948a4249",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12533,20 +12533,20 @@
       "category": "citizen_male_scholar_00.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0c4d5030691111396a102e5fef224380ccfa679eb0a886a230482ae86d51c93d",
+      "sha256": "5ac174b42baa3919f3b3dd71520b925c77070fdd8d5d61e9aedd4dd61c882888",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12563,20 +12563,20 @@
       "category": "citizen_male_scholar_01.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "4df560b2b190db347ee20bcadc11b89f171ff858da9b38e1bf693db84931e9bd",
+      "sha256": "3b0c86e7893224302dabb14226eb4eb2c3e122fcd9abf9304cd8c5feb0b1dfa8",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12593,20 +12593,20 @@
       "category": "citizen_male_scholar_02.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e70fd706c94f06cf6f96c97e450f6f121f18bf0e9e6ecbbd9e59561da9da58d9",
+      "sha256": "a70a27f0b629b228df769c6598a55ed212c26278a0df11b93c7ba7aa78dd9cd2",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12623,20 +12623,20 @@
       "category": "citizen_male_scholar_03.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "1c37c880cfa7065f37b1da80bec38abfa6698c7cf68011c0145a71d34f4057ec",
+      "sha256": "ec51d5bd41523a2628287974150355b294753dcf3e4452e2e059f9ffc0194cb6",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12653,20 +12653,20 @@
       "category": "citizen_male_scholar_04.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e6c97bc607c3c8cd04c295b1eb0e2f1892dee2a85ac32b6c381768b0ae2def31",
+      "sha256": "37935695ed02214d8fdb80951f426f889ec286908f9e3a470fb2327ee511601a",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12683,20 +12683,20 @@
       "category": "citizen_male_scholar_05.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "da09d1e64c20bfcce33392fe7595730d1dc6c449dba809c818f31e366a55b33c",
+      "sha256": "56c94a729e75094416dbc234a1ef530cdb42e8e115479fd093f8fab11375d0c2",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12713,20 +12713,20 @@
       "category": "citizen_male_scholar_06.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "45aaf6539647d224a0ab91e2f5d4fd086f5c0e81013846740b5735fda8740387",
+      "sha256": "9c266a7cac2e5b7c226f9951b6127bc866ffad236615de5d7684250a191d6a97",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12743,20 +12743,20 @@
       "category": "citizen_male_scholar_07.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "3aba153ddf201c049b5d93e8928c9f1b68c77ef068ed223af225be3cb1584345",
+      "sha256": "14a15582f78cae91eb6a43b7d494e9c18f03a89ca2fce6b3268d891095266fdb",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12773,20 +12773,20 @@
       "category": "citizen_male_scholar_08.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "bc3e8720dbd4a6cf3f31ab62ac91cf512cac8a126682582ab7758a5d2b4f7fad",
+      "sha256": "34be2efa102b7230ee2570913d3d360cedf8627b19ea35314a7bdd95c3c68062",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12803,20 +12803,20 @@
       "category": "citizen_male_scholar_09.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "25795accfa79b5004d8d80527b90e04607d34fce1fbc53f57eac748f8a99f7f8",
+      "sha256": "687649246830ecb56e2c8b2a91071a46ef7d93a0bf36acbc9dd0b410c8b18f00",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12833,20 +12833,20 @@
       "category": "citizen_male_scholar_10.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "02d8d43a2b26b1c4a4ed22d83120f7c31f39dae1a66720cecafcb04e471dc88d",
+      "sha256": "e9ca0c48bf8bdc726bd6b0b175d03a02c6c7a3156a5aa7f9c58ca8bee0430f62",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12863,20 +12863,20 @@
       "category": "citizen_male_scholar_11.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "15ce51a880f54587a8c9381d9eea50fff9813faf0f2d1a0cb900b70f91ffd783",
+      "sha256": "d447bf5abf761fde01764c71e542805a5b39db9dfe7977249500ad4d53b2d417",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12893,20 +12893,20 @@
       "category": "citizen_male_scholar_12.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "206ddf0f4ee4d059ea795a244f5b37c5b5f7dfa9252e81769a11be3fc469d0a2",
+      "sha256": "e5a86b4666a3aba74e250f1eb899a6664d47301e8816d190f15b63157548c526",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12923,20 +12923,20 @@
       "category": "citizen_male_scholar_13.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "15a741290678d751878a3a503d749cfeb04daabb2d17e7ef806ef1a59e518f54",
+      "sha256": "7cdebecdcb8a4a342783802261a6398e7e54d3e7398587bf765d2ddf2bf3a997",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12953,20 +12953,20 @@
       "category": "citizen_male_scholar_14.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "39f71075b9d8be1e934147200d92e88abfc7165ecffa642ffd1c714b30f807b3",
+      "sha256": "8c87e71c39b6f6205256d5acf74dcb08a180894097a41c56a4971718da9045df",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -12983,20 +12983,20 @@
       "category": "citizen_male_scholar_15.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "65e32b96c5c857062e82e57410b9a69097f28888133ae2dc6c7329deed8058fb",
+      "sha256": "7ede69e3b8443c3f7223093bb3cb7c2384232e4603208699fb73817c920e9519",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13013,20 +13013,20 @@
       "category": "default_female.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "6a7f1f009676be835c09f5bf3e81e4b694e9d1ce7d7fb6fd3b9ceff944d9646f",
+      "sha256": "64bd53c3181e2aaf33445734bcdfe44cce57c2983b0091e0e57f4f248ebdae4b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13043,20 +13043,20 @@
       "category": "default_male.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "242aa8ee5d6f1cd462b14374f7b44bd503388ddf931583811a64dc1510ad2bc5",
+      "sha256": "38268ed04607130a0ea02fa53f4e8e31bae69499f209f425ae1dfc6940bde910",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13073,20 +13073,20 @@
       "category": "designer.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "610ea5a7dc7e8128aa70f9ebd48213bc2b092a1bb769e528f7dabf0c9eb16a0a",
+      "sha256": "9326493a741a9c0ce5144fc2652ebcf0f6e847f2bbcd597146245d46b75d679e",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13103,20 +13103,20 @@
       "category": "engineer.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "31d4cd4d14ede3b2a2a7da771cfc6078e08696c17fe8ea805e6579fb0ea2f048",
+      "sha256": "bf2485b153da8986c8a20b3df8fd0f4daa783f8010df136b03d8a46ec6bb64f9",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13133,20 +13133,20 @@
       "category": "mayor_sam.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "d292f11ef3ce45cd239a27425ac2878af16e3e2878f25fa686e1f95fb8e8dfc6",
+      "sha256": "dd35abcd996f86ffc29cacbb35914103eed9736ecfe0f8c08bf4113604659cdf",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13163,20 +13163,20 @@
       "category": "sage.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "e45edf44f67f0e76af94b38d36429e82afed7362bd4809a4eab3e0789dd38055",
+      "sha256": "e68d8be1954e0edef7b2dd32abf320c7af0d16c83119416194fc0d5e83378e5b",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13193,20 +13193,20 @@
       "category": "terra.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "1b18a75236003bd4601120c30677c9528798323d98bd17ad6d68f0c4889f326a",
+      "sha256": "a0291eb8f602659e9c0537d40922d06304cd287853decab7c4088d744d289966",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {
@@ -13223,20 +13223,20 @@
       "category": "tock.png",
       "pixelSize": {
         "width": 576,
-        "height": 384
+        "height": 1792
       },
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 576,
-        "height": 384
+        "height": 1792
       },
-      "sha256": "0399057a41e3c8153080548165db5b924fbcd45b3cd44a7a02f8a974ef428995",
+      "sha256": "50fe4706801ac4bd35276af0efd45ff59346e7c8bf0afac5e2005bb8c6e311b6",
       "license": "Derivative composition; see licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "credits": "licenses/UNIVERSAL_LPC_USED_CREDITS.csv",
       "grid": {
         "width": 18,
-        "height": 12,
+        "height": 56,
         "cell": 32
       },
       "collision": {

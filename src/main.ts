@@ -29,6 +29,13 @@ if (embed) document.body.classList.add('embed');
 // at y=-20 scaled 0.82 puts the visible head top near -40; the name plate (11px
 // text at y=-48) occupies roughly [-56,-40]. While a citizen talks the bubble
 // REPLACES the plate: box just above the head, tail touching it.
+/** The LPC row a movement vector should play. Ties fall to vertical, matching
+ * how the Kernel resolves a diagonal target. */
+function headingFor(dx: number, dy: number): 'back' | 'left' | 'front' | 'right' {
+  if (Math.abs(dx) > Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
+  return dy >= 0 ? 'front' : 'back';
+}
+
 const BUBBLE_GEOM = {
   boxX: -15, boxTop: -64, boxW: 30, boxH: 16,   // ink box [-64,-48]
   dotY: -56,                                     // white-inset centerline
@@ -57,7 +64,7 @@ type Citizen = {
   route?: RoutePoint[]; state: string; activity: string; online: boolean;
   specialties?: string[]; primaryCategory?: string; skillCount?: number;
   experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
-  carriedTool?: string; workingUntil?: number;
+  carriedTool?: string; workingUntil?: number; facing?: 'back' | 'left' | 'front' | 'right';
   trainingActivity?: string; trainingTeam?: string; trainingStartsAt?: number; trainingUntil?: number;
   attendingEventId?: string; attendingUntil?: number; rank?: Rank;
   activeBuildId?: string; activeTool?: string; buildingStartsAt?: number; buildingUntil?: number;
@@ -147,6 +154,9 @@ class EarthScene extends Phaser.Scene {
 
   create() {
     for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
+      // The catalog carries <state>_<direction> keys plus a bare <state> alias
+      // pointing at the front row; registering all of them keeps older callers
+      // working while the directional keys drive the scene.
       for (const [state, frameNumbers] of Object.entries(definition.animations)) {
         const animationKey = `lpc-${agentKey}-${state}`;
         if (this.anims.exists(animationKey)) continue;
@@ -1475,12 +1485,19 @@ class EarthScene extends Phaser.Scene {
             && /water|crop|garden|farm/i.test(citizen.activity));
         const nextState = isMoving ? 'walk'
           : isBuilding ? 'build_hammer'
-          : swinging ? 'slash'
+          : swinging ? 'thrust'
           : isWatering ? 'water_crops' : 'idle';
-        const previousState = citImg.getData('lpc-state');
-        if (previousState !== nextState) {
+        // Facing: the movement vector while walking, the Kernel's decision when
+        // standing. A citizen therefore walks where it is going and turns to
+        // whatever it is working on.
+        const direction = isMoving
+          ? headingFor(citizen.tx - citizen.fx, citizen.ty - citizen.fy)
+          : (citizen.facing ?? 'front');
+        const nextKey = `${nextState}_${direction}`;
+        if (citImg.getData('lpc-key') !== nextKey) {
           const preset = String(citImg.getData('lpc-preset'));
-          citImg.play(`lpc-${preset}-${nextState}`, true);
+          citImg.play(`lpc-${preset}-${nextKey}`, true);
+          citImg.setData('lpc-key', nextKey);
           citImg.setData('lpc-state', nextState);
         }
         citImg.y = -20;

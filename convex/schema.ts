@@ -49,6 +49,10 @@ export default defineSchema({
     attendingEventId: v.optional(v.string()),
     attendingUntil: v.optional(v.number()),
     activeBuildId: v.optional(v.string()),
+    // Which way this citizen is turned. Set by the Kernel whenever an act has
+    // a target, so a citizen visibly turns to what it is doing rather than
+    // hammering a wall while facing the camera.
+    facing: v.optional(v.union(v.literal('back'), v.literal('left'), v.literal('front'), v.literal('right'))),
     activeTool: v.optional(v.string()),
     // The tool a citizen habitually carries, kept apart from activeTool so a
     // holstered watering can never reads as watering in progress.
