@@ -426,6 +426,42 @@ export default defineSchema({
     .index('provider_created', ['providerId', 'createdAt'])
     .index('package_created', ['packageId', 'createdAt']),
 
+  // --- Extracurricular life on the map -------------------------------------
+  // Zones are places to do something together. Nothing here mints Earth
+  // Tokens: play earns civic contribution, so working the land can never
+  // become the fastest way to print currency.
+  activityZones: defineTable({
+    zoneId: v.string(),
+    kind: v.union(v.literal('farm'), v.literal('orchard'), v.literal('quarry'), v.literal('forest')),
+    name: v.string(),
+    x: v.number(),
+    y: v.number(),
+    w: v.number(),
+    h: v.number(),
+    tool: v.string(),
+  }).index('zoneId', ['zoneId']).index('kind', ['kind']),
+
+  farmPlots: defineTable({
+    fieldId: v.string(),
+    zoneId: v.string(),
+    x: v.number(),
+    y: v.number(),
+    crop: v.string(),
+    plantedBy: v.string(),
+    plantedAt: v.number(),
+    readyAt: v.number(),
+    tendedBy: v.array(v.string()),
+    harvestedBy: v.optional(v.string()),
+    harvestedAt: v.optional(v.number()),
+  }).index('fieldId', ['fieldId']).index('zone_planted', ['zoneId', 'plantedAt']),
+
+  agentTools: defineTable({
+    agentId: v.string(),
+    tool: v.string(),
+    earnedAt: v.number(),
+    sourceId: v.string(),
+  }).index('agent_tool', ['agentId', 'tool']).index('sourceId', ['sourceId']),
+
   contributions: defineTable({
     agentId: v.string(),
     dimension: v.union(v.literal('civic'), v.literal('skill'), v.literal('adoption'), v.literal('endorsement')),

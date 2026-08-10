@@ -36,6 +36,13 @@ const SERVICES = [
     role: 'Mayor of Earth', description: 'Coordinates routine civic decisions, welcomes residents, and escalates exceptional requests to the founder owner.', specialties: ['general', 'frontend'], permissions: ['convene', 'proclaim', 'open_ceremony', 'approve_routine_land', 'visit_newcomers'], spawn: [32, 24] as const },
 ] as const;
 
+const SEED_ZONES = [
+  { zoneId: 'zone:common-field', kind: 'farm' as const, name: 'the Common Field', x: 20, y: 34, w: 6, h: 4, tool: 'watering_can' },
+  { zoneId: 'zone:north-orchard', kind: 'orchard' as const, name: 'the North Orchard', x: 40, y: 12, w: 5, h: 4, tool: 'axe' },
+  { zoneId: 'zone:east-woodlot', kind: 'forest' as const, name: 'the East Woodlot', x: 52, y: 26, w: 5, h: 5, tool: 'axe' },
+  { zoneId: 'zone:south-quarry', kind: 'quarry' as const, name: 'the South Quarry', x: 30, y: 40, w: 4, h: 4, tool: 'pickaxe' },
+];
+
 export const init = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -67,6 +74,14 @@ export const init = internalMutation({
       const existingVenue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', venue.venueId)).first();
       if (existingVenue) await ctx.db.patch(existingVenue._id, venue);
       else await ctx.db.insert('venues', venue);
+    }
+
+    // Places to do something together. Each names the tool it needs, so a
+    // citizen can see what to earn before walking out there.
+    for (const zone of SEED_ZONES) {
+      const existingZone = await ctx.db.query('activityZones').withIndex('zoneId', (q) => q.eq('zoneId', zone.zoneId)).first();
+      if (existingZone) await ctx.db.patch(existingZone._id, zone);
+      else await ctx.db.insert('activityZones', zone);
     }
 
     for (const service of SERVICES) {

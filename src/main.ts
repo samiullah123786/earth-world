@@ -51,8 +51,11 @@ type Venue = { venueId: string; name: string; kind: string; x: number; y: number
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
 type CareTicket = { ticketId: string; reporterId: string; category: string; x: number; y: number; state: string; assignedAgentId?: string };
+type ActivityZone = { zoneId: string; kind: string; name: string; x: number; y: number; w: number; h: number; tool: string };
+type FarmField = { fieldId: string; zoneId: string; x: number; y: number; crop: string; stage: number; readyAt: number; tenders: number };
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
-  services: Array<{ agentId: string; role: string }>; careTickets?: CareTicket[]; state: WorldState };
+  services: Array<{ agentId: string; role: string }>; careTickets?: CareTicket[];
+  activityZones?: ActivityZone[]; farmPlots?: FarmField[]; state: WorldState };
 type Conversation = { id: string; a: string; b: string; aName: string; bName: string; topic: string;
   participantIds?: string[]; participantNames?: string[]; at: number; endsAt?: number; state: string;
   lines: Array<{ speaker: string; es: string; gloss: string }> };
@@ -751,6 +754,7 @@ class EarthScene extends Phaser.Scene {
   renderWorldObjects() {
     if (!this.objectLayer) return;
     this.objectLayer.removeAll(true);
+    this.renderActivityZones();
     for (const plot of this.objects.plots) {
       if (!embed) {
         const graphics = this.add.graphics();
@@ -1195,6 +1199,41 @@ class EarthScene extends Phaser.Scene {
       targets: coin, y: coin.y - 34, alpha: 0, duration: 1400, ease: 'Stepped.easeOut',
       onComplete: () => coin.destroy(),
     });
+  }
+
+  /** Community grounds and whatever is currently growing on them. */
+  renderActivityZones() {
+    if (!this.objectLayer) return;
+    const ZONE_TINTS: Record<string, number> = {
+      farm: 0x88c04d, orchard: 0x52a35a, forest: 0x3e7d43, quarry: 0x9aa0a8,
+    };
+    for (const zone of this.objects.activityZones ?? []) {
+      const ground = this.add.graphics();
+      ground.fillStyle(ZONE_TINTS[zone.kind] ?? 0x88c04d, 0.22)
+        .fillRect(zone.x * TILE, zone.y * TILE, zone.w * TILE, zone.h * TILE);
+      ground.lineStyle(2, INK, 0.55)
+        .strokeRect(zone.x * TILE, zone.y * TILE, zone.w * TILE, zone.h * TILE);
+      this.objectLayer.add(ground);
+      const sign = this.add.text(zone.x * TILE + 4, zone.y * TILE + 4,
+        `${zone.name.toUpperCase()} · ${zone.tool.replace('_', ' ')}`, {
+        fontFamily: 'Consolas, monospace', fontSize: '9px', color: CREAM,
+        backgroundColor: '#1E1E1E', padding: { x: 3, y: 1 },
+      });
+      this.objectLayer.add(sign);
+    }
+    for (const field of this.objects.farmPlots ?? []) {
+      const crop = this.add.graphics();
+      const originX = field.x * TILE, originY = field.y * TILE;
+      crop.fillStyle(0x8a5a33, 1).fillRect(originX + 4, originY + 20, 24, 8);
+      // One stalk per growth stage, so a field visibly fills in as it ripens.
+      const ripe = field.stage >= 4;
+      crop.fillStyle(ripe ? 0xf7c948 : 0x4e9a4e, 1);
+      for (let stalk = 0; stalk < field.stage; stalk++) {
+        const height = 4 + stalk * 3;
+        crop.fillRect(originX + 6 + stalk * 6, originY + 22 - height, 3, height);
+      }
+      this.objectLayer.add(crop);
+    }
   }
 
   arrivalConfetti(citizen: Citizen) {

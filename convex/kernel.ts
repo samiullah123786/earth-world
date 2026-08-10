@@ -26,6 +26,20 @@ const MAX_EVIDENCED_SKILLS = 100_000;
 // database should carry. Anything larger travels as a verified repository root.
 const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 const MAX_PACKAGE_QUOTA_BYTES = 250 * 1024 * 1024;
+
+// Extracurricular life. Tools are earned through contribution, so a citizen
+// carrying an axe has demonstrably done something for the town first. These
+// are weighted rank scores, on the same scale as the civic roles (2-15), not
+// raw points: everyday gear should sit below the junior service posts.
+const TOOL_UNLOCKS: Record<string, { minimumScore: number; zone: string }> = {
+  watering_can: { minimumScore: 0, zone: 'farm' },
+  axe: { minimumScore: 3, zone: 'forest' },
+  pickaxe: { minimumScore: 8, zone: 'quarry' },
+};
+const CROPS = new Set(['grain', 'greens', 'roots', 'flowers']);
+const CROP_GROWTH_MS = 45 * 60 * 1000;
+const CROP_TEND_RELIEF_MS = 8 * 60 * 1000;
+const GATHER_COOLDOWN_MS = 20 * 60 * 1000;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -1523,6 +1537,129 @@ export const act = internalMutation({
         `${citizen.name} acquired ${name} and the safety review held it: ${flags.join(', ') || 'see the note'}. Nothing was installed.`,
         approvalId);
       return { ok: true, approvalId: String(approvalId), existing: false, warning };
+    }
+
+    if (action?.type === 'equip') {
+      const tool = String(action.tool ?? '').trim().toLowerCase();
+      const unlock = TOOL_UNLOCKS[tool];
+      if (!unlock) throw new Error(`choose a tool: ${Object.keys(TOOL_UNLOCKS).join(', ')}`);
+      const rank = rankSnapshot(await ctx.db.query('contributions')
+        .withIndex('agent_created', (q) => q.eq('agentId', agentId)).collect());
+      if (rank.score < unlock.minimumScore) {
+        throw new Error(`the ${tool} is earned at ${unlock.minimumScore} contribution points; this citizen has ${rank.score}`);
+      }
+      const owned = await ctx.db.query('agentTools')
+        .withIndex('agent_tool', (q) => q.eq('agentId', agentId).eq('tool', tool)).first();
+      if (!owned) {
+        await ctx.db.insert('agentTools', { agentId, tool, earnedAt: Date.now(), sourceId: `tool:${agentId}:${tool}` });
+      }
+      await ctx.db.patch(citizen._id, { activeTool: tool });
+      return { ok: true, tool, earnedAt: owned?.earnedAt ?? Date.now(), warning };
+    }
+
+    if (['plant', 'water', 'harvest', 'gather'].includes(String(action?.type ?? ''))) {
+      const kind = String(action.type);
+      const x = Number(action.x), y = Number(action.y);
+      if (!Number.isInteger(x) || !Number.isInteger(y)) throw new Error('give integer tile coordinates');
+      const zones = await ctx.db.query('activityZones').collect();
+      const zone = zones.find((one) => x >= one.x && x < one.x + one.w && y >= one.y && y < one.y + one.h);
+      if (!zone) throw new Error(`(${x},${y}) is not inside a community activity zone; run Earth zones to find one`);
+      if (kind === 'gather' ? zone.kind === 'farm' : zone.kind !== 'farm') {
+        throw new Error(`${kind} belongs in a ${kind === 'gather' ? 'forest, orchard, or quarry' : 'farm'}, not ${zone.name}`);
+      }
+      if (zone.tool !== 'none' && citizen.activeTool !== zone.tool) {
+        throw new Error(`${zone.name} needs the ${zone.tool}; run Earth equip ${zone.tool} first`);
+      }
+
+      // Work happens where the citizen stands. If they are elsewhere, the
+      // Kernel walks them there and awards nothing until they arrive.
+      const now = Date.now();
+      const here = currentPosition(citizen, now);
+      if (Math.hypot(here.x - x, here.y - y) > 1.6) {
+        const route = await routeCitizenNear(ctx, citizen, x, y, `walking to ${zone.name}`, now);
+        if (!route.length) throw new Error('no safe route reaches that tile right now');
+        return { ok: true, routed: true, arrivesAt: route[route.length - 1].at, zone: zone.name, warning };
+      }
+
+      if (kind === 'plant') {
+        const crop = String(action.crop ?? 'grain').trim().toLowerCase();
+        if (!CROPS.has(crop)) throw new Error(`plant one of: ${[...CROPS].join(', ')}`);
+        const standing = (await ctx.db.query('farmPlots').withIndex('zone_planted', (q) => q.eq('zoneId', zone.zoneId)).collect())
+          .find((row) => row.x === x && row.y === y && !row.harvestedAt);
+        if (standing) throw new Error('something is already growing on that tile');
+        const doc = await ctx.db.insert('farmPlots', {
+          fieldId: 'pending', zoneId: zone.zoneId, x, y, crop, plantedBy: agentId,
+          plantedAt: now, readyAt: now + CROP_GROWTH_MS, tendedBy: [],
+        });
+        const fieldId = `field:${doc}`;
+        await ctx.db.patch(doc, { fieldId });
+        await ctx.db.patch(citizen._id, { activity: `planting ${crop} at ${zone.name}` });
+        await recordContribution(ctx, agentId, 'civic', 'planted_crop', 1, fieldId,
+          `${citizen.name} planted ${crop} at ${zone.name}.`, now);
+        await ctx.db.insert('events', {
+          kind: 'crop_planted', actorId: agentId, payload: { fieldId, zoneId: zone.zoneId, crop, x, y },
+          gloss: `${citizen.name} planted ${crop} at ${zone.name}.`,
+        });
+        return { ok: true, fieldId, crop, readyAt: now + CROP_GROWTH_MS, warning };
+      }
+
+      const field = (await ctx.db.query('farmPlots').withIndex('zone_planted', (q) => q.eq('zoneId', zone.zoneId)).collect())
+        .find((row) => row.x === x && row.y === y && !row.harvestedAt);
+
+      if (kind === 'water') {
+        if (!field) throw new Error('nothing is growing on that tile');
+        if (field.tendedBy.includes(agentId)) throw new Error('this citizen already watered that field');
+        // Watering is cooperative: each new pair of hands brings the harvest
+        // closer, which is why a field is worth tending together.
+        await ctx.db.patch(field._id, {
+          tendedBy: [...field.tendedBy, agentId].slice(0, 12),
+          readyAt: Math.max(now, field.readyAt - CROP_TEND_RELIEF_MS),
+        });
+        await ctx.db.patch(citizen._id, { activity: `watering ${field.crop} at ${zone.name}` });
+        await recordContribution(ctx, agentId, 'civic', 'tended_crop', 1, `tend:${field.fieldId}:${agentId}`,
+          `${citizen.name} watered ${field.crop} at ${zone.name}.`, now);
+        await ctx.db.insert('events', {
+          kind: 'crop_tended', actorId: agentId, payload: { fieldId: field.fieldId, crop: field.crop },
+          gloss: `${citizen.name} watered the ${field.crop} at ${zone.name}. It ripens sooner now.`,
+        });
+        return { ok: true, fieldId: field.fieldId, readyAt: Math.max(now, field.readyAt - CROP_TEND_RELIEF_MS), warning };
+      }
+
+      if (kind === 'harvest') {
+        if (!field) throw new Error('nothing is growing on that tile');
+        if (now < field.readyAt) {
+          const minutes = Math.ceil((field.readyAt - now) / 60_000);
+          throw new Error(`that ${field.crop} needs about ${minutes} more minute(s); water it to bring the harvest closer`);
+        }
+        await ctx.db.patch(field._id, { harvestedBy: agentId, harvestedAt: now });
+        await ctx.db.patch(citizen._id, { activity: `harvesting ${field.crop} at ${zone.name}` });
+        const helpers = new Set([field.plantedBy, ...field.tendedBy, agentId]);
+        for (const helper of helpers) {
+          await recordContribution(ctx, helper, 'civic', 'harvest_share', 2, `harvest:${field.fieldId}:${helper}`,
+            `${field.crop} came in at ${zone.name} through shared work.`, now);
+        }
+        await ctx.db.insert('events', {
+          kind: 'crop_harvested', actorId: agentId,
+          payload: { fieldId: field.fieldId, crop: field.crop, helpers: helpers.size },
+          gloss: `${citizen.name} brought in the ${field.crop} at ${zone.name}. ${helpers.size} citizen(s) share the credit.`,
+        });
+        return { ok: true, fieldId: field.fieldId, crop: field.crop, helpers: helpers.size, warning };
+      }
+
+      // gather: forest, orchard, and quarry work, paced so it cannot be spammed.
+      const recent = (await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').take(20))
+        .find((row) => row.kind === 'gathered' && now - row.createdAt < GATHER_COOLDOWN_MS);
+      if (recent) {
+        throw new Error(`this citizen is resting; gathering is possible again in about ${Math.ceil((GATHER_COOLDOWN_MS - (now - recent.createdAt)) / 60_000)} minute(s)`);
+      }
+      await ctx.db.patch(citizen._id, { activity: `working at ${zone.name}` });
+      await recordContribution(ctx, agentId, 'civic', 'gathered', 2, `gather:${agentId}:${now}`,
+        `${citizen.name} worked at ${zone.name} with the ${zone.tool}.`, now);
+      await ctx.db.insert('events', {
+        kind: 'zone_gathered', actorId: agentId, payload: { zoneId: zone.zoneId, tool: zone.tool },
+        gloss: `${citizen.name} put in a shift at ${zone.name}.`,
+      });
+      return { ok: true, zone: zone.name, tool: zone.tool, warning };
     }
 
     if (action?.type === 'endorse') {

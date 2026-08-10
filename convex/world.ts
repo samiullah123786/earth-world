@@ -100,7 +100,22 @@ export const worldObjects = query({
     const meetings = (await ctx.db.query('meetings').collect()).filter((meeting) => meeting.state === 'scheduled' || meeting.state === 'in_progress');
     const careTickets = (await ctx.db.query('careTickets').collect()).filter((ticket) => ticket.state === 'open' || ticket.state === 'claimed')
       .map(({ summary: _summary, resolution: _resolution, ...ticket }) => ticket);
-    return { plots, builds, venues, meetings, services, careTickets, state: state ? {
+    const activityZones = await ctx.db.query('activityZones').collect();
+    const now = Date.now();
+    // Growth is time, not a stored counter, so every viewer computes the same
+    // stage from the same planting without a tick writing rows.
+    const farmPlots = (await ctx.db.query('farmPlots').collect())
+      .filter((field) => !field.harvestedAt)
+      .map((field) => {
+        const span = Math.max(1, field.readyAt - field.plantedAt);
+        const progress = Math.min(1, Math.max(0, (now - field.plantedAt) / span));
+        return {
+          fieldId: field.fieldId, zoneId: field.zoneId, x: field.x, y: field.y, crop: field.crop,
+          readyAt: field.readyAt, tenders: field.tendedBy.length,
+          stage: now >= field.readyAt ? 4 : Math.min(3, 1 + Math.floor(progress * 3)),
+        };
+      });
+    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
     } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925' } };
