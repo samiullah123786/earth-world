@@ -24,6 +24,23 @@ const OWNER_DASHBOARD_ORIGINS = new Set([
 const embed = new URLSearchParams(location.search).has('embed');
 const lpcRenderPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('lpc-preview');
 if (embed) document.body.classList.add('embed');
+// ?debug=bubbles forces talk bubbles visible (display-only, spectator-side) so
+// bubble geometry can be reviewed on demand at any zoom. No authority attaches.
+// Speech-bubble geometry, shared by creation AND animation so the two can
+// never disagree again. Derived from the citizen composition: a 64px LPC frame
+// at y=-20 scaled 0.82 puts the visible head top near -40; the name plate (11px
+// text at y=-48) occupies roughly [-56,-40]. While a citizen talks the bubble
+// REPLACES the plate: box just above the head, tail touching it.
+const BUBBLE_GEOM = {
+  boxX: -15, boxTop: -64, boxW: 30, boxH: 16,   // ink box [-64,-48]
+  dotY: -56,                                     // white-inset centerline
+  dotXs: [-6, 0, 6] as const,
+  tail: { baseY: -49, tipX: -1, tipY: -42 },     // tip 2-3px above the head
+  sleepBaseX: 12, sleepBaseY: -58,               // Zzz stack base, clear of the plate
+};
+
+const DEBUG_BUBBLES = new URLSearchParams(window.location.search).get('debug') === 'bubbles';
+
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 if (!convexUrl) throw new Error('VITE_CONVEX_URL is required');
 const convex = new ConvexClient(convexUrl);
@@ -154,6 +171,10 @@ class EarthScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(CREAM);
     this.cameras.main.centerOn((map.width * TILE) / 2, (map.height * TILE) / 2);
     this.cameras.main.setZoom(Math.max(embed ? 1.15 : 1.4, this.minimumZoom(map.width, map.height)));
+    // Cursor grammar: open hand over draggable ground, closed fist while
+    // actually dragging, pointer over anything clickable (Phaser handles the
+    // pointer via useHandCursor on each interactive object).
+    this.input.setDefaultCursor('grab');
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (!pointer.isDown || !this.mapPanning) return;
       this.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / this.cameras.main.zoom;
@@ -161,9 +182,14 @@ class EarthScene extends Phaser.Scene {
     });
     this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
       this.mapPanning = gameObjects.length === 0 && Date.now() >= this.uiInteractionUntil;
+      if (this.mapPanning) this.input.setDefaultCursor('grabbing');
       document.body.classList.toggle('is-panning', this.mapPanning);
     });
-    const releasePan = () => { this.mapPanning = false; document.body.classList.remove('is-panning'); };
+    const releasePan = () => {
+      this.mapPanning = false;
+      this.input.setDefaultCursor('grab');
+      document.body.classList.remove('is-panning');
+    };
     this.input.on('pointerup', releasePan);
     this.input.on('pointerupoutside', releasePan);
     this.input.on('wheel', (_pointer: unknown, _objects: unknown, _dx: number, dy: number) => {
@@ -677,7 +703,7 @@ class EarthScene extends Phaser.Scene {
       graphics.fillStyle(0xfdf6ec).fillRect(cx - 4, cy - 4, 8, 8);
     }
     if (active) graphics.lineStyle(3, 0xec4899, 0.95).strokeCircle(cx, cy, 20);
-    const zone = this.add.zone(cx, cy, 42, 42).setInteractive();
+    const zone = this.add.zone(cx, cy, 42, 42).setInteractive({ useHandCursor: true });
     zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showVenue(venue); });
     this.objectLayer.add([graphics, zone]);
     if (!embed) {
@@ -899,13 +925,16 @@ class EarthScene extends Phaser.Scene {
     const label = this.add.text(0, -48, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
       backgroundColor: '#1E1E1E', padding: { x: 5, y: 2 },
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setName('name-plate');
+    const G = BUBBLE_GEOM;
     const bubbleShape = this.add.graphics().setName('talk-bubble-shape');
-    bubbleShape.fillStyle(INK).fillRoundedRect(-14, -68, 28, 16, 5).fillTriangle(-6, -53, 0, -53, -4, -48);
-    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -66, 24, 12, 3);
-    const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -60, 1.6, INK).setName(`talk-dot-${index}`));
+    bubbleShape.fillStyle(INK)
+      .fillRoundedRect(G.boxX, G.boxTop, G.boxW, G.boxH, 5)
+      .fillTriangle(G.tail.tipX - 4, G.tail.baseY, G.tail.tipX + 4, G.tail.baseY, G.tail.tipX, G.tail.tipY);
+    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(G.boxX + 2, G.boxTop + 2, G.boxW - 4, G.boxH - 4, 3);
+    const dots = G.dotXs.map((dotX, index) => this.add.circle(dotX, G.dotY, 1.8, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
-    const sleepMarks = [0, 1, 2].map((index) => this.add.text(9 + index * 7, -54 - index * 7, 'Z', {
+    const sleepMarks = [0, 1, 2].map((index) => this.add.text(G.sleepBaseX + index * 7, G.sleepBaseY - index * 7, 'Z', {
       fontFamily: 'Consolas, monospace', fontSize: `${8 + index * 2}px`, color: '#FDF6EC',
       stroke: '#1E1E1E', strokeThickness: 3,
     }).setOrigin(0.5).setName(`sleep-z-${index}`));
@@ -1349,11 +1378,16 @@ class EarthScene extends Phaser.Scene {
 
       const bubble = sprite.getByName('talk-bubble') as Phaser.GameObjects.Container | null;
       if (bubble) {
-        const active = Boolean(citizen.talkingWith && (citizen.talkingUntil ?? 0) > now);
+        const active = DEBUG_BUBBLES || Boolean(citizen.talkingWith && (citizen.talkingUntil ?? 0) > now);
         bubble.setVisible(active);
+        // The bubble replaces the plate while talking; both never fight for
+        // the same pixels again.
+        (sprite.getByName('name-plate') as Phaser.GameObjects.Text | null)?.setVisible(!active);
         if (active) for (let i = 0; i < 3; i++) {
           const dot = bubble.getByName(`talk-dot-${i}`) as Phaser.GameObjects.Arc | null;
-          if (dot) dot.y = -44 + Math.sin(now / 180 + i * 1.7) * 1.6;
+          // Anchored to the SAME constant the box was drawn from. The old code
+          // re-derived this as -44 and marched the dots out of their own box.
+          if (dot) dot.y = BUBBLE_GEOM.dotY + Math.sin(now / 180 + i * 1.7) * 1.4;
         }
       }
       const shield = sprite.getByName('training-shield') as Phaser.GameObjects.Graphics | null;
@@ -1365,7 +1399,7 @@ class EarthScene extends Phaser.Scene {
         if (sleeping) for (let i = 0; i < 3; i++) {
           const mark = sleepBubble.getByName(`sleep-z-${i}`) as Phaser.GameObjects.Text | null;
           if (mark) {
-            mark.y = -38 - i * 7 - ((now / 500 + i * 0.8) % 3);
+            mark.y = BUBBLE_GEOM.sleepBaseY - i * 7 - ((now / 500 + i * 0.8) % 3);
             mark.alpha = 0.48 + 0.45 * ((Math.sin(now / 420 + i * 1.6) + 1) / 2);
           }
         }
@@ -1380,6 +1414,9 @@ const game = new Phaser.Game({
   scene: [EarthScene], pixelArt: true,
   render: { roundPixels: true },
 });
+// Under the QA flag only: let tooling position the camera deterministically
+// instead of scripting wheel events. Display access, no authority.
+if (DEBUG_BUBBLES) (window as unknown as Record<string, unknown>).earthGame = game;
 
 for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {
   document.getElementById(id)?.addEventListener('input', () => {
