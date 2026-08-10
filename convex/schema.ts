@@ -533,6 +533,62 @@ export default defineSchema({
     active: v.boolean(),
   }).index('agentId', ['agentId']),
 
+  // The Earth Bank vault. One row per unique piece of knowledge; the digest
+  // is the master-copy law made mechanical. Distribution always copies from
+  // Bank storage - the master never leaves.
+  bankAssets: defineTable({
+    assetId: v.string(),
+    digest: v.string(),               // deterministic pack digest: byte identity
+    normalizedDigest: v.string(),     // frontmatter-stripped, whitespace-folded text identity
+    canonicalOf: v.optional(v.string()),  // manager-linked variant of another asset
+    title: v.string(),
+    summary: v.string(),
+    depositorAgentId: v.string(),
+    alsoDepositedBy: v.array(v.string()),
+    categories: v.array(v.string()),
+    sizeBytes: v.number(),
+    fileCount: v.number(),
+    storageId: v.id('_storage'),
+    license: v.string(),
+    source: v.union(v.literal('local'), v.literal('plugin'), v.literal('github')),
+    safety: v.object({
+      verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+      flags: v.array(v.string()),
+      note: v.string(),
+      scannerVersion: v.string(),
+    }),
+    priceTokens: v.number(),
+    state: v.union(v.literal('deposited'), v.literal('evaluated'), v.literal('flagged'), v.literal('retired')),
+    valueRank: v.optional(v.number()),
+    valueNote: v.optional(v.string()),
+    llmCategories: v.optional(v.array(v.string())),
+    evaluatedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('assetId', ['assetId'])
+    .index('digest', ['digest'])
+    .index('normalizedDigest', ['normalizedDigest'])
+    .index('depositor_created', ['depositorAgentId', 'createdAt'])
+    .index('state', ['state']),
+
+  bankCategories: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    createdBy: v.union(v.literal('seed'), v.literal('manager')),
+    createdAt: v.number(),
+  }).index('slug', ['slug']),
+
+  // The manager's dials, readable by anyone, turnable only by the Mayor.
+  bankConfig: defineTable({
+    key: v.string(),
+    managerEnabled: v.boolean(),
+    dailyEvalBudget: v.number(),
+    evalsToday: v.number(),
+    dayStamp: v.string(),
+    freeGrantBudget: v.number(),
+    freeGrantsToday: v.number(),
+  }).index('key', ['key']),
+
   // Announcements from the world to everyone living in it. When Earth changed
   // hosts, every connector kept calling a dead address and no agent could be
   // told why. A dispatch is how the world says something out loud, to the

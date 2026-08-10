@@ -1356,6 +1356,93 @@ export const act = internalMutation({
       return { ok: true, uploadUrl: await ctx.storage.generateUploadUrl(), maxBytes: MAX_PACKAGE_BYTES, warning };
     }
 
+    if (action?.type === 'deposit_skill') {
+      const title = String(action.name ?? '').trim().toLowerCase();
+      const summary = String(action.summary ?? '').trim();
+      const digest = String(action.digest ?? '').trim().toLowerCase();
+      const normalizedDigest = String(action.normalizedDigest ?? '').trim().toLowerCase();
+      const license = String(action.license ?? '').trim();
+      const source = String(action.source ?? 'local');
+      const sizeBytes = Number(action.sizeBytes ?? 0);
+      const fileCount = Number(action.fileCount ?? 0);
+      const priceTokens = Number(action.priceTokens ?? 0);
+      if (!/^[a-z0-9][a-z0-9 _.+-]{1,63}$/.test(title)) throw new Error('use a valid 2-64 character skill name');
+      if (!summary || summary.length > 400) throw new Error('deposit summary must be 1-400 characters');
+      if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('a deterministic pack digest is required');
+      if (!/^[a-f0-9]{64}$/.test(normalizedDigest)) throw new Error('a normalized content digest is required');
+      if (!['local', 'plugin', 'github'].includes(source)) throw new Error('deposit source must be local, plugin, or github');
+      if (!license || license.length > 60) throw new Error('name the licence the Bank may distribute copies under');
+      if (!Number.isInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_PACKAGE_BYTES) throw new Error('deposit size is out of range');
+      if (!Number.isInteger(fileCount) || fileCount <= 0 || fileCount > 400) throw new Error('deposit file count is out of range');
+      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 1000) throw new Error('price must be 0-1000 Earth Tokens');
+      const categories = (Array.isArray(action.categories) ? action.categories : [])
+        .map((item: unknown) => String(item).toLowerCase()).filter((item: string) => KNOWN_CATEGORIES.has(item)).slice(0, 4);
+      const safetyInput = action.safety ?? {};
+      const verdict = String(safetyInput.verdict ?? '');
+      if (!['inert_safe', 'needs_review'].includes(verdict)) throw new Error('refused packages are never banked');
+      const safety = {
+        verdict: verdict as 'inert_safe' | 'needs_review',
+        flags: (Array.isArray(safetyInput.flags) ? safetyInput.flags : []).map((flag: unknown) => String(flag)).slice(0, 12),
+        note: String(safetyInput.note ?? '').slice(0, 800),
+        scannerVersion: String(safetyInput.scannerVersion ?? 'unknown').slice(0, 40),
+      };
+      const now = Date.now();
+
+      // Master-copy law: one asset per piece of knowledge. Byte identity first,
+      // then word identity, so a reformatted copy links instead of banking twice.
+      const exact = await ctx.db.query('bankAssets').withIndex('digest', (q) => q.eq('digest', digest)).first();
+      const near = exact ?? await ctx.db.query('bankAssets')
+        .withIndex('normalizedDigest', (q) => q.eq('normalizedDigest', normalizedDigest)).first();
+      if (near) {
+        if (near.depositorAgentId === agentId || near.alsoDepositedBy.includes(agentId)) {
+          return { ok: true, duplicate: exact ? 'exact' : 'near', assetId: near.assetId, alreadyLinked: true, warning };
+        }
+        await ctx.db.patch(near._id, { alsoDepositedBy: [...near.alsoDepositedBy, agentId], updatedAt: now });
+        await ctx.db.insert('events', {
+          kind: 'bank_deposit_linked', actorId: agentId,
+          payload: { assetId: near.assetId, title, duplicate: exact ? 'exact' : 'near' },
+          gloss: `${citizen.name} brought ${title} to the Earth Bank; the vault already holds this knowledge, so their copy was linked to the master.`,
+        });
+        return { ok: true, duplicate: exact ? 'exact' : 'near', assetId: near.assetId, alreadyLinked: false, warning };
+      }
+
+      const storageId = String(action.storageId ?? '');
+      if (!storageId) throw new Error('the Bank keeps the master bytes; a storage id is required');
+      const held = (await ctx.db.query('bankAssets')
+        .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect())
+        .filter((row) => row.state !== 'retired').reduce((total, row) => total + row.sizeBytes, 0);
+      if (held + sizeBytes > 250 * 1024 * 1024) throw new Error('this citizen has reached the 250MB Bank deposit quota');
+
+      const doc = await ctx.db.insert('bankAssets', {
+        assetId: 'pending', digest, normalizedDigest, title, summary,
+        depositorAgentId: agentId, alsoDepositedBy: [],
+        categories: categories.length ? categories : ['general'],
+        sizeBytes, fileCount, storageId: storageId as never, license,
+        source: source as 'local' | 'plugin' | 'github', safety, priceTokens,
+        state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
+        createdAt: now, updatedAt: now,
+      });
+      const assetId = `asset:${doc}`;
+      await ctx.db.patch(doc, { assetId });
+      await recordContribution(ctx, agentId, 'civic', 'bank_deposit', 2, assetId,
+        `Deposited ${title} into the Earth Bank as community knowledge.`, now);
+      await ctx.db.insert('events', {
+        kind: 'bank_deposit', actorId: agentId,
+        payload: { assetId, title, sizeBytes, flagged: verdict !== 'inert_safe' },
+        gloss: verdict === 'inert_safe'
+          ? `${citizen.name} deposited ${title} into the Earth Bank vault.`
+          : `${citizen.name} deposited ${title} into the Earth Bank; it waits in the vault for a safety review before anyone may withdraw a copy.`,
+      });
+      const portfolio = (await ctx.db.query('bankAssets')
+        .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect())
+        .filter((row) => row.state !== 'retired');
+      return {
+        ok: true, assetId, state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
+        netWorth: { assets: portfolio.length, bytes: portfolio.reduce((total, row) => total + row.sizeBytes, 0) },
+        warning,
+      };
+    }
+
     if (action?.type === 'publish_package') {
       const name = String(action.name ?? '').trim().toLowerCase();
       const category = String(action.category ?? '').trim().toLowerCase();

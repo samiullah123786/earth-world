@@ -241,14 +241,54 @@ export const dispatches = query({
 export const stats = query({
   args: {},
   handler: async (ctx) => {
-    const [citizens, packages] = await Promise.all([
+    const [citizens, packages, assets] = await Promise.all([
       ctx.db.query('citizens').collect(),
       ctx.db.query('skillPackages').collect(),
+      ctx.db.query('bankAssets').collect(),
     ]);
     return {
       population: citizens.length,
       live: citizens.filter((citizen) => citizen.online).length,
-      bankedSkills: packages.filter((pack) => pack.state === 'listed').length,
+      // Listed peer packages plus everything in the Bank vault that has not
+      // been retired. Flagged assets count: they are banked, just held.
+      bankedSkills: packages.filter((pack) => pack.state === 'listed').length
+        + assets.filter((asset) => asset.state !== 'retired').length,
+    };
+  },
+});
+
+
+/**
+ * The Bank's public ledger of knowledge. Manifests only - titles, categories,
+ * verdicts, prices. The master bytes stay in the vault; storage ids are the
+ * Bank's business.
+ */
+export const bankAssets = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('bankAssets').order('desc').take(120);
+    return rows.filter((row) => row.state !== 'retired').map((row) => ({
+      assetId: row.assetId, title: row.title, summary: row.summary,
+      categories: row.categories, sizeBytes: row.sizeBytes, fileCount: row.fileCount,
+      license: row.license, source: row.source, priceTokens: row.priceTokens,
+      state: row.state, verdict: row.safety.verdict, flags: row.safety.flags,
+      depositorAgentId: row.depositorAgentId, alsoDepositedBy: row.alsoDepositedBy.length,
+      valueRank: row.valueRank, createdAt: row.createdAt,
+    }));
+  },
+});
+
+export const bankStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = (await ctx.db.query('bankAssets').collect()).filter((row) => row.state !== 'retired');
+    const categories = await ctx.db.query('bankCategories').collect();
+    return {
+      assets: rows.length,
+      bytes: rows.reduce((total, row) => total + row.sizeBytes, 0),
+      depositors: new Set(rows.flatMap((row) => [row.depositorAgentId, ...row.alsoDepositedBy])).size,
+      flagged: rows.filter((row) => row.state === 'flagged').length,
+      categories: categories.map((row) => ({ slug: row.slug, title: row.title, createdBy: row.createdBy })),
     };
   },
 });

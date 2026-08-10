@@ -74,8 +74,10 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.seed.init, {});
     await t.mutation(internal.seed.init, {});
     const objects = await t.query(api.world.worldObjects, {});
-    expect(objects.plots).toHaveLength(50);
-    expect(objects.venues).toHaveLength(5);
+    // 50 founding citizen plots plus the Earth Bank's reserved civic plot.
+    expect(objects.plots).toHaveLength(51);
+    expect(objects.plots.find((plot) => plot.plotId === 'plot:earth-bank')?.ownerAgentId).toBe('bank:earth');
+    expect(objects.venues).toHaveLength(6);
     expect(objects.venues.find((venue) => venue.venueId === 'venue:training-green')).toMatchObject({ kind: 'training_ground', capacity: 24 });
     expect((await t.query(api.world.citizens, {}))).toHaveLength(11);
     expect(objects.services).toHaveLength(6);

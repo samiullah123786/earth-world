@@ -261,6 +261,72 @@ export const init = internalMutation({
     await ctx.db.insert('dispatches', { ...dispatch, publishedAt: now });
   }
 
+
+  // ── The Earth Bank ────────────────────────────────────────────────────────
+  // The vault of community knowledge, four tiles north of the Founding Plaza
+  // on land verified clear of terrain, plots, zones, and venues. Built from
+  // the allowlisted LPC framework like everything constructed on this world.
+  if (!await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', 'plot:earth-bank')).first()) {
+    await ctx.db.insert('plots', {
+      plotId: 'plot:earth-bank', x: 30, y: 17, w: 6, h: 6,
+      district: 'civic', ownerAgentId: 'bank:earth', claimedAt: now,
+    });
+  }
+  const BANK_BUILDS = [
+    {
+      buildId: 'build:earth-bank', x: 30, y: 17, w: 6, h: 5, name: 'The Earth Bank',
+      placements: [
+        { assetId: 'stone_wall', xOffset: 0, yOffset: 2 },
+        { assetId: 'stone_wall', xOffset: 3, yOffset: 2 },
+        { assetId: 'roof_tile', xOffset: 0, yOffset: 0 },
+        { assetId: 'roof_tile', xOffset: 3, yOffset: 0 },
+        { assetId: 'window', xOffset: 1, yOffset: 3 },
+        { assetId: 'window', xOffset: 4, yOffset: 3 },
+        { assetId: 'wood_door', xOffset: 2, yOffset: 3 },
+      ],
+    },
+    {
+      buildId: 'build:earth-bank-forecourt', x: 30, y: 22, w: 6, h: 1, name: 'Bank Forecourt',
+      placements: [
+        { assetId: 'cobblestone_road', xOffset: 0, yOffset: 0 },
+        { assetId: 'cobblestone_road', xOffset: 3, yOffset: 0 },
+        { assetId: 'streetlamp', xOffset: 0, yOffset: 0 },
+        { assetId: 'streetlamp', xOffset: 5, yOffset: 0 },
+        // No signpost: the LPC signs sheet renders an INN shingle, which is
+        // the wrong message on a bank. The venue label names the building.
+      ],
+    },
+  ];
+  for (const bank of BANK_BUILDS) {
+    // Civic buildings stay in their canonical shape: seed upserts rather than
+    // skipping, so a corrected facade reaches worlds that already seeded.
+    const blueprint = { name: bank.name, kind: 'bank', assetFramework: 'earthfolk-lpc-v1', placements: bank.placements };
+    const existing = await ctx.db.query('builds').withIndex('buildId', (q: any) => q.eq('buildId', bank.buildId)).first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { blueprint, x: bank.x, y: bank.y, w: bank.w, h: bank.h });
+      continue;
+    }
+    await ctx.db.insert('builds', {
+      buildId: bank.buildId, plotId: 'plot:earth-bank', ownerAgentId: 'bank:earth',
+      structure: 'blueprint', state: 'built', createdAt: now, completedAt: now,
+      x: bank.x, y: bank.y, w: bank.w, h: bank.h, blueprint,
+    });
+  }
+  if (!await ctx.db.query('venues').withIndex('venueId', (q: any) => q.eq('venueId', 'venue:earth-bank')).first()) {
+    await ctx.db.insert('venues', { venueId: 'venue:earth-bank', name: 'The Earth Bank', kind: 'bank', x: 32, y: 22, capacity: 10 });
+  }
+  if (!await ctx.db.query('bankConfig').withIndex('key', (q: any) => q.eq('key', 'bank')).first()) {
+    await ctx.db.insert('bankConfig', {
+      key: 'bank', managerEnabled: false, dailyEvalBudget: 200, evalsToday: 0,
+      dayStamp: '', freeGrantBudget: 10, freeGrantsToday: 0,
+    });
+  }
+  const BANK_CATEGORIES = ['ui', 'ux', 'frontend', 'backend', 'data', 'security', 'research', 'content', 'growth', 'automation', 'media', 'general'];
+  for (const slug of BANK_CATEGORIES) {
+    if (await ctx.db.query('bankCategories').withIndex('slug', (q: any) => q.eq('slug', slug)).first()) continue;
+    await ctx.db.insert('bankCategories', { slug, title: slug.toUpperCase(), createdBy: 'seed', createdAt: now });
+  }
+
     return { citizens: citizenCount, services: SERVICES.length, plots: (await ctx.db.query('plots').collect()).length, venues: SEED_VENUES.length };
   },
 });

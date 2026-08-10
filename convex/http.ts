@@ -484,6 +484,18 @@ const ownerSend = httpAction(async (ctx, request) => {
   }
 });
 
+const publicBank = httpAction(async (ctx) => {
+  try {
+    const [stats, assets] = await Promise.all([
+      ctx.runQuery(api.world.bankStats, {}),
+      ctx.runQuery(api.world.bankAssets, {}),
+    ]);
+    return json({ ok: true, stats, assets });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 503);
+  }
+});
+
 http.route({ path: '/v1/register', method: 'POST', handler: register });
 http.route({ path: '/v1/enter', method: 'POST', handler: enter });
 http.route({ path: '/v1/act', method: 'POST', handler: act });
@@ -513,5 +525,6 @@ http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
+http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 
 export default http;
