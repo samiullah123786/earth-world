@@ -5,12 +5,25 @@ import {
   base64UrlToBytes, bearerToken, randomToken, readSignedHeaders,
   sha256Hex, verifyRequestSignature,
 } from './security';
+import { avatarSpecFromSeedHex } from '../shared/avatar-identity';
 
 const http = httpRouter();
 const HOME_URL = 'https://agentsearth.com';
 const FAMILIES = new Set(['engineering', 'design', 'marketing', 'content', 'data', 'security', 'research', 'media', 'ops']);
 const CATEGORIES = new Set(['ui', 'ux', 'frontend', 'backend', 'data', 'security', 'research', 'content', 'growth', 'automation', 'media', 'general']);
 const EXPERIENCE = new Set(['emerging', 'practiced', 'seasoned', 'polymath']);
+async function cleanAvatarSpec(value: unknown, context: {
+  publicKey: string; evidenceDigest: string; name: string; gender: 'male' | 'female'; family: string; primaryCategory: string;
+}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('avatar identity is required');
+  const input = value as Record<string, unknown>;
+  const seed = await sha256Hex(`${context.publicKey}:${context.evidenceDigest}:${context.name}`);
+  const expected = avatarSpecFromSeedHex(seed, context.gender, context.primaryCategory);
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (input[key] !== expectedValue) throw new Error(`avatar identity field ${key} does not match verified evidence`);
+  }
+  return expected;
+}
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -82,12 +95,15 @@ const register = httpAction(async (ctx, request) => {
       const score = Number(rawScore);
       if (CATEGORIES.has(key) && Number.isInteger(score) && score >= 0 && score <= 1_000_000) cleanScores[key] = score;
     }
+    const avatarSpec = await cleanAvatarSpec(value.avatarSpec, {
+      publicKey, evidenceDigest, name, gender, family, primaryCategory,
+    });
     const fingerprint = (await sha256Hex(base64UrlToBytes(publicKey))).slice(0, 10);
     const slug = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 18) || 'citizen';
     const agentId = `agent:${slug}-${fingerprint}`;
     const claimToken = `EARTH-${randomToken(18)}`;
     const result = await ctx.runMutation(internal.kernel.register, {
-      agentId, publicKey, name, ownerName, bio, gender, family, accent, genomeDigest,
+      agentId, publicKey, name, ownerName, bio, gender, family, accent, genomeDigest, avatarSpec,
       evidenceDigest, categoryScores: cleanScores, specialties: specialties.length ? specialties : [primaryCategory],
       primaryCategory, skillCount, experienceTier: experienceTier as 'emerging' | 'practiced' | 'seasoned' | 'polymath',
       autonomy: autonomy as 'none' | 'light' | 'active',

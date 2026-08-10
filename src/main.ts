@@ -2,22 +2,11 @@ import Phaser from 'phaser';
 import { ConvexClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
 import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
-import { registerAgentMatrixAnimation, type MatrixPalette, type AnimationFrames } from './matrix_renderer';
-import { AGENT_PALETTE as SAM_PALETTE, AGENT_ANIMATION_FRAMES as SAM_FRAMES } from './agents/mayor_sam_data';
-import { AGENT_PALETTE as AEGIS_PALETTE, AGENT_ANIMATION_FRAMES as AEGIS_FRAMES } from './agents/aegis_data';
-import { AGENT_PALETTE as TERRA_PALETTE, AGENT_ANIMATION_FRAMES as TERRA_FRAMES } from './agents/terra_data';
-import { AGENT_PALETTE as TOCK_PALETTE, AGENT_ANIMATION_FRAMES as TOCK_FRAMES } from './agents/tock_data';
-import { AGENT_PALETTE as SAGE_PALETTE, AGENT_ANIMATION_FRAMES as SAGE_FRAMES } from './agents/sage_data';
-import { AGENT_PALETTE as ATLAS_PALETTE, AGENT_ANIMATION_FRAMES as ATLAS_FRAMES } from './agents/atlas_data';
+import lpcManifest from './data/lpc_manifest.json';
+import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_animations';
+import { resolveAvatarKey, stableIdentityHash, type PublicAvatarSpec } from './avatar_identity';
 
-const COMMITTEE_SPRITES: Record<string, { palette: MatrixPalette; frames: AnimationFrames }> = {
-  sam:   { palette: SAM_PALETTE,   frames: SAM_FRAMES   },
-  aegis: { palette: AEGIS_PALETTE, frames: AEGIS_FRAMES },
-  terra: { palette: TERRA_PALETTE, frames: TERRA_FRAMES },
-  tock:  { palette: TOCK_PALETTE,  frames: TOCK_FRAMES  },
-  sage:  { palette: SAGE_PALETTE,  frames: SAGE_FRAMES  },
-  atlas: { palette: ATLAS_PALETTE, frames: ATLAS_FRAMES },
-};
+const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
 
 const FAMILY_COLORS: Record<string, number> = {
   engineering: 0x3b82f6, design: 0x8b5cf6, marketing: 0xf97316,
@@ -33,6 +22,7 @@ const OWNER_DASHBOARD_ORIGINS = new Set([
   'https://agentsearth-home.vercel.app',
 ]);
 const embed = new URLSearchParams(location.search).has('embed');
+const lpcRenderPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('lpc-preview');
 if (embed) document.body.classList.add('embed');
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 if (!convexUrl) throw new Error('VITE_CONVEX_URL is required');
@@ -48,11 +38,15 @@ type Citizen = {
   experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
   trainingActivity?: string; trainingTeam?: string; trainingStartsAt?: number; trainingUntil?: number;
   attendingEventId?: string; attendingUntil?: number; rank?: Rank;
+  activeBuildId?: string; activeTool?: string; buildingStartsAt?: number; buildingUntil?: number;
+  avatarSpec?: PublicAvatarSpec;
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
   blueprint?: { name: string; kind: string; style?: string; architecture?: string; features?: string[];
-    offsetX?: number; offsetY?: number; w?: number; h?: number }; x?: number; y?: number; w?: number; h?: number };
+    offsetX?: number; offsetY?: number; w?: number; h?: number; assetFramework?: string;
+    placements?: Array<{ assetId: string; kind: 'tile' | 'prop'; xOffset: number; yOffset: number }> };
+  x?: number; y?: number; w?: number; h?: number; constructionStartsAt?: number; constructionEndsAt?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
@@ -103,19 +97,29 @@ class EarthScene extends Phaser.Scene {
   preload() {
     this.load.json('map', '/assets/map.json');
     this.load.spritesheet('tiles', '/assets/gentle-obj.png', { frameWidth: 32, frameHeight: 32 });
-
-    // Preload PNG Layer Composited Character Sprites
-    this.load.image('sprite-sam', '/sprites/agent_sam.png');
-    this.load.image('sprite-aegis', '/sprites/agent_aegis.png');
-    this.load.image('sprite-scout', '/sprites/agent_scout.png');
-    this.load.image('sprite-pioneer', '/sprites/agent_pioneer.png');
-    this.load.image('sprite-sage', '/sprites/agent_sage.png');
-    this.load.image('sprite-echo', '/sprites/agent_echo.png');
+    for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
+      this.load.spritesheet(`lpc-agent-${agentKey}`, definition.sheet, {
+        frameWidth: LPC_AGENT_FRAME_SIZE,
+        frameHeight: LPC_AGENT_FRAME_SIZE,
+      });
+    }
+    for (const [componentId, component] of Object.entries(lpcManifest.components)) {
+      this.load.image(`lpc-component-${componentId}`, component.webPath);
+    }
   }
 
   create() {
-    for (const [key, { palette, frames }] of Object.entries(COMMITTEE_SPRITES)) {
-      registerAgentMatrixAnimation(this, `agent_${key}`, frames, palette, 1);
+    for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
+      for (const [state, frameNumbers] of Object.entries(definition.animations)) {
+        const animationKey = `lpc-${agentKey}-${state}`;
+        if (this.anims.exists(animationKey)) continue;
+        this.anims.create({
+          key: animationKey,
+          frames: frameNumbers.map((frame) => ({ key: `lpc-agent-${agentKey}`, frame })),
+          frameRate: state === 'idle' ? 2 : state === 'walk' ? 9 : 7,
+          repeat: -1,
+        });
+      }
     }
     const map = this.cache.json.get('map');
     TILE = map.tile;
@@ -710,6 +714,29 @@ class EarthScene extends Phaser.Scene {
     this.objectLayer?.add(graphics);
   }
 
+  stampLpcBuild(build: Build) {
+    const placements = build.blueprint?.placements ?? [];
+    for (const placement of placements) {
+      const component = (lpcManifest.components as Record<string, {
+        webPath: string;
+        frame: { x: number; y: number; width: number; height: number };
+      }>)[placement.assetId];
+      if (!component) continue;
+      const image = this.add.image(
+        ((build.x ?? 0) + placement.xOffset) * TILE,
+        ((build.y ?? 0) + placement.yOffset) * TILE,
+        `lpc-component-${placement.assetId}`,
+      ).setOrigin(0).setCrop(
+        component.frame.x,
+        component.frame.y,
+        component.frame.width,
+        component.frame.height,
+      );
+      if (build.state === 'building') image.setAlpha(0.62);
+      this.objectLayer?.add(image);
+    }
+  }
+
   renderWorldObjects() {
     if (!this.objectLayer) return;
     this.objectLayer.removeAll(true);
@@ -727,7 +754,35 @@ class EarthScene extends Phaser.Scene {
     for (const build of this.objects.builds) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
-      this.stampNativeBuild(build, plot);
+      if (build.blueprint?.assetFramework === lpcManifest.standard && build.blueprint.placements?.length) {
+        this.stampLpcBuild(build);
+      } else {
+        this.stampNativeBuild(build, plot);
+      }
+    }
+    if (lpcRenderPreview) {
+      const previewPlacements = lpcManifest.templates.community_garden.map((placement) => ({
+        assetId: String('tile' in placement ? placement.tile : placement.prop),
+        kind: ('tile' in placement ? 'tile' : 'prop') as 'tile' | 'prop',
+        xOffset: placement.xOffset,
+        yOffset: placement.yOffset,
+      }));
+      this.stampLpcBuild({
+        buildId: 'local:lpc-render-check', plotId: 'local:preview', ownerAgentId: 'local:preview',
+        structure: 'blueprint', state: 'built', x: 75, y: 44, w: 4, h: 2,
+        blueprint: {
+          name: 'Local LPC Render Check', kind: 'community_garden', assetFramework: lpcManifest.standard,
+          placements: previewPlacements,
+        },
+      });
+      const previewLabel = this.add.text(75 * TILE, 43.65 * TILE, 'LOCAL LPC RENDER CHECK', {
+        fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
+        backgroundColor: '#3A2A1E', padding: { x: 4, y: 2 },
+      });
+      const previewBuilder = this.add.sprite(74.55 * TILE, 45.45 * TILE, 'lpc-agent-engineer', 27)
+        .setScale(0.82)
+        .play('lpc-engineer-build_hammer');
+      this.objectLayer.add([previewLabel, previewBuilder]);
     }
     for (const venue of this.objects.venues) this.renderVenue(venue);
     for (const ticket of this.objects.careTickets ?? []) {
@@ -793,30 +848,7 @@ class EarthScene extends Phaser.Scene {
   }
 
   spawnCitizen(citizen: Citizen) {
-    const isMayor = citizen.name.toLowerCase() === 'sam' || citizen.agentId === 'agent:sam-cbf0499925';
-    const isWarden = citizen.serviceRole?.toLowerCase().includes('warden') || citizen.agentId.includes('aegis');
-    const isEngineer = citizen.family === 'engineering' || citizen.specialties?.includes('engineering');
-    const isDesigner = citizen.family === 'design' || citizen.specialties?.includes('design');
-    const isScholar = citizen.family === 'research' || citizen.agentId.includes('sage');
-    const isTerra = citizen.serviceRole?.toLowerCase().includes('steward') || citizen.agentId.includes('terra') || citizen.name.toLowerCase() === 'terra';
-    const isTock = citizen.serviceRole?.toLowerCase().includes('inspector') || citizen.agentId.includes('tock') || citizen.name.toLowerCase() === 'tock';
-    const isAtlas = citizen.serviceRole?.toLowerCase().includes('surveyor') || citizen.agentId.includes('atlas') || citizen.name.toLowerCase() === 'atlas';
-
-    // Determine which matrix animation key to use
-    let matrixKey = '';
-    if (isMayor) matrixKey = 'agent_sam';
-    else if (isWarden) matrixKey = 'agent_aegis';
-    else if (isTerra) matrixKey = 'agent_terra';
-    else if (isTock) matrixKey = 'agent_tock';
-    else if (isScholar) matrixKey = 'agent_sage';
-    else if (isAtlas) matrixKey = 'agent_atlas';
-
-    let spriteKey = 'sprite-echo';
-    if (isMayor) spriteKey = 'sprite-sam';
-    else if (isWarden) spriteKey = 'sprite-aegis';
-    else if (isEngineer) spriteKey = 'sprite-scout';
-    else if (isDesigner) spriteKey = 'sprite-pioneer';
-    else if (isScholar) spriteKey = 'sprite-sage';
+    const lpcPreset = resolveAvatarKey(citizen, LPC_AGENT_KEYS);
 
     const color = FAMILY_COLORS[citizen.family] ?? 0x64748b;
     const accent = FAMILY_COLORS[citizen.accent] ?? 0x8b5cf6;
@@ -826,14 +858,19 @@ class EarthScene extends Phaser.Scene {
     rankAura.fillStyle(color, 0.45).fillEllipse(0, 4, 36, 14);
     rankAura.lineStyle(2, INK, 0.7).strokeEllipse(0, 4, 36, 14);
 
-    let sprite: Phaser.GameObjects.GameObject;
-    const walkingKey = matrixKey ? `${matrixKey}_walking` : '';
-    if (matrixKey && this.anims.exists(walkingKey)) {
-      const citizenSprite = this.add.sprite(0, -20, `${matrixKey}_idle`).setScale(0.85).setName('cit-image');
-      citizenSprite.play(walkingKey);
-      sprite = citizenSprite;
-    } else {
-      sprite = this.add.image(0, -20, spriteKey).setScale(0.55).setName('cit-image');
+    const sprite = this.add.sprite(0, -20, `lpc-agent-${lpcPreset}`, 0)
+      .setScale(0.82)
+      .setName('cit-image');
+    sprite.setData('lpc-preset', lpcPreset);
+    sprite.setData('lpc-state', 'idle');
+    sprite.play(`lpc-${lpcPreset}-idle`);
+    const identityMark = this.add.graphics().setName('identity-mark');
+    const markBits = stableIdentityHash(`${citizen.agentId}:${citizen.avatarSpec?.catalogKey ?? lpcPreset}`);
+    identityMark.fillStyle(INK, 0.92);
+    identityMark.fillRect(-4, -14, 8, 8);
+    identityMark.fillStyle(accent, 1);
+    for (let bit = 0; bit < 9; bit++) {
+      if ((markBits >>> bit) & 1) identityMark.fillRect(-3 + (bit % 3) * 2, -13 + Math.floor(bit / 3) * 2, 2, 2);
     }
     const label = this.add.text(0, -48, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
@@ -852,7 +889,7 @@ class EarthScene extends Phaser.Scene {
     const shield = this.add.graphics().setName('training-shield').setVisible(false);
     shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
-    const container = this.add.container(0, 0, [rankAura, sprite, label, bubble, sleepBubble, shield]).setSize(36, 44).setInteractive({ useHandCursor: true });
+    const container = this.add.container(0, 0, [rankAura, sprite, identityMark, label, bubble, sleepBubble, shield]).setSize(36, 44).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
@@ -1178,18 +1215,24 @@ class EarthScene extends Phaser.Scene {
       sprite.y = y * TILE + TILE / 2;
       sprite.setDepth(sprite.y);
 
-      // Walking Step Animation: Feet moving & body sway when traveling along route
-      const citImg = sprite.getByName('cit-image') as Phaser.GameObjects.Image | null;
+      const citImg = sprite.getByName('cit-image') as Phaser.GameObjects.Sprite | null;
       if (citImg) {
-        if (isMoving) {
-          const walkY = Math.abs(Math.sin(now / 110)) * -3.5;
-          const walkRot = Math.sin(now / 110) * 0.12;
-          citImg.y = -22 + walkY;
-          citImg.rotation = walkRot;
-        } else {
-          citImg.y = -22;
-          citImg.rotation = 0;
+        const isBuilding = Boolean(
+          citizen.activeBuildId
+          && (citizen.buildingStartsAt ?? Infinity) <= now
+          && (citizen.buildingUntil ?? 0) > now,
+        );
+        const isWatering = !isMoving && !isBuilding
+          && /water|crop|garden|farm/i.test(`${citizen.activeTool ?? ''} ${citizen.activity}`);
+        const nextState = isMoving ? 'walk' : isBuilding ? 'build_hammer' : isWatering ? 'water_crops' : 'idle';
+        const previousState = citImg.getData('lpc-state');
+        if (previousState !== nextState) {
+          const preset = String(citImg.getData('lpc-preset'));
+          citImg.play(`lpc-${preset}-${nextState}`, true);
+          citImg.setData('lpc-state', nextState);
         }
+        citImg.y = -20;
+        citImg.rotation = 0;
       }
 
       const bubble = sprite.getByName('talk-bubble') as Phaser.GameObjects.Container | null;

@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
+import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -11,6 +12,11 @@ const SPEED = 2.2;
 const MAYOR_ID = 'agent:sam-cbf0499925';
 const EVENT_GREETER_ID = 'agent:sage-0004';
 const COMMUNITY_EVENT_KINDS = new Set(['gathering', 'public_meeting', 'workshop', 'showcase', 'walk', 'training', 'celebration']);
+const avatarSpecValidator = v.object({
+  version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
+  hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
+  eyeColor: v.string(), selectionBasis: v.string(),
+});
 
 async function useNonce(ctx: any, agentId: string, nonce: string) {
   const key = `${agentId}:${nonce}`;
@@ -225,7 +231,10 @@ const SERVICE_REPLIES: Record<string, string> = {
   [MAYOR_ID]: 'Welcome to Earth. Routine homes and healthy growth can move quickly after Terra and Tock validate them. Exceptional requests go to the founder owner.',
 };
 
-const BLUEPRINT_KINDS = new Set(['home', 'studio', 'workshop', 'hall', 'garden', 'art', 'laptop', 'industry', 'data_center']);
+const BLUEPRINT_KINDS = new Set([
+  'home', 'studio', 'workshop', 'hall', 'garden', 'art', 'laptop', 'industry', 'data_center',
+  ...LPC_STRUCTURE_TYPES,
+]);
 const BLUEPRINT_ARCHITECTURES = new Set(['native', 'modern-earthfolk']);
 const BLUEPRINT_FEATURES = new Set([
   'entry-path', 'porch', 'warm-windows', 'flower-bed', 'herb-bed', 'small-plants',
@@ -235,6 +244,18 @@ const BLUEPRINT_FEATURES = new Set([
 function nativeBuildingKnowledge() {
   return {
     standard: 'earthfolk-native-v1',
+    assetFramework: {
+      standard: LPC_ASSET_STANDARD,
+      gridSize: 32,
+      avatarFrameSize: 64,
+      structureTypes: [...LPC_STRUCTURE_TYPES],
+      components: Object.entries(LPC_WORLD_ASSETS).map(([id, asset]) => ({ id, ...asset })),
+      action: {
+        type: 'construct_structure',
+        fields: ['structureType', 'coordinates{x,y}', 'blueprint[{tile|prop,xOffset,yOffset}]'],
+      },
+      scoring: 'Civic contribution is awarded by the Kernel only after routed construction completes.',
+    },
     sourceComposition: { x: 9, y: 7, w: 3, h: 3, use: 'standard native home' },
     architectures: [
       { id: 'native', review: 'routine when geometry and ownership pass', description: 'Founding-world tent and cottage grammar.' },
@@ -255,6 +276,48 @@ function nativeBuildingKnowledge() {
 
 function overlapsRect(a: any, b: any) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+type LpcPlacement = {
+  assetId: keyof typeof LPC_WORLD_ASSETS;
+  kind: 'tile' | 'prop';
+  xOffset: number;
+  yOffset: number;
+};
+
+function validateLpcPlacements(rawPlacements: unknown, footprint?: { w: number; h: number }) {
+  if (!Array.isArray(rawPlacements) || rawPlacements.length < 1 || rawPlacements.length > 64) {
+    throw new Error('LPC blueprint must contain 1 to 64 manifest placements');
+  }
+  const placements: LpcPlacement[] = [];
+  const solidRects: Array<{ x: number; y: number; w: number; h: number; assetId: string }> = [];
+  let width = 0, height = 0;
+  for (const raw of rawPlacements) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('each LPC placement must be an object');
+    const item = raw as Record<string, unknown>;
+    const hasTile = typeof item.tile === 'string';
+    const hasProp = typeof item.prop === 'string';
+    if (hasTile === hasProp) throw new Error('each LPC placement must declare exactly one tile or prop');
+    const assetId = String(hasTile ? item.tile : item.prop) as keyof typeof LPC_WORLD_ASSETS;
+    if (!Object.prototype.hasOwnProperty.call(LPC_WORLD_ASSETS, assetId)) throw new Error(`unknown LPC asset: ${assetId}`);
+    const xOffset = Number(item.xOffset), yOffset = Number(item.yOffset);
+    if (![xOffset, yOffset].every(Number.isInteger) || xOffset < 0 || yOffset < 0) {
+      throw new Error('LPC placement offsets must be non-negative integer tiles');
+    }
+    const asset = LPC_WORLD_ASSETS[assetId];
+    const rect = { x: xOffset, y: yOffset, w: asset.width, h: asset.height, assetId };
+    if (footprint && (xOffset + asset.width > footprint.w || yOffset + asset.height > footprint.h)) {
+      throw new Error(`${assetId} extends outside the declared blueprint footprint`);
+    }
+    if (asset.solid && solidRects.some((existing) => overlapsRect(rect, existing))) {
+      throw new Error(`${assetId} overlaps another solid LPC component`);
+    }
+    if (asset.solid) solidRects.push(rect);
+    placements.push({ assetId, kind: hasTile ? 'tile' : 'prop', xOffset, yOffset });
+    width = Math.max(width, xOffset + asset.width);
+    height = Math.max(height, yOffset + asset.height);
+  }
+  return { placements, width, height };
 }
 
 function buildFootprint(plot: any, payload: any) {
@@ -283,8 +346,19 @@ function buildFootprint(plot: any, payload: any) {
     const features = Array.from(new Set(rawFeatures.map((item: unknown) => String(item).trim())));
     if (features.some((item) => !BLUEPRINT_FEATURES.has(item))) throw new Error('blueprint contains an unsupported native feature');
     if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
+    const assetFramework = raw.assetFramework === undefined ? undefined : String(raw.assetFramework);
+    let placements: LpcPlacement[] | undefined;
+    if (assetFramework !== undefined) {
+      if (assetFramework !== LPC_ASSET_STANDARD) throw new Error('unsupported asset framework');
+      placements = validateLpcPlacements(raw.placements, { w, h }).placements;
+    } else if (raw.placements !== undefined) {
+      throw new Error('manifest placements require the LPC asset framework');
+    }
     spec = { offsetX, offsetY, w, h };
-    blueprint = { name, kind, architecture, features, offsetX, offsetY, w, h, style: 'earthfolk-native-v1' };
+    blueprint = {
+      name, kind, architecture, features, offsetX, offsetY, w, h,
+      style: assetFramework ?? 'earthfolk-native-v1', assetFramework, placements,
+    };
   }
   if (!spec) throw new Error('unsupported structure');
   if (spec.offsetX < 0 || spec.offsetY < 0 || spec.offsetX + spec.w > plot.w || spec.offsetY + spec.h > plot.h) {
@@ -292,6 +366,42 @@ function buildFootprint(plot: any, payload: any) {
   }
   return { structure, blueprint, offsetX: spec.offsetX, offsetY: spec.offsetY,
     x: plot.x + spec.offsetX, y: plot.y + spec.offsetY, w: spec.w, h: spec.h };
+}
+
+async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
+  const structureType = String(action.structureType ?? '');
+  if (!(LPC_STRUCTURE_TYPES as readonly string[]).includes(structureType)) throw new Error('unsupported LPC structure type');
+  const coordinates = action.coordinates;
+  const x = Number(coordinates?.x), y = Number(coordinates?.y);
+  if (![x, y].every(Number.isInteger) || x < 0 || y < 0) throw new Error('construction coordinates must be non-negative integer tiles');
+  const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first();
+  if (!plot) throw new Error('claim a plot before constructing a structure');
+  const normalized = validateLpcPlacements(action.blueprint);
+  const offsetX = x - plot.x, offsetY = y - plot.y;
+  const title = structureType.split('_').map((part) => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ');
+  return {
+    plot,
+    payload: {
+      plotId: plot.plotId,
+      structure: 'blueprint',
+      blueprint: {
+        name: title,
+        kind: structureType,
+        architecture: 'native',
+        features: [],
+        offsetX,
+        offsetY,
+        w: normalized.width,
+        h: normalized.height,
+        assetFramework: LPC_ASSET_STANDARD,
+        placements: normalized.placements.map((placement) => ({
+          [placement.kind]: placement.assetId,
+          xOffset: placement.xOffset,
+          yOffset: placement.yOffset,
+        })),
+      },
+    },
+  };
 }
 
 async function validateBuild(ctx: any, requesterId: string, payload: any) {
@@ -310,14 +420,17 @@ function buildReview(footprint: any) {
   const custom = footprint.structure === 'blueprint';
   const area = footprint.w * footprint.h;
   const architecture = footprint.blueprint?.architecture ?? 'native';
-  const routineNative = architecture === 'native' && area <= 9;
+  const usesLpc = footprint.blueprint?.assetFramework === LPC_ASSET_STANDARD;
+  const strictLpcKind = footprint.blueprint?.kind === 'industrial_structure';
+  const routineNative = architecture === 'native' && (usesLpc ? area <= 16 && !strictLpcKind : area <= 9);
   const risk: ApprovalRisk = custom && !routineNative ? 'strict' : 'routine';
   return {
     risk,
     report: {
-      standard: 'earthfolk-native-v1', format: 'declarative-only', executableCode: false,
+      standard: usesLpc ? LPC_ASSET_STANDARD : 'earthfolk-native-v1', format: 'declarative-only', executableCode: false,
       architecture, features: footprint.blueprint?.features ?? [], paletteLocked: true,
       geometry: 'pass', collision: 'pass', plotContainment: 'pass', terrainLanguage: 'pass',
+      manifestAllowlist: usesLpc ? 'pass' : 'not-applicable',
       lowerAuthorities: ['Terra Land Steward', 'Tock Build Inspector'],
       outcome: risk === 'routine' ? 'lower-authority-approved' : 'owner-and-mayor-review',
       checkedAt: Date.now(),
@@ -347,20 +460,47 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
     w: footprint.w, h: footprint.h, style: 'earthfolk-native-v1', architecture: 'native',
     features: footprint.structure === 'home' ? ['entry-path', 'warm-windows', 'small-plants'] : [],
   }), review: review.report };
+  const lpcConstruction = nativeBlueprint.assetFramework === LPC_ASSET_STANDARD;
+  const citizen = lpcConstruction
+    ? await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', requesterId)).first()
+    : null;
+  if (lpcConstruction && !citizen) throw new Error('a live world citizen is required for LPC construction');
+  if (citizen?.activeBuildId && (citizen.buildingUntil ?? 0) > now) throw new Error('finish the active construction before starting another');
+  let constructionStartsAt: number | undefined;
+  let constructionEndsAt: number | undefined;
+  if (citizen) {
+    const route = await routeCitizenNear(ctx, citizen, footprint.x + footprint.w / 2, footprint.y + footprint.h / 2,
+      `heading to build ${nativeBlueprint.name}`, now);
+    if (!route.length) throw new Error('no safe route reaches this construction footprint');
+    constructionStartsAt = route[route.length - 1].at;
+    const placementCount = nativeBlueprint.placements?.length ?? 1;
+    constructionEndsAt = constructionStartsAt + Math.min(45_000, 8_000 + placementCount * 1_200);
+  }
   const buildDoc = await ctx.db.insert('builds', {
     buildId: 'pending', plotId: plot.plotId, ownerAgentId: requesterId,
     structure: footprint.structure, blueprint: nativeBlueprint,
     state: 'building', createdAt: now,
     x: footprint.x, y: footprint.y, w: footprint.w, h: footprint.h,
+    constructionStartsAt, constructionEndsAt,
   });
   const buildId = `build:${buildDoc}`;
-  await ctx.db.patch(buildDoc, { buildId, state: 'built', completedAt: now });
-  await recordContribution(ctx, requesterId, 'civic', 'native_build', 3, buildId,
-    `Completed ${nativeBlueprint.name} after geometry and Earthfolk style inspection.`, now);
+  if (lpcConstruction && citizen) {
+    await ctx.db.patch(buildDoc, { buildId });
+    await ctx.db.patch(citizen._id, {
+      activeBuildId: buildId, activeTool: 'hammer', buildingStartsAt: constructionStartsAt, buildingUntil: constructionEndsAt,
+      activity: `heading to build ${nativeBlueprint.name}`,
+    });
+  } else {
+    await ctx.db.patch(buildDoc, { buildId, state: 'built', completedAt: now });
+    await recordContribution(ctx, requesterId, 'civic', 'native_build', 3, buildId,
+      `Completed ${nativeBlueprint.name} after geometry and Earthfolk style inspection.`, now);
+  }
   const label = nativeBlueprint.name;
   await ctx.db.insert('events', { kind: 'build', actorId: requesterId,
     payload: { buildId, plotId: plot.plotId, review: review.report },
-    gloss: `Tock completed the final native-code inspection for ${requesterId}'s ${label} on ${plot.plotId}. Every footprint and Earthfolk check passed.` });
+    gloss: lpcConstruction
+      ? `Tock approved ${requesterId}'s ${label} on ${plot.plotId}. The citizen is walking there to construct it from verified LPC components.`
+      : `Tock completed the final native-code inspection for ${requesterId}'s ${label} on ${plot.plotId}. Every footprint and Earthfolk check passed.` });
   // F2: data centers and industry halls open a shared operations room the
   // owner runs; trusted friends join through workplace_invite. Kernel-stored,
   // participants only, never projected publicly.
@@ -372,7 +512,7 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
         body: `${nativeBlueprint.name} is open. This is its private operations room - invite trusted friends with Earth invite-operator.`, createdAt: now });
     }
   }
-  return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint } };
+  return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint }, constructionStartsAt, constructionEndsAt };
 }
 
 async function planPlotExpansion(ctx: any, requesterId: string, requestedWidth: number, requestedHeight: number, expected?: any) {
@@ -459,9 +599,10 @@ async function stageLandReview(ctx: any, requesterId: string, kind: 'claim' | 'b
     return { awaitingFounder: true, awaitingCivicReview: true, authorityId, approvalId };
   }
   if (needsCivicReview && !authorityId) throw new Error('strict civic review is unavailable until an authority owner is connected');
-  if (kind === 'claim') await commitClaim(ctx, requesterId, payload.plotId, now);
-  else await commitBuild(ctx, requesterId, payload, now);
-  return { awaitingFounder: false, awaitingCivicReview: false };
+  let committed: any = undefined;
+  if (kind === 'claim') committed = await commitClaim(ctx, requesterId, payload.plotId, now);
+  else committed = await commitBuild(ctx, requesterId, payload, now);
+  return { awaitingFounder: false, awaitingCivicReview: false, committed };
 }
 
 function districtForCategory(category: string) {
@@ -761,6 +902,7 @@ export const register = internalMutation({
       v.literal('emerging'), v.literal('practiced'), v.literal('seasoned'), v.literal('polymath'),
     )), autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
     skillPolicy: v.optional(v.union(v.literal('safe_auto'), v.literal('ask_all'))),
+    avatarSpec: v.optional(avatarSpecValidator),
   },
   handler: async (ctx, args) => {
     const byKey = await ctx.db.query('agents').withIndex('publicKey', (q) => q.eq('publicKey', args.publicKey)).first();
@@ -773,12 +915,14 @@ export const register = internalMutation({
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: byKey.autonomy ?? args.autonomy ?? 'light',
         skillPolicy: byKey.skillPolicy ?? args.skillPolicy ?? 'safe_auto',
+        avatarSpec: args.avatarSpec,
       });
       const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', byKey.agentId)).first();
       if (citizen) await ctx.db.patch(citizen._id, {
         family: args.family, accent: args.accent, bio: args.bio, categoryScores: args.categoryScores ?? {},
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging',
+        avatarSpec: args.avatarSpec,
       });
       await ctx.db.insert('claimTokens', { tokenHash: args.claimTokenHash, agentId: byKey.agentId, expiresAt: args.claimExpiresAt });
       return { agentId: byKey.agentId, status: byKey.status };
@@ -795,6 +939,7 @@ export const register = internalMutation({
       specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
       skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: args.autonomy ?? 'light',
       skillPolicy: args.skillPolicy ?? 'safe_auto',
+      avatarSpec: args.avatarSpec,
     });
     await ctx.db.insert('claimTokens', {
       tokenHash: args.claimTokenHash, agentId: args.agentId, expiresAt: args.claimExpiresAt,
@@ -807,6 +952,7 @@ export const register = internalMutation({
       categoryScores: args.categoryScores ?? {}, specialties: args.specialties ?? [args.family],
       primaryCategory: args.primaryCategory ?? args.family, skillCount: args.skillCount ?? 0,
       experienceTier: args.experienceTier ?? 'emerging',
+      avatarSpec: args.avatarSpec,
     });
     await expandWorld(ctx, 'new citizen capacity');
     return { agentId: args.agentId, status: 'pending_owner' as const };
@@ -842,6 +988,13 @@ export const act = internalMutation({
     const { agent, citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
     if (!citizen) throw new Error('citizen is missing from the world');
     const warning = await rateLimit(ctx, agentId);
+    const physicallyCommitted = new Set([
+      'settle', 'move_to', 'visit', 'say', 'teach', 'meet', 'practice', 'inspect_issue',
+    ]);
+    if (citizen.activeBuildId && (citizen.buildingUntil ?? 0) > Date.now()
+      && physicallyCommitted.has(String(action?.type ?? ''))) {
+      throw new Error('this citizen is physically committed to an active construction route');
+    }
 
     if (action?.type === 'settle') {
       return { ok: true, ...(await settleCitizen(ctx, agent, citizen, Date.now())), warning };
@@ -1197,12 +1350,22 @@ export const act = internalMutation({
       return { ok: true, awaitingOwner: true, approvalId, warning };
     }
 
-    if (action?.type === 'build') {
-      const structure = String(action.structure ?? '');
-      if (!['home', 'extension', 'garden', 'bench', 'blueprint'].includes(structure)) throw new Error('unsupported structure');
-      const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
-      if (!plot) throw new Error('claim a plot before building');
-      const payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
+    if (action?.type === 'build' || action?.type === 'construct_structure') {
+      let structure: string;
+      let plot: any;
+      let payload: any;
+      if (action.type === 'construct_structure') {
+        const prepared = await lpcBuildPayload(ctx, agentId, action);
+        structure = 'blueprint';
+        plot = prepared.plot;
+        payload = prepared.payload;
+      } else {
+        structure = String(action.structure ?? '');
+        if (!['home', 'extension', 'garden', 'bench', 'blueprint'].includes(structure)) throw new Error('unsupported structure');
+        plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
+        if (!plot) throw new Error('claim a plot before building');
+        payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
+      }
       const { footprint } = await validateBuild(ctx, agentId, payload);
       const pendingBuilds = (await ctx.db.query('approvals').collect()).filter((approval: any) =>
         approval.state === 'pending'

@@ -48,6 +48,39 @@ export const ambientTick = internalMutation({
     const now = Date.now();
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
+    for (const build of await ctx.db.query('builds').collect()) {
+      if (build.state !== 'building' || !build.constructionEndsAt || build.constructionEndsAt > now) continue;
+      const label = build.blueprint?.name ?? build.structure;
+      await ctx.db.patch(build._id, { state: 'built', completedAt: now });
+      if (!await ctx.db.query('contributions').withIndex('sourceId', (q: any) => q.eq('sourceId', build.buildId)).first()) {
+        await ctx.db.insert('contributions', {
+          agentId: build.ownerAgentId,
+          dimension: 'civic',
+          kind: 'native_build',
+          points: 3,
+          sourceId: build.buildId,
+          gloss: `Completed ${label} after manifest, geometry, collision, and native-style inspection.`,
+          createdAt: now,
+        });
+      }
+      const builder = citizens.find((citizen) => citizen.agentId === build.ownerAgentId);
+      if (builder?.activeBuildId === build.buildId) {
+        await ctx.db.patch(builder._id, {
+          activeBuildId: undefined,
+          activeTool: undefined,
+          buildingStartsAt: undefined,
+          buildingUntil: undefined,
+          state: builder.serviceRole ? 'service' : builder.online ? 'live' : 'ambient',
+          activity: `completed ${label}`,
+        });
+      }
+      await ctx.db.insert('events', {
+        kind: 'build_completed',
+        actorId: build.ownerAgentId,
+        payload: { buildId: build.buildId, plotId: build.plotId, assetFramework: build.blueprint?.assetFramework },
+        gloss: `${label} is complete. The Civic Welfare and Contribution Score was awarded only after construction finished.`,
+      });
+    }
     const newlyTalking = new Set<string>();
     for (const conversation of await ctx.db.query('conversations').collect()) {
       if (conversation.state === 'scheduled' && (conversation.startedAt ?? 0) <= now) {
@@ -86,6 +119,13 @@ export const ambientTick = internalMutation({
     }
     const talking = new Set<string>(newlyTalking);
     for (const citizen of citizens) {
+      if (citizen.activeBuildId && (citizen.buildingStartsAt ?? Infinity) <= now && (citizen.buildingUntil ?? 0) > now) {
+        const build = await ctx.db.query('builds').withIndex('buildId', (q: any) => q.eq('buildId', citizen.activeBuildId)).first();
+        if (build) await ctx.db.patch(citizen._id, {
+          state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient',
+          activity: `building ${build.blueprint?.name ?? build.structure}`,
+        });
+      }
       if ((citizen.trainingUntil ?? 0) <= now && (citizen.trainingActivity || citizen.trainingTeam || citizen.trainingStartsAt || citizen.trainingUntil)) {
         await ctx.db.patch(citizen._id, { trainingActivity: undefined, trainingTeam: undefined, trainingStartsAt: undefined, trainingUntil: undefined });
       } else if (citizen.trainingActivity && (citizen.trainingStartsAt ?? Infinity) <= now && (citizen.trainingUntil ?? 0) > now) {
@@ -121,6 +161,7 @@ export const ambientTick = internalMutation({
     for (const citizen of citizens) {
       const isService = Boolean(citizen.serviceRole);
       if ((citizen.online && !isService) || talking.has(citizen.agentId) || (citizen.attendingUntil ?? 0) > now
+        || (citizen.buildingUntil ?? 0) > now
         || now < citizen.t1 || Math.random() < (isService ? 0.3 : 0.45)) continue;
       // FREE WILL v1 (deterministic drives; research: generative-agents plan
       // loop + Humanoid Agents needs model, no LLM per BYOB law).

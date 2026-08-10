@@ -118,6 +118,81 @@ describe('Earth Kernel', () => {
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)).not.toHaveProperty('ownerName');
   });
 
+  it('constructs only allowlisted LPC placements and awards civic credit after completion', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const agent = await activeAgent(t, 'lpc-builder');
+    const claim = await t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-claim',
+      action: { type: 'claim', plotId: 'plot-10-10' },
+    });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: agent.ownerToken, approvalId: claim.approvalId, decision: 'approve',
+    });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-unknown',
+      action: {
+        type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 10, y: 10 },
+        blueprint: [{ tile: 'downloaded_from_somewhere', xOffset: 0, yOffset: 0 }],
+      },
+    })).rejects.toThrow(/unknown LPC asset/i);
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-solid-overlap',
+      action: {
+        type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 10, y: 10 },
+        blueprint: [
+          { prop: 'water_barrel', xOffset: 0, yOffset: 0 },
+          { prop: 'wooden_fence', xOffset: 0, yOffset: 0 },
+        ],
+      },
+    })).rejects.toThrow(/overlaps another solid/i);
+    const request = await t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-valid',
+      action: {
+        type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 10, y: 10 },
+        blueprint: [
+          { tile: 'plowed_dirt', xOffset: 0, yOffset: 0 },
+          { tile: 'crop_stage_1', xOffset: 1, yOffset: 0 },
+          { prop: 'water_barrel', xOffset: 0, yOffset: 1 },
+          { prop: 'wooden_fence', xOffset: 1, yOffset: 1 },
+        ],
+      },
+    });
+    expect(request).toMatchObject({ awaitingOwner: true, review: { standard: 'earthfolk-lpc-v1', manifestAllowlist: 'pass' } });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: agent.ownerToken, approvalId: request.approvalId, decision: 'approve',
+    });
+    let lpcBuildId = '';
+    await t.run(async (ctx) => {
+      const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect();
+      const build = builds.find((candidate) => candidate.blueprint?.assetFramework === 'earthfolk-lpc-v1');
+      expect(build).toMatchObject({ state: 'building', w: 2, h: 2 });
+      expect(build?.constructionEndsAt).toBeGreaterThan(Date.now());
+      lpcBuildId = String(build?.buildId);
+      const premature = (await ctx.db.query('contributions').withIndex('sourceId', (q) => q.eq('sourceId', lpcBuildId)).first());
+      expect(premature).toBeNull();
+      if (!build) throw new Error('scheduled LPC build missing');
+    });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-walk-away',
+      action: { type: 'move_to', x: 20, y: 20 },
+    })).rejects.toThrow(/physically committed/i);
+    await t.run(async (ctx) => {
+      const build = await ctx.db.query('builds').withIndex('buildId', (q) => q.eq('buildId', lpcBuildId)).first();
+      if (!build) throw new Error('scheduled LPC build missing');
+      await ctx.db.patch(build._id, { constructionEndsAt: Date.now() - 1 });
+    });
+    await t.mutation(internal.act.ambientTick, {});
+    await t.mutation(internal.act.ambientTick, {});
+    await t.run(async (ctx) => {
+      const build = await ctx.db.query('builds').withIndex('buildId', (q) => q.eq('buildId', lpcBuildId)).first();
+      expect(build).toMatchObject({ state: 'built' });
+      const contributions = await ctx.db.query('contributions').withIndex('sourceId', (q) => q.eq('sourceId', lpcBuildId)).collect();
+      expect(contributions).toHaveLength(1);
+      expect(contributions[0]).toMatchObject({ dimension: 'civic', kind: 'native_build', points: 3 });
+    });
+  });
+
   it('rejects replayed signed-request nonces and cross-owner decisions', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});

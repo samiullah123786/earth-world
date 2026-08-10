@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "standard": "earthfolk-lpc-v1",
+  "gridSize": 32,
+  "avatarFrameSize": 64,
+  "directionOrder": ["back", "left", "front", "right"],
+  "structureTypes": [
+    "community_garden",
+    "cottage",
+    "farm_plot",
+    "park",
+    "road_segment",
+    "workshop",
+    "industrial_structure"
+  ],
+  "components": {
+    "grass": {
+      "source": "world_tiles/terrain/grass.png",
+      "frame": { "x": 0, "y": 160, "width": 96, "height": 32 },
+      "width": 3, "height": 1, "solid": false, "category": "terrain"
+    },
+    "dirt_path": {
+      "source": "world_tiles/terrain/dirt.png",
+      "frame": { "x": 0, "y": 160, "width": 96, "height": 32 },
+      "width": 3, "height": 1, "solid": false, "category": "terrain"
+    },
+    "cobblestone_road": {
+      "source": "world_tiles/terrain/cement.png",
+      "frame": { "x": 0, "y": 160, "width": 96, "height": 32 },
+      "width": 3, "height": 1, "solid": false, "category": "terrain"
+    },
+    "sand": {
+      "source": "world_tiles/terrain/dirt2.png",
+      "frame": { "x": 0, "y": 160, "width": 96, "height": 32 },
+      "width": 3, "height": 1, "solid": false, "category": "terrain"
+    },
+    "water": {
+      "source": "world_tiles/terrain/water.png",
+      "frame": { "x": 32, "y": 0, "width": 64, "height": 64 },
+      "width": 2, "height": 2, "solid": true, "category": "terrain"
+    },
+    "wooden_bridge": {
+      "source": "world_tiles/architecture/bridges.png",
+      "frame": { "x": 0, "y": 0, "width": 96, "height": 64 },
+      "width": 3, "height": 2, "solid": false, "category": "architecture"
+    },
+    "wood_wall": {
+      "source": "world_tiles/architecture/house.png",
+      "frame": { "x": 0, "y": 0, "width": 96, "height": 96 },
+      "width": 3, "height": 3, "solid": true, "category": "architecture"
+    },
+    "stone_wall": {
+      "source": "world_tiles/architecture/castlewalls.png",
+      "frame": { "x": 0, "y": 0, "width": 96, "height": 96 },
+      "width": 3, "height": 3, "solid": true, "category": "architecture"
+    },
+    "roof_tile": {
+      "source": "world_tiles/architecture/house.png",
+      "frame": { "x": 0, "y": 96, "width": 96, "height": 96 },
+      "width": 3, "height": 3, "solid": true, "category": "architecture"
+    },
+    "wood_door": {
+      "source": "world_tiles/architecture/house.png",
+      "frame": { "x": 192, "y": 0, "width": 32, "height": 64 },
+      "width": 1, "height": 2, "solid": true, "category": "architecture"
+    },
+    "window": {
+      "source": "world_tiles/architecture/house.png",
+      "frame": { "x": 224, "y": 0, "width": 32, "height": 64 },
+      "width": 1, "height": 2, "solid": true, "category": "architecture"
+    },
+    "stairs": {
+      "source": "world_tiles/architecture/stairs.png",
+      "frame": { "x": 0, "y": 0, "width": 64, "height": 64 },
+      "width": 2, "height": 2, "solid": false, "category": "architecture"
+    },
+    "bed": {
+      "source": "world_tiles/furniture_indoor/country.png",
+      "frame": { "x": 0, "y": 0, "width": 64, "height": 64 },
+      "width": 2, "height": 2, "solid": true, "category": "furniture"
+    },
+    "chair": {
+      "source": "world_tiles/furniture_indoor/country.png",
+      "frame": { "x": 96, "y": 64, "width": 32, "height": 64 },
+      "width": 1, "height": 1, "solid": true, "category": "furniture"
+    },
+    "desk": {
+      "source": "world_tiles/furniture_indoor/cabinets.png",
+      "frame": { "x": 0, "y": 192, "width": 96, "height": 64 },
+      "width": 3, "height": 2, "solid": true, "category": "furniture"
+    },
+    "bookshelf": {
+      "source": "world_tiles/furniture_indoor/cabinets.png",
+      "frame": { "x": 0, "y": 0, "width": 96, "height": 64 },
+      "width": 3, "height": 2, "solid": true, "category": "furniture"
+    },
+    "fireplace": {
+      "source": "world_tiles/furniture_indoor/kitchen.png",
+      "frame": { "x": 0, "y": 32, "width": 64, "height": 96 },
+      "width": 2, "height": 3, "solid": true, "category": "furniture"
+    },
+    "wooden_bench": {
+      "source": "world_tiles/props_outdoor/wooden_bench.png",
+      "frame": { "x": 0, "y": 0, "width": 64, "height": 32 },
+      "width": 2, "height": 1, "solid": true, "category": "park"
+    },
+    "wooden_fence": {
+      "source": "world_tiles/props_outdoor/wooden_fence.png",
+      "frame": { "x": 0, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": true, "category": "park"
+    },
+    "streetlamp": {
+      "source": "world_tiles/props_outdoor/earthfolk_streetlamp.png",
+      "frame": { "x": 0, "y": 0, "width": 32, "height": 64 },
+      "width": 1, "height": 1, "solid": true, "category": "park"
+    },
+    "fountain": {
+      "source": "world_tiles/props_outdoor/earthfolk_fountain.png",
+      "frame": { "x": 0, "y": 0, "width": 64, "height": 64 },
+      "width": 2, "height": 2, "solid": true, "category": "park"
+    },
+    "signpost": {
+      "source": "world_tiles/props_outdoor/signs.png",
+      "frame": { "x": 0, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": true, "category": "park"
+    },
+    "native_tree": {
+      "source": "world_tiles/props_outdoor/treetop.png",
+      "frame": { "x": 0, "y": 0, "width": 96, "height": 96 },
+      "width": 3, "height": 3, "solid": true, "category": "park"
+    },
+    "timber_trunk": {
+      "source": "world_tiles/props_outdoor/trunk.png",
+      "frame": { "x": 0, "y": 0, "width": 96, "height": 96 },
+      "width": 3, "height": 3, "solid": true, "category": "park"
+    },
+    "water_barrel": {
+      "source": "world_tiles/props_outdoor/barrel.png",
+      "frame": { "x": 0, "y": 0, "width": 32, "height": 64 },
+      "width": 1, "height": 1, "solid": true, "category": "farming"
+    },
+    "plowed_dirt": {
+      "source": "world_tiles/farming/crop_growth.png",
+      "frame": { "x": 0, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": false, "category": "farming"
+    },
+    "seed_plot": {
+      "source": "world_tiles/farming/crop_growth.png",
+      "frame": { "x": 32, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": false, "category": "farming"
+    },
+    "crop_stage_1": {
+      "source": "world_tiles/farming/crop_growth.png",
+      "frame": { "x": 64, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": false, "category": "farming"
+    },
+    "crop_stage_2": {
+      "source": "world_tiles/farming/crop_growth.png",
+      "frame": { "x": 96, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": false, "category": "farming"
+    },
+    "harvest_crate": {
+      "source": "world_tiles/farming/crop_growth.png",
+      "frame": { "x": 128, "y": 0, "width": 32, "height": 32 },
+      "width": 1, "height": 1, "solid": true, "category": "farming"
+    }
+  },
+  "templates": {
+    "community_garden": [
+      { "tile": "plowed_dirt", "xOffset": 0, "yOffset": 0 },
+      { "tile": "crop_stage_1", "xOffset": 1, "yOffset": 0 },
+      { "prop": "wooden_fence", "xOffset": 2, "yOffset": 0 },
+      { "prop": "water_barrel", "xOffset": 0, "yOffset": 1 },
+      { "tile": "crop_stage_2", "xOffset": 1, "yOffset": 1 },
+      { "prop": "wooden_bench", "xOffset": 2, "yOffset": 1 }
+    ],
+    "park": [
+      { "prop": "wooden_bench", "xOffset": 0, "yOffset": 1 },
+      { "prop": "streetlamp", "xOffset": 2, "yOffset": 0 },
+      { "prop": "fountain", "xOffset": 3, "yOffset": 0 }
+    ]
+  }
+}

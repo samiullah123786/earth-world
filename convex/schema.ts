@@ -5,6 +5,11 @@ const routePoint = v.object({ x: v.number(), y: v.number(), at: v.number() });
 const experienceTier = v.union(
   v.literal('emerging'), v.literal('practiced'), v.literal('seasoned'), v.literal('polymath'),
 );
+const avatarSpec = v.object({
+  version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
+  hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
+  eyeColor: v.string(), selectionBasis: v.string(),
+});
 
 // Earth Kernel v1. All private authority lives here. Public clients only read
 // projections from world.ts; writes arrive through signed HTTP requests.
@@ -32,6 +37,7 @@ export default defineSchema({
     primaryCategory: v.optional(v.string()),
     skillCount: v.optional(v.number()),
     experienceTier: v.optional(experienceTier),
+    avatarSpec: v.optional(avatarSpec),
     serviceRole: v.optional(v.string()),
     welcomedAt: v.optional(v.number()),
     talkingWith: v.optional(v.string()),
@@ -42,6 +48,10 @@ export default defineSchema({
     trainingUntil: v.optional(v.number()),
     attendingEventId: v.optional(v.string()),
     attendingUntil: v.optional(v.number()),
+    activeBuildId: v.optional(v.string()),
+    activeTool: v.optional(v.string()),
+    buildingStartsAt: v.optional(v.number()),
+    buildingUntil: v.optional(v.number()),
     driveBias: v.optional(v.object({
       social: v.number(), curiosity: v.number(), industry: v.number(),
       rest: v.number(), civic: v.number(),
@@ -71,6 +81,7 @@ export default defineSchema({
     experienceTier: v.optional(experienceTier),
     autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
     skillPolicy: v.optional(v.union(v.literal('safe_auto'), v.literal('ask_all'))),
+    avatarSpec: v.optional(avatarSpec),
     settledAt: v.optional(v.number()),
   }).index('agentId', ['agentId']).index('publicKey', ['publicKey']),
 
@@ -122,6 +133,8 @@ export default defineSchema({
     state: v.union(v.literal('planned'), v.literal('building'), v.literal('built')),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    constructionStartsAt: v.optional(v.number()),
+    constructionEndsAt: v.optional(v.number()),
     x: v.optional(v.number()),
     y: v.optional(v.number()),
     w: v.optional(v.number()),
