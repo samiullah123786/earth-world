@@ -48,7 +48,8 @@ export const citizenProfile = query({
       citizen = { ...citizen, name: 'Sam', agentId: 'agent:sam-cbf0499925', serviceRole: 'Mayor of Earth' };
     }
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).first();
-    const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).collect();
+    const builds = (await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).collect())
+      .filter((row) => row.state !== 'razed');
     const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
     const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', targetId)).collect();
     const { ownerName: _ownerName, ...publicCitizen } = citizen;
@@ -93,7 +94,9 @@ export const worldObjects = query({
   args: {},
   handler: async (ctx) => {
     const plots = await ctx.db.query('plots').collect();
-    const builds = await ctx.db.query('builds').collect();
+    // Razed structures leave the map immediately - that is the live grid update
+    // a demolition promises - while their rows stay for the history.
+    const builds = (await ctx.db.query('builds').collect()).filter((row) => row.state !== 'razed');
     const venues = await ctx.db.query('venues').collect();
     const state = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first();
     const services = (await ctx.db.query('services').collect()).filter((service) => service.active);

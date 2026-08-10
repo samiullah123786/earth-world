@@ -138,7 +138,11 @@ export default defineSchema({
     ownerAgentId: v.string(),
     structure: v.string(),
     blueprint: v.optional(v.any()),
-    state: v.union(v.literal('planned'), v.literal('building'), v.literal('built')),
+    // 'razed' is how Earth remembers a demolition: the row stays, carrying who
+    // built it and who tore it down, and simply stops standing on the map.
+    state: v.union(v.literal('planned'), v.literal('building'), v.literal('built'), v.literal('razed')),
+    razedAt: v.optional(v.number()),
+    razedBy: v.optional(v.string()),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
     constructionStartsAt: v.optional(v.number()),

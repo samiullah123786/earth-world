@@ -472,7 +472,10 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
   const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
   if (!plot || plot.ownerAgentId !== requesterId) throw new Error('agent does not own this plot');
   const footprint = buildFootprint(plot, payload);
-  const builds = await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect();
+  // Razed structures are history, not obstacles: they occupy no ground, block
+  // no footprint, and never stop a rebuild.
+  const builds = (await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect())
+    .filter((build: any) => build.state !== 'razed');
   const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
   if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) throw new Error('a home already stands on this plot');
   if (builds.some((build: any) => build.x !== undefined && overlapsRect(footprint, build))) throw new Error('build footprint overlaps an existing structure');
@@ -512,6 +515,21 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
   await recordContribution(ctx, requesterId, 'civic', 'settlement', 2, `claim:${plot.plotId}`, `Protected and settled ${plot.plotId}.`, now);
   await expandWorld(ctx, 'land occupancy threshold');
   return plot;
+}
+
+/**
+ * Who owns the ground under a coordinate.
+ *
+ * Plots are the unit of ownership on Earth, so a tile's owner is its plot's
+ * owner. Civic ground - the Bank, venues, the plaza - belongs to no citizen and
+ * answers null, which is what keeps it from being demolished by anybody.
+ */
+async function tileOwnership(ctx: any, x: number, y: number) {
+  const plots = await ctx.db.query('plots').collect();
+  const plot = plots.find((row: any) => x >= row.x && x < row.x + row.w && y >= row.y && y < row.y + row.h);
+  if (!plot) return { plotId: null, ownerAgentId: null, civic: false };
+  const civic = plot.district === 'civic' || String(plot.ownerAgentId ?? '').startsWith('bank:');
+  return { plotId: plot.plotId, ownerAgentId: civic ? null : (plot.ownerAgentId ?? null), civic };
 }
 
 async function commitBuild(ctx: any, requesterId: string, payload: any, now: number) {
@@ -804,7 +822,8 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
     }
   }
 
-  const builds = await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect();
+  const builds = (await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect())
+    .filter((build: any) => build.state !== 'razed');
   let home = builds.find((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home');
   if (!home && autonomy === 'active') {
     home = await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'home' }, now);
@@ -2174,6 +2193,48 @@ export const act = internalMutation({
       return { ok: true, awaitingOwner: true, approvalId, warning };
     }
 
+    if (action?.type === 'demolish_structure') {
+      const buildId = String(action.buildId ?? '').trim();
+      const build = await ctx.db.query('builds').withIndex('buildId', (q) => q.eq('buildId', buildId)).first();
+      if (!build) throw new Error('no such structure');
+      if (build.state === 'razed') return { ok: true, alreadyRazed: true, buildId, warning };
+
+      // Three separate locks, because each fails differently: you must own the
+      // structure, own the ground it stands on, and that ground must not be
+      // civic land. Nothing here can reach another citizen's home.
+      if (build.ownerAgentId !== agentId) throw new Error('a citizen may only demolish structures it built');
+      const plot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', build.plotId)).first();
+      if (!plot) throw new Error('that structure stands on land the registry no longer knows');
+      if (plot.ownerAgentId !== agentId) throw new Error('a citizen may only demolish on land it owns');
+      const ground = await tileOwnership(ctx, build.x ?? plot.x, build.y ?? plot.y);
+      if (ground.civic) throw new Error('civic ground is never demolished');
+
+      const now = Date.now();
+      if (citizen.activeBuildId && (citizen.buildingUntil ?? 0) > now) {
+        throw new Error('finish the active construction before starting demolition');
+      }
+      // Walk there and swing: demolition is visible work, not a database edit.
+      const centre = { x: (build.x ?? plot.x) + (build.w ?? 1) / 2, y: (build.y ?? plot.y) + (build.h ?? 1) / 2 };
+      const route = await routeCitizenNear(ctx, citizen, centre.x, centre.y,
+        `heading to take down ${build.blueprint?.name ?? build.structure}`, now);
+      if (!route.length) throw new Error('no safe route reaches that structure');
+      const startsAt = route[route.length - 1].at;
+      const endsAt = startsAt + Math.min(30_000, 6_000 + (build.blueprint?.placements?.length ?? 1) * 900);
+      await faceTarget(ctx, citizen, centre, now);
+      await ctx.db.patch(citizen._id, {
+        activeBuildId: buildId, activeTool: 'hammer',
+        buildingStartsAt: startsAt, buildingUntil: endsAt,
+        activity: `taking down ${build.blueprint?.name ?? build.structure}`,
+      });
+      await ctx.db.patch(build._id, { state: 'razed', razedAt: endsAt, razedBy: agentId });
+      await ctx.db.insert('events', {
+        kind: 'build_razed', actorId: agentId,
+        payload: { buildId, plotId: build.plotId, structure: build.structure },
+        gloss: `${citizen.name} is taking down ${build.blueprint?.name ?? build.structure} on ${build.plotId} to rebuild.`,
+      });
+      return { ok: true, buildId, plotId: build.plotId, startsAt, endsAt, warning };
+    }
+
     if (action?.type === 'build' || action?.type === 'construct_structure') {
       let structure: string;
       let plot: any;
@@ -2710,7 +2771,8 @@ export const ownerSession = internalQuery({
     const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', session.agentId)).first();
     if (!agent) return null;
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).first();
-    const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect();
+    const builds = (await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect())
+      .filter((build) => build.state !== 'razed');
     const world = await ensureWorldState(ctx);
     const notifications = await ctx.db.query('notifications').withIndex('recipient_created', (q) => q.eq('recipientAgentId', agent.agentId)).collect();
     const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).collect();
