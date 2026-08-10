@@ -14662,6 +14662,30 @@
       "license": "CC-BY-SA-3.0 OR GPL-3.0",
       "credits": "licenses/LPC_BASE_CREDITS.txt"
     },
+    "crop_seeded": {
+      "id": "crop_seeded",
+      "sourceAssetId": "lpc_world_tiles_farming_crop_growth",
+      "path": "world_tiles/farming/crop_growth.png",
+      "webPath": "/assets/lpc_framework/world_tiles/farming/crop_growth.png",
+      "frame": {
+        "x": 32,
+        "y": 0,
+        "width": 32,
+        "height": 32
+      },
+      "width": 1,
+      "height": 1,
+      "solid": false,
+      "category": "farming",
+      "boundingBox": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "license": "AgentsEarth project asset",
+      "credits": "licenses/ASSET_LICENSE_NOTICE.md"
+    },
     "crop_stage_1": {
       "id": "crop_stage_1",
       "sourceAssetId": "lpc_world_tiles_farming_crop_growth",
@@ -14693,6 +14717,30 @@
       "webPath": "/assets/lpc_framework/world_tiles/farming/crop_growth.png",
       "frame": {
         "x": 96,
+        "y": 0,
+        "width": 32,
+        "height": 32
+      },
+      "width": 1,
+      "height": 1,
+      "solid": false,
+      "category": "farming",
+      "boundingBox": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "license": "AgentsEarth project asset",
+      "credits": "licenses/ASSET_LICENSE_NOTICE.md"
+    },
+    "crop_stage_3": {
+      "id": "crop_stage_3",
+      "sourceAssetId": "lpc_world_tiles_farming_crop_growth",
+      "path": "world_tiles/farming/crop_growth.png",
+      "webPath": "/assets/lpc_framework/world_tiles/farming/crop_growth.png",
+      "frame": {
+        "x": 128,
         "y": 0,
         "width": 32,
         "height": 32
@@ -14753,6 +14801,30 @@
         "x": 0,
         "y": 0,
         "width": 3,
+        "height": 1
+      },
+      "license": "CC-BY-SA-3.0 OR GPL-3.0",
+      "credits": "licenses/LPC_BASE_CREDITS.txt"
+    },
+    "field_bucket": {
+      "id": "field_bucket",
+      "sourceAssetId": "lpc_world_tiles_farming_buckets",
+      "path": "world_tiles/farming/buckets.png",
+      "webPath": "/assets/lpc_framework/world_tiles/farming/buckets.png",
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "width": 32,
+        "height": 32
+      },
+      "width": 1,
+      "height": 1,
+      "solid": false,
+      "category": "farming",
+      "boundingBox": {
+        "x": 0,
+        "y": 0,
+        "width": 1,
         "height": 1
       },
       "license": "CC-BY-SA-3.0 OR GPL-3.0",
@@ -15333,6 +15405,28 @@
       },
       {
         "prop": "fountain",
+        "xOffset": 3,
+        "yOffset": 0
+      }
+    ],
+    "farm_row": [
+      {
+        "tile": "plowed_dirt",
+        "xOffset": 0,
+        "yOffset": 0
+      },
+      {
+        "tile": "plowed_dirt",
+        "xOffset": 1,
+        "yOffset": 0
+      },
+      {
+        "tile": "plowed_dirt",
+        "xOffset": 2,
+        "yOffset": 0
+      },
+      {
+        "prop": "field_bucket",
         "xOffset": 3,
         "yOffset": 0
       }

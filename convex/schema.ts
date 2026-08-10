@@ -50,6 +50,10 @@ export default defineSchema({
     attendingUntil: v.optional(v.number()),
     activeBuildId: v.optional(v.string()),
     activeTool: v.optional(v.string()),
+    // The tool a citizen habitually carries, kept apart from activeTool so a
+    // holstered watering can never reads as watering in progress.
+    carriedTool: v.optional(v.string()),
+    workingUntil: v.optional(v.number()),
     buildingStartsAt: v.optional(v.number()),
     buildingUntil: v.optional(v.number()),
     driveBias: v.optional(v.object({
@@ -148,7 +152,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'),
+      v.literal('package_install'), v.literal('package_release'),
     ),
     summary: v.string(),
     detail: v.string(),

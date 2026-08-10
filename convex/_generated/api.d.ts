@@ -11,6 +11,7 @@
 import type * as act from "../act.js";
 import type * as community from "../community.js";
 import type * as crons from "../crons.js";
+import type * as economy from "../economy.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
 import type * as pathfinding from "../pathfinding.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   act: typeof act;
   community: typeof community;
   crons: typeof crons;
+  economy: typeof economy;
   http: typeof http;
   kernel: typeof kernel;
   pathfinding: typeof pathfinding;

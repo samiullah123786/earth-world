@@ -149,4 +149,24 @@ describe('extracurricular activities', () => {
     expect(after.minted).toBe(before.minted);
     expect(after.circulating).toBe(before.circulating);
   });
+
+  it('carries a tool without miming the work forever', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const worker = await citizen(t, 'holstered');
+    await act(t, worker, { type: 'equip', tool: 'watering_can' });
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
+      // Equipping is carrying, not doing: no work window opens.
+      expect(row!.carriedTool).toBe('watering_can');
+      expect(row!.workingUntil ?? 0).toBe(0);
+    });
+
+    await act(t, worker, { type: 'plant', ...FIELD });
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
+      expect(row!.activeTool).toBe('watering_can');
+      expect(row!.workingUntil!).toBeGreaterThan(Date.now());
+    });
+  });
 });

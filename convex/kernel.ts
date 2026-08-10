@@ -40,6 +40,11 @@ const CROPS = new Set(['grain', 'greens', 'roots', 'flowers']);
 const CROP_GROWTH_MS = 45 * 60 * 1000;
 const CROP_TEND_RELIEF_MS = 8 * 60 * 1000;
 const GATHER_COOLDOWN_MS = 20 * 60 * 1000;
+// Above this price a release stops being routine and waits for the owner even
+// under active standing consent.
+const ROUTINE_RELEASE_PRICE = 25;
+// How long a work animation plays after the act that started it.
+const WORK_ANIMATION_MS = 6 * 1000;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -126,7 +131,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -993,6 +998,29 @@ export const register = internalMutation({
 });
 
 /**
+ * Pay and deliver in one transaction. Both the directly-accepted path and the
+ * owner-approved path route through here, so they can never diverge.
+ */
+async function releasePackage(ctx: any, trade: any, pack: any, providerName: string) {
+  const now = Date.now();
+  if (trade.priceTokens > 0) {
+    await payForTrade(ctx, {
+      fromAgentId: trade.requesterId, toAgentId: trade.providerId, amount: trade.priceTokens,
+      sourceId: `trade:${trade.tradeId}`, reason: `Bought the ${pack.name} knowledge package.`,
+    });
+  }
+  await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: now });
+  await recordContribution(ctx, trade.providerId, 'adoption', 'package_delivered', 5, `package:${trade.tradeId}`,
+    `${trade.requesterId} received the ${pack.name} package after an agreed trade.`, now);
+  await ctx.db.insert('events', {
+    kind: 'package_delivered', actorId: trade.providerId,
+    payload: { tradeId: trade.tradeId, packageId: pack.packageId, requesterId: trade.requesterId, name: pack.name, priceTokens: trade.priceTokens },
+    gloss: `${providerName} delivered the ${pack.name} knowledge package. The recipient reviews it before anything installs.`,
+  });
+  return { state: 'delivered' as const, priceTokens: trade.priceTokens };
+}
+
+/**
  * Every citizen starts with exactly five Earth Tokens, once. The sourceId is
  * the agent id, so re-registering the same agent can never grant a second time.
  */
@@ -1452,23 +1480,27 @@ export const act = internalMutation({
       const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
       if (!pack || pack.state !== 'listed') throw new Error('that package is no longer listed');
 
-      // Payment and delivery are one transaction: a paid-but-undelivered or
-      // delivered-but-unpaid trade is not reachable.
-      if (trade.priceTokens > 0) {
-        await payForTrade(ctx, {
-          fromAgentId: trade.requesterId, toAgentId: trade.providerId, amount: trade.priceTokens,
-          sourceId: `trade:${trade.tradeId}`, reason: `Bought the ${pack.name} knowledge package.`,
-        });
+      // Giving knowledge away is consequential, so standing consent decides
+      // whether the agent may do it alone. Active autonomy covers routine,
+      // inert releases; anything else waits for the owner (MASTER-PLAN law 3).
+      const routine = (agent.autonomy ?? 'light') === 'active'
+        && pack.safety.verdict === 'inert_safe'
+        && trade.priceTokens <= ROUTINE_RELEASE_PRICE;
+      if (!routine) {
+        const open = (await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect())
+          .find((row) => row.kind === 'package_release' && row.payload?.tradeId === trade.tradeId);
+        if (open) return { ok: true, state: 'pending_owner', approvalId: String(open._id), warning };
+        const approvalId = await insertApproval(ctx, agentId, 'package_release',
+          `Release ${pack.name} to ${trade.requesterId}`,
+          `${trade.requesterId} asked for your ${pack.name} package (${pack.sizeBytes} bytes, ${pack.safety.verdict}) for ${trade.priceTokens} Earth Token(s). Nothing leaves this agent until you approve.`,
+          { tradeId: trade.tradeId, name: pack.name, requesterId: trade.requesterId, flags: pack.safety.flags },
+          pack.safety.verdict === 'inert_safe' ? 'review' : 'strict');
+        await notifyOwner(ctx, agentId, 'approval', `${pack.name} is requested by another citizen`,
+          `${trade.requesterId} asked for it. Approve in Earth Skills to release it.`, approvalId);
+        return { ok: true, state: 'pending_owner', approvalId: String(approvalId), warning };
       }
-      await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: now });
-      await recordContribution(ctx, agentId, 'adoption', 'package_delivered', 5, `package:${trade.tradeId}`,
-        `${trade.requesterId} received the ${pack.name} package after an agreed trade.`, now);
-      await ctx.db.insert('events', {
-        kind: 'package_delivered', actorId: agentId,
-        payload: { tradeId: trade.tradeId, packageId: pack.packageId, requesterId: trade.requesterId, name: pack.name, priceTokens: trade.priceTokens },
-        gloss: `${citizen.name} delivered the ${pack.name} knowledge package. The recipient reviews it before anything installs.`,
-      });
-      return { ok: true, state: 'delivered', priceTokens: trade.priceTokens, warning };
+      const released = await releasePackage(ctx, trade, pack, citizen.name);
+      return { ok: true, ...released, warning };
     }
 
     if (action?.type === 'fetch_package') {
@@ -1553,7 +1585,8 @@ export const act = internalMutation({
       if (!owned) {
         await ctx.db.insert('agentTools', { agentId, tool, earnedAt: Date.now(), sourceId: `tool:${agentId}:${tool}` });
       }
-      await ctx.db.patch(citizen._id, { activeTool: tool });
+      // Carried, not in use: the renderer only animates work while it happens.
+      await ctx.db.patch(citizen._id, { carriedTool: tool });
       return { ok: true, tool, earnedAt: owned?.earnedAt ?? Date.now(), warning };
     }
 
@@ -1567,7 +1600,7 @@ export const act = internalMutation({
       if (kind === 'gather' ? zone.kind === 'farm' : zone.kind !== 'farm') {
         throw new Error(`${kind} belongs in a ${kind === 'gather' ? 'forest, orchard, or quarry' : 'farm'}, not ${zone.name}`);
       }
-      if (zone.tool !== 'none' && citizen.activeTool !== zone.tool) {
+      if (zone.tool !== 'none' && citizen.carriedTool !== zone.tool) {
         throw new Error(`${zone.name} needs the ${zone.tool}; run Earth equip ${zone.tool} first`);
       }
 
@@ -1593,7 +1626,10 @@ export const act = internalMutation({
         });
         const fieldId = `field:${doc}`;
         await ctx.db.patch(doc, { fieldId });
-        await ctx.db.patch(citizen._id, { activity: `planting ${crop} at ${zone.name}` });
+        await ctx.db.patch(citizen._id, {
+          activity: `planting ${crop} at ${zone.name}`,
+          activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
+        });
         await recordContribution(ctx, agentId, 'civic', 'planted_crop', 1, fieldId,
           `${citizen.name} planted ${crop} at ${zone.name}.`, now);
         await ctx.db.insert('events', {
@@ -1615,7 +1651,10 @@ export const act = internalMutation({
           tendedBy: [...field.tendedBy, agentId].slice(0, 12),
           readyAt: Math.max(now, field.readyAt - CROP_TEND_RELIEF_MS),
         });
-        await ctx.db.patch(citizen._id, { activity: `watering ${field.crop} at ${zone.name}` });
+        await ctx.db.patch(citizen._id, {
+          activity: `watering ${field.crop} at ${zone.name}`,
+          activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
+        });
         await recordContribution(ctx, agentId, 'civic', 'tended_crop', 1, `tend:${field.fieldId}:${agentId}`,
           `${citizen.name} watered ${field.crop} at ${zone.name}.`, now);
         await ctx.db.insert('events', {
@@ -1632,7 +1671,10 @@ export const act = internalMutation({
           throw new Error(`that ${field.crop} needs about ${minutes} more minute(s); water it to bring the harvest closer`);
         }
         await ctx.db.patch(field._id, { harvestedBy: agentId, harvestedAt: now });
-        await ctx.db.patch(citizen._id, { activity: `harvesting ${field.crop} at ${zone.name}` });
+        await ctx.db.patch(citizen._id, {
+          activity: `harvesting ${field.crop} at ${zone.name}`,
+          activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
+        });
         const helpers = new Set([field.plantedBy, ...field.tendedBy, agentId]);
         for (const helper of helpers) {
           await recordContribution(ctx, helper, 'civic', 'harvest_share', 2, `harvest:${field.fieldId}:${helper}`,
@@ -1652,7 +1694,10 @@ export const act = internalMutation({
       if (recent) {
         throw new Error(`this citizen is resting; gathering is possible again in about ${Math.ceil((GATHER_COOLDOWN_MS - (now - recent.createdAt)) / 60_000)} minute(s)`);
       }
-      await ctx.db.patch(citizen._id, { activity: `working at ${zone.name}` });
+      await ctx.db.patch(citizen._id, {
+        activity: `working at ${zone.name}`,
+        activeTool: zone.tool, workingUntil: now + WORK_ANIMATION_MS,
+      });
       await recordContribution(ctx, agentId, 'civic', 'gathered', 2, `gather:${agentId}:${now}`,
         `${citizen.name} worked at ${zone.name} with the ${zone.tool}.`, now);
       await ctx.db.insert('events', {
@@ -2502,6 +2547,15 @@ export const decideApproval = internalMutation({
         await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
           `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
       }
+      if (approval.kind === 'package_release') {
+        const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', String(approval.payload?.tradeId ?? ''))).first();
+        if (trade && trade.state === 'proposed') {
+          await ctx.db.patch(trade._id, { state: 'declined', updatedAt: now });
+          // Declines stay private, so the asker learns nothing about why.
+          await insertMessage(ctx, trade.providerId, trade.requesterId,
+            'That package is not available to share right now.', 'letter');
+        }
+      }
       if (approval.kind === 'package_install') {
         await notifyOwner(ctx, session.agentId, 'info', `${approval.payload?.name ?? 'That package'} was not installed`,
           'It stays in the local review folder and never reaches your coding agents. Remove it with Earth earth-skills.');
@@ -2577,6 +2631,15 @@ export const decideApproval = internalMutation({
       } else {
         throw new Error('plot expansion stage is invalid');
       }
+      landHandled = true;
+    }
+    if (approval.kind === 'package_release') {
+      const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', String(approval.payload?.tradeId ?? ''))).first();
+      if (!trade || trade.state !== 'proposed') throw new Error('that trade is no longer waiting to be released');
+      const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+      if (!pack || pack.state !== 'listed') throw new Error('that package is no longer listed');
+      const provider = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', trade.providerId)).first();
+      await releasePackage(ctx, trade, pack, provider?.name ?? trade.providerId);
       landHandled = true;
     }
     if (approval.kind === 'package_install') {

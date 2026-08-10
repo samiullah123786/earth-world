@@ -236,7 +236,19 @@ const ownerSession = httpAction(async (ctx, request) => {
 const ownerApprovals = httpAction(async (ctx, request) => {
   try {
     const approvals = await ctx.runQuery(internal.kernel.ownerApprovals, { tokenHash: await sha256Hex(bearerToken(request)) });
-    return json({ ok: true, approvals: approvals.map((approval: any) => ({ id: approval._id, kind: approval.kind, risk: approval.risk ?? 'review', summary: approval.summary, detail: approval.detail, createdAt: approval.createdAt })) });
+    return json({ ok: true, approvals: approvals.map((approval: any) => ({
+      id: approval._id, kind: approval.kind, risk: approval.risk ?? 'review',
+      summary: approval.summary, detail: approval.detail, createdAt: approval.createdAt,
+      // Payload stays private. Only the fields a review surface must render are
+      // projected, and only for the kinds that have such a surface.
+      ...(approval.kind === 'package_install' || approval.kind === 'package_release' ? {
+        packageReview: {
+          name: String(approval.payload?.name ?? ''),
+          flags: Array.isArray(approval.payload?.flags) ? approval.payload.flags.map(String) : [],
+          counterpartId: String(approval.payload?.providerId ?? approval.payload?.requesterId ?? ''),
+        },
+      } : {}),
+    })) });
   } catch (error) {
     return json({ ok: false, why: message(error) }, 401);
   }

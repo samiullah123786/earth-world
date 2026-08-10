@@ -9,17 +9,22 @@ const modules = import.meta.glob('./**/*.ts');
 const SAFE = { verdict: 'inert_safe' as const, flags: [], note: 'prose only', scannerVersion: 'earth-safety-1' };
 const REPO = 'https://github.com/example/dashboard-layout';
 
-async function citizen(t: ReturnType<typeof convexTest>, suffix: string, category = 'ui') {
+// Most trade tests are about the trade mechanics, so their citizens carry
+// active standing consent. The gate itself is exercised separately below.
+async function citizen(t: ReturnType<typeof convexTest>, suffix: string,
+                       options: { category?: string; autonomy?: 'none' | 'light' | 'active' } = {}) {
+  const category = options.category ?? 'ui';
   const agentId = `agent:test-${suffix}`;
   await t.mutation(internal.kernel.register, {
     agentId, publicKey: `public-${suffix}`, name: `Test ${suffix}`, ownerName: `Owner ${suffix}`,
     gender: 'male', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
     charterVersion: '2026-08-09', claimTokenHash: `claim-${suffix}`, claimExpiresAt: Date.now() + 60_000,
     evidenceDigest: 'b'.repeat(64), specialties: [category], primaryCategory: category, skillCount: 12,
+    autonomy: options.autonomy ?? 'active',
   });
   await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `claim-${suffix}`, ownerSessionHash: `owner-${suffix}` });
   await t.mutation(internal.kernel.enter, { agentId, nonce: `enter-${suffix}`, sessionTokenHash: `agent-${suffix}` });
-  return { agentId, token: `agent-${suffix}` };
+  return { agentId, token: `agent-${suffix}`, ownerToken: `owner-${suffix}` };
 }
 
 let nonce = 0;
@@ -216,5 +221,83 @@ describe('knowledge packages and trades', () => {
     }
     await expect(act(t, seller, publish({ name: 'one-too-many', sizeBytes: 25 * 1024 * 1024 })))
       .rejects.toThrow(/the quota is/);
+  });
+
+  it('waits for the owner before knowledge leaves a light-consent agent', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const seller = await citizen(t, 'careful', { autonomy: 'light' });
+    const buyer = await citizen(t, 'waiting');
+    const listed = await act(t, seller, publish({ priceTokens: 2 }));
+    const requested = await act(t, buyer, { type: 'request_package', packageId: listed.packageId });
+
+    const held = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
+    expect(held.state).toBe('pending_owner');
+    await t.run(async (ctx) => {
+      const trade = await ctx.db.query('skillTrades').first();
+      expect(trade!.state).toBe('proposed');
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(5);
+    });
+    // Asking twice reuses the same request rather than stacking approvals.
+    const again = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
+    expect(again.approvalId).toBe(held.approvalId);
+
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: seller.ownerToken, approvalId: held.approvalId, decision: 'approve',
+    });
+    await t.run(async (ctx) => {
+      const trade = await ctx.db.query('skillTrades').first();
+      expect(trade!.state).toBe('delivered');
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(3);
+      expect(await balanceOf(ctx, seller.agentId)).toBe(7);
+      await assertSupplyInvariant(ctx);
+    });
+  });
+
+  it('an owner decline keeps the knowledge home and stays private', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const seller = await citizen(t, 'private', { autonomy: 'light' });
+    const buyer = await citizen(t, 'refused');
+    const listed = await act(t, seller, publish());
+    const requested = await act(t, buyer, { type: 'request_package', packageId: listed.packageId });
+    const held = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: seller.ownerToken, approvalId: held.approvalId, decision: 'decline',
+    });
+    await t.run(async (ctx) => {
+      const trade = await ctx.db.query('skillTrades').first();
+      expect(trade!.state).toBe('declined');
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(5);
+      const events = await ctx.db.query('events').collect();
+      expect(events.filter((event) => event.kind === 'package_delivered')).toHaveLength(0);
+    });
+  });
+
+  it('holds an expensive release even under active consent', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const seller = await citizen(t, 'pricey');
+    const buyer = await citizen(t, 'rich');
+    await t.run(async (ctx) => {
+      await issue(ctx, { toAgentId: buyer.agentId, amount: 100, kind: 'gift_reward', sourceId: 'gift:test:rich', reason: 'seeded for the test' });
+    });
+    const listed = await act(t, seller, publish({ priceTokens: 60 }));
+    const requested = await act(t, buyer, { type: 'request_package', packageId: listed.packageId });
+    const held = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
+    expect(held.state).toBe('pending_owner');
+  });
+
+  it('holds a flagged release even under active consent', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const seller = await citizen(t, 'flagged');
+    const buyer = await citizen(t, 'curious');
+    const listed = await act(t, seller, publish({
+      safety: { verdict: 'needs_review', flags: ['executable_file'], note: 'ships a script', scannerVersion: 'earth-safety-1' },
+    }));
+    const requested = await act(t, buyer, { type: 'request_package', packageId: listed.packageId });
+    const held = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
+    expect(held.state).toBe('pending_owner');
   });
 });

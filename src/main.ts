@@ -36,6 +36,7 @@ type Citizen = {
   route?: RoutePoint[]; state: string; activity: string; online: boolean;
   specialties?: string[]; primaryCategory?: string; skillCount?: number;
   experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
+  carriedTool?: string; workingUntil?: number;
   trainingActivity?: string; trainingTeam?: string; trainingStartsAt?: number; trainingUntil?: number;
   attendingEventId?: string; attendingUntil?: number; rank?: Rank;
   activeBuildId?: string; activeTool?: string; buildingStartsAt?: number; buildingUntil?: number;
@@ -105,6 +106,9 @@ class EarthScene extends Phaser.Scene {
     this.load.json('map', '/assets/map.json');
     this.load.spritesheet('tiles', '/assets/gentle-obj.png', { frameWidth: 32, frameHeight: 32 });
     this.load.spritesheet('earth-token', '/assets/currency/earth_token_spin.png', { frameWidth: 32, frameHeight: 32 });
+    // The LPC growth strip: plowed, seeded, sprout, growing, ripe.
+    this.load.spritesheet('crop-growth', '/assets/lpc_framework/world_tiles/farming/crop_growth.png',
+      { frameWidth: 32, frameHeight: 32 });
     for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
       this.load.spritesheet(`lpc-agent-${agentKey}`, definition.sheet, {
         frameWidth: LPC_AGENT_FRAME_SIZE,
@@ -1222,17 +1226,20 @@ class EarthScene extends Phaser.Scene {
       this.objectLayer.add(sign);
     }
     for (const field of this.objects.farmPlots ?? []) {
-      const crop = this.add.graphics();
+      // Real LPC tiles: worked soil underneath, the growth frame on top, so a
+      // field reads the same here as it does in the tileset it came from.
       const originX = field.x * TILE, originY = field.y * TILE;
-      crop.fillStyle(0x8a5a33, 1).fillRect(originX + 4, originY + 20, 24, 8);
-      // One stalk per growth stage, so a field visibly fills in as it ripens.
-      const ripe = field.stage >= 4;
-      crop.fillStyle(ripe ? 0xf7c948 : 0x4e9a4e, 1);
-      for (let stalk = 0; stalk < field.stage; stalk++) {
-        const height = 4 + stalk * 3;
-        crop.fillRect(originX + 6 + stalk * 6, originY + 22 - height, 3, height);
+      this.objectLayer.add(this.add.image(originX, originY, 'crop-growth', 0).setOrigin(0));
+      const stage = Math.min(4, Math.max(1, field.stage));
+      this.objectLayer.add(this.add.image(originX, originY, 'crop-growth', stage).setOrigin(0));
+      if (stage >= 4) {
+        // Ripe fields get a small hard-edged marker so a harvest is visible
+        // from across the map without changing the tile art.
+        const ready = this.add.graphics();
+        ready.fillStyle(INK, 0.9).fillRect(originX + 12, originY - 8, 8, 8);
+        ready.fillStyle(0xf7c948, 1).fillRect(originX + 14, originY - 6, 4, 4);
+        this.objectLayer.add(ready);
       }
-      this.objectLayer.add(crop);
     }
   }
 
@@ -1319,9 +1326,17 @@ class EarthScene extends Phaser.Scene {
           && (citizen.buildingStartsAt ?? Infinity) <= now
           && (citizen.buildingUntil ?? 0) > now,
         );
-        const isWatering = !isMoving && !isBuilding
-          && /water|crop|garden|farm/i.test(`${citizen.activeTool ?? ''} ${citizen.activity}`);
-        const nextState = isMoving ? 'walk' : isBuilding ? 'build_hammer' : isWatering ? 'water_crops' : 'idle';
+        // Work animates only while work is happening. Carrying a tool is not
+        // doing something with it, so a holstered watering can stays holstered.
+        const isWorking = !isMoving && !isBuilding && (citizen.workingUntil ?? 0) > now;
+        const swinging = isWorking && (citizen.activeTool === 'axe' || citizen.activeTool === 'pickaxe');
+        const isWatering = (isWorking && citizen.activeTool === 'watering_can')
+          || (!isMoving && !isBuilding && !isWorking
+            && /water|crop|garden|farm/i.test(citizen.activity));
+        const nextState = isMoving ? 'walk'
+          : isBuilding ? 'build_hammer'
+          : swinging ? 'slash'
+          : isWatering ? 'water_crops' : 'idle';
         const previousState = citImg.getData('lpc-state');
         if (previousState !== nextState) {
           const preset = String(citImg.getData('lpc-preset'));
