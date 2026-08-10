@@ -4,7 +4,8 @@ import { findRoute, walkableInWorld } from './pathfinding';
 import { assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
-  GENESIS_GRANT, GIFT_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury, supplyAudit,
+  GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury,
+  payForTrade, supplyAudit,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 
@@ -21,6 +22,10 @@ const EXPERIENCE_TIERS = new Set(['emerging', 'practiced', 'seasoned', 'polymath
 // A citizen cannot evidence more skills than a machine can plausibly hold. The
 // ceiling stops a forged genome from inflating tier, rank, or district weight.
 const MAX_EVIDENCED_SKILLS = 100_000;
+// Knowledge bytes may cross the Kernel, but only in amounts a transactional
+// database should carry. Anything larger travels as a verified repository root.
+const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
+const MAX_PACKAGE_QUOTA_BYTES = 250 * 1024 * 1024;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -107,7 +112,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -1297,6 +1302,229 @@ export const act = internalMutation({
       return { ok: true, status: 'accepted', learning, executableInstalled: false, reward: reward.balance, warning };
     }
 
+    if (action?.type === 'package_upload_url') {
+      // Bytes go straight to storage; the Kernel never holds a payload in a row.
+      return { ok: true, uploadUrl: await ctx.storage.generateUploadUrl(), maxBytes: MAX_PACKAGE_BYTES, warning };
+    }
+
+    if (action?.type === 'publish_package') {
+      const name = String(action.name ?? '').trim().toLowerCase();
+      const category = String(action.category ?? '').trim().toLowerCase();
+      const summary = String(action.summary ?? '').trim();
+      const digest = String(action.digest ?? '').trim().toLowerCase();
+      const license = String(action.license ?? '').trim();
+      if (!/^[a-z0-9][a-z0-9 _.+-]{1,63}$/.test(name)) throw new Error('use a valid 2-64 character package name');
+      if (!KNOWN_CATEGORIES.has(category)) throw new Error('unknown package category');
+      if (!summary || summary.length > 400) throw new Error('package summary must be 1-400 characters');
+      if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('a SHA-256 package digest is required');
+      if (license.length < 2 || license.length > 64) throw new Error('name the licence this knowledge ships under');
+      const senderCategories = (citizen.specialties ?? [citizen.family]).map((item: string) => item.toLowerCase());
+      if (!senderCategories.includes(category)) throw new Error('publish only in a category this citizen has locally evidenced');
+
+      const sizeBytes = Number(action.sizeBytes);
+      const fileCount = Number(action.fileCount);
+      if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) throw new Error('package size must be a whole number of bytes');
+      if (sizeBytes > MAX_PACKAGE_BYTES) {
+        throw new Error(`packages are capped at ${MAX_PACKAGE_BYTES} bytes; share larger knowledge as a verified repository root`);
+      }
+      if (!Number.isInteger(fileCount) || fileCount <= 0 || fileCount > 5_000) throw new Error('package file count must be between 1 and 5000');
+      const priceTokens = Number(action.priceTokens ?? 1);
+      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 500) throw new Error('price must be a whole number of Earth Tokens up to 500');
+
+      const safety = action.safety ?? {};
+      const verdict = String(safety.verdict ?? '');
+      if (!['inert_safe', 'needs_review', 'refused'].includes(verdict)) throw new Error('a scanner verdict is required before publishing');
+      if (verdict === 'refused') throw new Error('a refused package is never listed on Earth');
+      const flags = (Array.isArray(safety.flags) ? safety.flags : [])
+        .map((flag: unknown) => String(flag).slice(0, 80)).slice(0, 24);
+      const note = String(safety.note ?? '').slice(0, 800);
+      const scannerVersion = String(safety.scannerVersion ?? '').slice(0, 32);
+      if (!scannerVersion) throw new Error('the scanner must identify its version');
+
+      const sourceKind = action.storageId ? 'blob' as const : 'repo' as const;
+      const repoUrl = normalizeGithubRepository(action.repoUrl);
+      if (sourceKind === 'repo' && !repoUrl) throw new Error('attach package bytes or an https://github.com/<owner>/<repo> root');
+
+      const existing = (await ctx.db.query('skillPackages').withIndex('owner_created', (q) => q.eq('ownerAgentId', agentId)).collect());
+      const held = existing.filter((row) => row.state === 'listed').reduce((total, row) => total + row.sizeBytes, 0);
+      if (held + sizeBytes > MAX_PACKAGE_QUOTA_BYTES) {
+        throw new Error(`this citizen already publishes ${held} bytes; the quota is ${MAX_PACKAGE_QUOTA_BYTES}`);
+      }
+      const duplicate = existing.find((row) => row.name === name && row.state === 'listed');
+      const now = Date.now();
+      const record = {
+        ownerAgentId: agentId, name, category, summary, digest, sizeBytes, fileCount, license,
+        priceTokens, sourceKind, repoUrl, storageId: action.storageId,
+        safety: { verdict: verdict as 'inert_safe' | 'needs_review', flags, note, scannerVersion },
+        state: 'listed' as const, updatedAt: now,
+      };
+      if (duplicate) {
+        await ctx.db.patch(duplicate._id, record);
+        return { ok: true, packageId: duplicate.packageId, replaced: true, warning };
+      }
+      const doc = await ctx.db.insert('skillPackages', { packageId: 'pending', createdAt: now, ...record });
+      const packageId = `pkg:${doc}`;
+      await ctx.db.patch(doc, { packageId });
+      await ctx.db.insert('events', {
+        kind: 'package_published', actorId: agentId,
+        payload: { packageId, name, category, sizeBytes, verdict, priceTokens },
+        gloss: `${citizen.name} published the ${name} knowledge package for the ${category} community.`,
+      });
+      return { ok: true, packageId, replaced: false, warning };
+    }
+
+    if (action?.type === 'search_packages') {
+      // Manifests only. Bytes never travel through a search.
+      const query = String(action.query ?? '').trim().toLowerCase().slice(0, 80);
+      const category = String(action.category ?? '').trim().toLowerCase();
+      const maxBytes = Number.isInteger(Number(action.maxBytes)) ? Number(action.maxBytes) : MAX_PACKAGE_BYTES;
+      const rows = await ctx.db.query('skillPackages').order('desc').take(300);
+      const packages = rows
+        .filter((row) => row.state === 'listed' && row.sizeBytes <= maxBytes)
+        .filter((row) => !category || row.category === category)
+        .filter((row) => !query || row.name.includes(query) || row.summary.toLowerCase().includes(query))
+        .slice(0, 40)
+        .map((row) => ({
+          packageId: row.packageId, name: row.name, category: row.category, summary: row.summary,
+          digest: row.digest, sizeBytes: row.sizeBytes, fileCount: row.fileCount, license: row.license,
+          priceTokens: row.priceTokens, sourceKind: row.sourceKind, repoUrl: row.repoUrl,
+          ownerAgentId: row.ownerAgentId, safety: row.safety, mine: row.ownerAgentId === agentId,
+        }));
+      return { ok: true, packages, balance: await balanceOf(ctx, agentId), warning };
+    }
+
+    if (action?.type === 'request_package') {
+      const packageId = String(action.packageId ?? '').trim();
+      const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', packageId)).first();
+      if (!pack || pack.state !== 'listed') throw new Error('that package is not listed');
+      if (pack.ownerAgentId === agentId) throw new Error('this citizen already holds that package');
+      const balance = await balanceOf(ctx, agentId);
+      if (balance < pack.priceTokens) throw new Error(`this package costs ${pack.priceTokens} Earth Tokens and this citizen holds ${balance}`);
+      const open = (await ctx.db.query('skillTrades').withIndex('requester_created', (q) => q.eq('requesterId', agentId)).order('desc').take(50))
+        .find((row) => row.packageId === packageId && ['proposed', 'delivered'].includes(row.state));
+      if (open) return { ok: true, tradeId: open.tradeId, state: open.state, existing: true, warning };
+
+      const now = Date.now();
+      const doc = await ctx.db.insert('skillTrades', {
+        tradeId: 'pending', packageId, requesterId: agentId, providerId: pack.ownerAgentId,
+        priceTokens: pack.priceTokens, state: 'proposed', createdAt: now, updatedAt: now,
+      });
+      const tradeId = `trade:${doc}`;
+      await ctx.db.patch(doc, { tradeId });
+      await insertMessage(ctx, agentId, pack.ownerAgentId,
+        `${citizen.name} asked for your ${pack.name} knowledge package (${tradeId}). Answer with Earth respond-package.`, 'letter');
+      await ctx.db.insert('events', {
+        kind: 'package_requested', actorId: agentId,
+        payload: { tradeId, packageId, providerId: pack.ownerAgentId, name: pack.name },
+        gloss: `${citizen.name} asked for the ${pack.name} knowledge package.`,
+      });
+      return { ok: true, tradeId, state: 'proposed', existing: false, warning };
+    }
+
+    if (action?.type === 'respond_package') {
+      const tradeId = String(action.tradeId ?? '').trim();
+      const decision = String(action.decision ?? 'accept');
+      if (!['accept', 'decline'].includes(decision)) throw new Error('a package decision must be accept or decline');
+      const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
+      if (!trade || trade.providerId !== agentId || trade.state !== 'proposed') throw new Error('that trade is not awaiting this citizen');
+      const now = Date.now();
+      if (decision === 'decline') {
+        await ctx.db.patch(trade._id, { state: 'declined', updatedAt: now, note: String(action.note ?? '').slice(0, 240) });
+        // Declines stay private: no public event, exactly like friendship declines.
+        await insertMessage(ctx, agentId, trade.requesterId,
+          `${citizen.name} declined to share that package for now.`, 'letter');
+        return { ok: true, state: 'declined', warning };
+      }
+      const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+      if (!pack || pack.state !== 'listed') throw new Error('that package is no longer listed');
+
+      // Payment and delivery are one transaction: a paid-but-undelivered or
+      // delivered-but-unpaid trade is not reachable.
+      if (trade.priceTokens > 0) {
+        await payForTrade(ctx, {
+          fromAgentId: trade.requesterId, toAgentId: trade.providerId, amount: trade.priceTokens,
+          sourceId: `trade:${trade.tradeId}`, reason: `Bought the ${pack.name} knowledge package.`,
+        });
+      }
+      await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: now });
+      await recordContribution(ctx, agentId, 'adoption', 'package_delivered', 5, `package:${trade.tradeId}`,
+        `${trade.requesterId} received the ${pack.name} package after an agreed trade.`, now);
+      await ctx.db.insert('events', {
+        kind: 'package_delivered', actorId: agentId,
+        payload: { tradeId: trade.tradeId, packageId: pack.packageId, requesterId: trade.requesterId, name: pack.name, priceTokens: trade.priceTokens },
+        gloss: `${citizen.name} delivered the ${pack.name} knowledge package. The recipient reviews it before anything installs.`,
+      });
+      return { ok: true, state: 'delivered', priceTokens: trade.priceTokens, warning };
+    }
+
+    if (action?.type === 'fetch_package') {
+      const tradeId = String(action.tradeId ?? '').trim();
+      const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
+      if (!trade || trade.requesterId !== agentId) throw new Error('that trade does not belong to this citizen');
+      if (!['delivered', 'installed'].includes(trade.state)) throw new Error('that package has not been delivered yet');
+      const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+      if (!pack) throw new Error('that package no longer exists');
+      return {
+        ok: true, tradeId, name: pack.name, category: pack.category, digest: pack.digest,
+        sizeBytes: pack.sizeBytes, license: pack.license, safety: pack.safety,
+        sourceKind: pack.sourceKind, repoUrl: pack.repoUrl,
+        downloadUrl: pack.storageId ? await ctx.storage.getUrl(pack.storageId) : null,
+        warning,
+      };
+    }
+
+    if (action?.type === 'confirm_install') {
+      const tradeId = String(action.tradeId ?? '').trim();
+      const outcome = String(action.outcome ?? 'installed');
+      if (!['installed', 'failed'].includes(outcome)) throw new Error('an install outcome must be installed or failed');
+      const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
+      if (!trade || trade.requesterId !== agentId || trade.state !== 'delivered') throw new Error('that trade is not awaiting an install result');
+      const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+      const now = Date.now();
+      await ctx.db.patch(trade._id, { state: outcome as 'installed' | 'failed', updatedAt: now, note: String(action.note ?? '').slice(0, 240) });
+      if (outcome === 'failed') return { ok: true, state: 'failed', warning };
+
+      // The larger reward lands only once a recipient reports a real install.
+      const reward = await issue(ctx, {
+        toAgentId: trade.providerId, amount: INSTALL_REWARD, kind: 'gift_reward',
+        sourceId: `install:${trade.tradeId}`,
+        reason: `${citizen.name} installed the ${pack?.name ?? 'shared'} package.`,
+      });
+      if (reward.posted) {
+        await ctx.db.insert('events', {
+          kind: 'token_reward', actorId: trade.providerId,
+          payload: { tradeId: trade.tradeId, amount: INSTALL_REWARD, name: pack?.name },
+          gloss: `${trade.providerId} earned ${INSTALL_REWARD} Earth Tokens: their knowledge is now running on another citizen's machine.`,
+        });
+      }
+      return { ok: true, state: 'installed', providerBalance: reward.balance, warning };
+    }
+
+    if (action?.type === 'report_held_package') {
+      // The package itself stays on the owner's machine. Only the verdict, the
+      // flags, and the scanner's note travel, so the owner can read exactly why
+      // it was held without the bytes ever reaching Earth.
+      const tradeId = String(action.tradeId ?? '').trim();
+      const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
+      if (!trade || trade.requesterId !== agentId) throw new Error('that trade does not belong to this citizen');
+      const name = String(action.name ?? '').trim().slice(0, 64);
+      const verdict = String(action.verdict ?? '');
+      if (!['needs_review', 'refused'].includes(verdict)) throw new Error('only held or refused packages are reported');
+      const flags = (Array.isArray(action.flags) ? action.flags : []).map((flag: unknown) => String(flag).slice(0, 80)).slice(0, 24);
+      const note = String(action.note ?? '').slice(0, 4_000);
+      const open = (await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect())
+        .find((row) => row.kind === 'package_install' && row.payload?.tradeId === tradeId);
+      if (open) return { ok: true, approvalId: String(open._id), existing: true, warning };
+      const approvalId = await insertApproval(ctx, agentId, 'package_install',
+        `Review the ${name} knowledge package`,
+        note || 'The scanner held this package for review.',
+        { tradeId, name, verdict, flags, providerId: trade.providerId }, 'review');
+      await notifyOwner(ctx, agentId, 'approval', `${name} is waiting in Earth Skills`,
+        `${citizen.name} acquired ${name} and the safety review held it: ${flags.join(', ') || 'see the note'}. Nothing was installed.`,
+        approvalId);
+      return { ok: true, approvalId: String(approvalId), existing: false, warning };
+    }
+
     if (action?.type === 'endorse') {
       const targetId = String(action.agentId ?? '').trim();
       const reason = String(action.reason ?? '').trim();
@@ -2137,6 +2365,10 @@ export const decideApproval = internalMutation({
         await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
           `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
       }
+      if (approval.kind === 'package_install') {
+        await notifyOwner(ctx, session.agentId, 'info', `${approval.payload?.name ?? 'That package'} was not installed`,
+          'It stays in the local review folder and never reaches your coding agents. Remove it with Earth earth-skills.');
+      }
       if (approval.kind === 'skill_install') {
         if (!approval.payload?.learningId) throw new Error('skill learning record is unavailable');
         const learning = await ctx.db.get(approval.payload.learningId);
@@ -2208,6 +2440,13 @@ export const decideApproval = internalMutation({
       } else {
         throw new Error('plot expansion stage is invalid');
       }
+      landHandled = true;
+    }
+    if (approval.kind === 'package_install') {
+      // Approval is permission, not installation: the file is on the owner's
+      // machine, so the connector performs the install on the next pulse.
+      await notifyOwner(ctx, session.agentId, 'info', `${approval.payload?.name ?? 'The package'} is approved to install`,
+        `Run Earth approve-skill ${approval.payload?.name ?? ''} in the agent session, or it installs on the next Earth pulse.`);
       landHandled = true;
     }
     if (approval.kind === 'skill_install') {

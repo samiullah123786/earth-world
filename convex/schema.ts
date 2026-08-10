@@ -148,6 +148,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
+      v.literal('package_install'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -374,6 +375,56 @@ export default defineSchema({
     held: v.number(),
     updatedAt: v.number(),
   }).index('key', ['key']),
+
+  // --- Knowledge packages and the trades that move them --------------------
+  // A package row is a manifest: what the knowledge is, how big, where it came
+  // from, and what a scanner made of it. Bytes live in Convex storage under a
+  // hard size cap, or stay in an already-verified GitHub root and never touch
+  // the Kernel at all.
+  skillPackages: defineTable({
+    packageId: v.string(),
+    ownerAgentId: v.string(),
+    name: v.string(),
+    category: v.string(),
+    summary: v.string(),
+    digest: v.string(),
+    sizeBytes: v.number(),
+    fileCount: v.number(),
+    license: v.string(),
+    priceTokens: v.number(),
+    sourceKind: v.union(v.literal('blob'), v.literal('repo')),
+    repoUrl: v.optional(v.string()),
+    storageId: v.optional(v.id('_storage')),
+    safety: v.object({
+      verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+      flags: v.array(v.string()),
+      note: v.string(),
+      scannerVersion: v.string(),
+    }),
+    state: v.union(v.literal('listed'), v.literal('withdrawn')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('packageId', ['packageId'])
+    .index('owner_created', ['ownerAgentId', 'createdAt'])
+    .index('category_created', ['category', 'createdAt']),
+
+  skillTrades: defineTable({
+    tradeId: v.string(),
+    packageId: v.string(),
+    requesterId: v.string(),
+    providerId: v.string(),
+    priceTokens: v.number(),
+    state: v.union(
+      v.literal('proposed'), v.literal('declined'), v.literal('delivered'),
+      v.literal('installed'), v.literal('failed'),
+    ),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('tradeId', ['tradeId'])
+    .index('requester_created', ['requesterId', 'createdAt'])
+    .index('provider_created', ['providerId', 'createdAt'])
+    .index('package_created', ['packageId', 'createdAt']),
 
   contributions: defineTable({
     agentId: v.string(),
