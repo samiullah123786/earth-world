@@ -1,6 +1,7 @@
 import { internalMutation } from './_generated/server';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { ensureWorldState } from './planning';
+import { loadWorldWalkability } from './worldGrid';
 
 const SPEED = 2.2;
 const STROLLS = [
@@ -58,6 +59,7 @@ export const ambientTick = internalMutation({
     const now = Date.now();
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
+    const isWalkable = await loadWorldWalkability(ctx, bounds);
     for (const build of await ctx.db.query('builds').collect()) {
       if (build.state !== 'building' || !build.constructionEndsAt || build.constructionEndsAt > now) continue;
       const label = build.blueprint?.name ?? build.structure;
@@ -249,10 +251,10 @@ export const ambientTick = internalMutation({
         const jitterY = goal ? goal.y + Math.floor(attempt / 3) - 1 : Math.round(citizen.ty + (Math.random() * 20 - 10));
         const nx = Math.max(1, Math.min(bounds.width - 2, jitterX));
         const ny = Math.max(1, Math.min(bounds.height - 2, jitterY));
-        if (!walkableInWorld(nx, ny, bounds)) continue;
+        if (!isWalkable(nx, ny)) continue;
         const occupied = citizens.some((other) => other.agentId !== citizen.agentId && Math.hypot(other.tx - nx, other.ty - ny) < 0.75);
         if (occupied) continue;
-        const path = findRoute(citizen.tx, citizen.ty, nx, ny, bounds);
+        const path = findRoute(citizen.tx, citizen.ty, nx, ny, bounds, isWalkable);
         if (!path?.length) continue;
         const route = timedRoute(path, now);
         const activity = goal ? goal.why : STROLLS[Math.floor(Math.random() * STROLLS.length)];

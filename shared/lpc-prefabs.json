@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "gridSize": 32,
+  "prefabs": {
+    "community_garden": {
+      "id": "community_garden",
+      "name": "Community Garden",
+      "structureType": "community_garden",
+      "width": 3,
+      "height": 3,
+      "entry": { "x": 1, "y": 2 },
+      "collision": [
+        { "x": 2, "y": 0 }, { "x": 0, "y": 1 },
+        { "x": 1, "y": 1 }, { "x": 2, "y": 1 }
+      ],
+      "placements": [
+        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 0, "yOffset": 0 },
+        { "assetId": "crop_stage_1", "layer": "ground", "xOffset": 1, "yOffset": 0 },
+        { "assetId": "wooden_fence", "layer": "midground", "xOffset": 2, "yOffset": 0 },
+        { "assetId": "water_barrel", "layer": "midground", "xOffset": 0, "yOffset": 1 },
+        { "assetId": "crop_stage_2", "layer": "ground", "xOffset": 1, "yOffset": 1 },
+        { "assetId": "wooden_bench", "layer": "midground", "xOffset": 1, "yOffset": 1 }
+      ]
+    },
+    "park": {
+      "id": "park",
+      "name": "Earthfolk Park",
+      "structureType": "park",
+      "width": 5,
+      "height": 2,
+      "entry": { "x": 2, "y": 1 },
+      "collision": [{ "x": 0, "y": 1 }, { "x": 1, "y": 1 }, { "x": 2, "y": 0 }, { "x": 3, "y": 0 }, { "x": 4, "y": 0 }, { "x": 3, "y": 1 }, { "x": 4, "y": 1 }],
+      "placements": [
+        { "assetId": "wooden_bench", "layer": "midground", "xOffset": 0, "yOffset": 1 },
+        { "assetId": "streetlamp", "layer": "midground", "xOffset": 2, "yOffset": 0 },
+        { "assetId": "fountain", "layer": "midground", "xOffset": 3, "yOffset": 0 }
+      ]
+    },
+    "farm_row": {
+      "id": "farm_row",
+      "name": "Farm Row",
+      "structureType": "farm_plot",
+      "width": 4,
+      "height": 1,
+      "entry": { "x": 2, "y": 0 },
+      "collision": [],
+      "placements": [
+        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 0, "yOffset": 0 },
+        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 1, "yOffset": 0 },
+        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 2, "yOffset": 0 },
+        { "assetId": "field_bucket", "layer": "midground", "xOffset": 3, "yOffset": 0 }
+      ]
+    },
+    "house_small_brick": {
+      "id": "house_small_brick",
+      "name": "Small Brick House",
+      "structureType": "cottage",
+      "width": 5,
+      "height": 5,
+      "entry": { "x": 2, "y": 4 },
+      "collision": [
+        { "x": 1, "y": 2 }, { "x": 2, "y": 2 }, { "x": 3, "y": 2 },
+        { "x": 1, "y": 3 }, { "x": 3, "y": 3 }
+      ],
+      "placements": [
+        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 1, "yOffset": 4 },
+        { "assetId": "stone_wall", "layer": "midground", "xOffset": 1, "yOffset": 1 },
+        { "assetId": "window", "layer": "midground", "xOffset": 1, "yOffset": 2 },
+        { "assetId": "wood_door", "layer": "midground", "xOffset": 2, "yOffset": 2 },
+        { "assetId": "window", "layer": "midground", "xOffset": 3, "yOffset": 2 },
+        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 1, "yOffset": 0 }
+      ]
+    },
+    "store_wooden": {
+      "id": "store_wooden",
+      "name": "Wooden Store",
+      "structureType": "workshop",
+      "width": 5,
+      "height": 5,
+      "entry": { "x": 2, "y": 4 },
+      "collision": [
+        { "x": 1, "y": 2 }, { "x": 2, "y": 2 }, { "x": 3, "y": 2 },
+        { "x": 1, "y": 3 }, { "x": 3, "y": 3 }
+      ],
+      "placements": [
+        { "assetId": "dirt_path", "layer": "ground", "xOffset": 1, "yOffset": 4 },
+        { "assetId": "wood_wall", "layer": "midground", "xOffset": 1, "yOffset": 1 },
+        { "assetId": "window", "layer": "midground", "xOffset": 1, "yOffset": 2 },
+        { "assetId": "wood_door", "layer": "midground", "xOffset": 2, "yOffset": 2 },
+        { "assetId": "signpost", "layer": "midground", "xOffset": 4, "yOffset": 3 },
+        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 1, "yOffset": 0 }
+      ]
+    },
+    "bank_lpc_grand": {
+      "id": "bank_lpc_grand",
+      "name": "The Earth Bank",
+      "structureType": "industrial_structure",
+      "width": 6,
+      "height": 5,
+      "entry": { "x": 2, "y": 4 },
+      "collision": [
+        { "x": 0, "y": 2 }, { "x": 1, "y": 2 }, { "x": 2, "y": 2 },
+        { "x": 3, "y": 2 }, { "x": 4, "y": 2 }, { "x": 5, "y": 2 },
+        { "x": 0, "y": 3 }, { "x": 1, "y": 3 }, { "x": 4, "y": 3 }, { "x": 5, "y": 3 }
+      ],
+      "placements": [
+        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 0, "yOffset": 4 },
+        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 3, "yOffset": 4 },
+        { "assetId": "stone_wall", "layer": "midground", "xOffset": 0, "yOffset": 2 },
+        { "assetId": "stone_wall", "layer": "midground", "xOffset": 3, "yOffset": 2 },
+        { "assetId": "window", "layer": "midground", "xOffset": 1, "yOffset": 3 },
+        { "assetId": "wood_door", "layer": "midground", "xOffset": 2, "yOffset": 3 },
+        { "assetId": "window", "layer": "midground", "xOffset": 4, "yOffset": 3 },
+        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 0, "yOffset": 0 },
+        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 3, "yOffset": 0 }
+      ]
+    },
+    "bank_forecourt": {
+      "id": "bank_forecourt",
+      "name": "Bank Forecourt",
+      "structureType": "road_segment",
+      "width": 6,
+      "height": 1,
+      "entry": { "x": 2, "y": 0 },
+      "collision": [{ "x": 0, "y": 0 }, { "x": 5, "y": 0 }],
+      "placements": [
+        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 0, "yOffset": 0 },
+        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 3, "yOffset": 0 },
+        { "assetId": "streetlamp", "layer": "midground", "xOffset": 0, "yOffset": 0 },
+        { "assetId": "streetlamp", "layer": "midground", "xOffset": 5, "yOffset": 0 }
+      ]
+    }
+  }
+}

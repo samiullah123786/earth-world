@@ -1,4 +1,5 @@
 import lpcManifest from '../data/lpc_manifest.json';
+import { LPC_PREFABS, matchLegacyPlacements, requireLpcPrefab } from '../../shared/lpc-prefabs';
 
 export type AgentWorldPlacement = {
   tile?: string;
@@ -11,7 +12,8 @@ export type ConstructStructureAction = {
   action: 'construct_structure';
   structureType: string;
   coordinates: { x: number; y: number };
-  blueprint: AgentWorldPlacement[];
+  prefabId?: string;
+  blueprint?: AgentWorldPlacement[];
 };
 
 export type KernelConstructStructureAction = Omit<ConstructStructureAction, 'action'> & {
@@ -57,44 +59,25 @@ export class AgentBuildService<Result = unknown> {
     if (!isWholeTile(input.coordinates?.x) || !isWholeTile(input.coordinates?.y)) {
       throw new Error('construction coordinates must use non-negative whole tiles');
     }
-    if (!Array.isArray(input.blueprint) || input.blueprint.length < 1 || input.blueprint.length > 64) {
-      throw new Error('an LPC blueprint must contain 1 to 64 placements');
-    }
-
-    const solidRects: Array<{ x: number; y: number; w: number; h: number }> = [];
-    const blueprint = input.blueprint.map((placement) => {
-      const hasTile = typeof placement.tile === 'string';
-      const hasProp = typeof placement.prop === 'string';
-      if (hasTile === hasProp) throw new Error('each placement must specify exactly one tile or prop');
-      const assetId = String(hasTile ? placement.tile : placement.prop);
-      const component = components[assetId];
-      if (!component) throw new Error(`unknown LPC asset: ${assetId}`);
-      if (!isWholeTile(placement.xOffset) || !isWholeTile(placement.yOffset)) {
-        throw new Error('placement offsets must use non-negative whole tiles');
-      }
-      const rect = {
-        x: placement.xOffset,
-        y: placement.yOffset,
-        w: component.width,
-        h: component.height,
-      };
-      if (component.solid && solidRects.some((candidate) => overlaps(rect, candidate))) {
-        throw new Error(`${assetId} overlaps another solid component`);
-      }
-      if (component.solid) solidRects.push(rect);
-      return hasTile
-        ? { tile: assetId, xOffset: placement.xOffset, yOffset: placement.yOffset }
-        : { prop: assetId, xOffset: placement.xOffset, yOffset: placement.yOffset };
-    });
+    const prefab = input.prefabId
+      ? requireLpcPrefab(input.prefabId)
+      : matchLegacyPlacements(input.blueprint);
+    if (!prefab) throw new Error('construction must use a registered atomic LPC prefab');
+    if (prefab.structureType !== input.structureType) throw new Error('prefab does not match the requested structure type');
 
     return await this.submitSignedAction({
       type: 'construct_structure',
       structureType: input.structureType,
       coordinates: { ...input.coordinates },
-      blueprint,
+      prefabId: prefab.id,
     });
   }
 }
 
-export const LPC_BUILD_TEMPLATES = lpcManifest.templates as Record<string, AgentWorldPlacement[]>;
+export const LPC_BUILD_TEMPLATES = Object.fromEntries(Object.entries(LPC_PREFABS).map(([id, prefab]) => [
+  id,
+  prefab.placements.map((placement) => placement.layer === 'ground'
+    ? { tile: placement.assetId, xOffset: placement.xOffset, yOffset: placement.yOffset }
+    : { prop: placement.assetId, xOffset: placement.xOffset, yOffset: placement.yOffset }),
+])) as Record<string, AgentWorldPlacement[]>;
 export const LPC_STRUCTURE_TYPES = [...lpcManifest.structureTypes];

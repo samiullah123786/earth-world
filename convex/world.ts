@@ -101,6 +101,7 @@ export const worldObjects = query({
     const careTickets = (await ctx.db.query('careTickets').collect()).filter((ticket) => ticket.state === 'open' || ticket.state === 'claimed')
       .map(({ summary: _summary, resolution: _resolution, ...ticket }) => ticket);
     const activityZones = await ctx.db.query('activityZones').collect();
+    const chunks = await ctx.db.query('worldChunks').collect();
     const now = Date.now();
     // Growth is time, not a stored counter, so every viewer computes the same
     // stage from the same planting without a tick writing rows.
@@ -115,7 +116,7 @@ export const worldObjects = query({
           stage: now >= field.readyAt ? 4 : Math.min(3, 1 + Math.floor(progress * 3)),
         };
       });
-    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, state: state ? {
+    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, chunks, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
     } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925' } };
