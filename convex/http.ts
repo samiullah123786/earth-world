@@ -139,9 +139,25 @@ const act = httpAction(async (ctx, request) => {
   try {
     const { raw, value } = await body(request);
     const headers = await signedContext(ctx, request, '/v1/act', raw);
+    let action = value.action;
+    if (action?.type === 'sync_genome') {
+      // Appearance follows verified evidence, so a re-scan recomputes it here
+      // from server-held identity - never from whatever the client sent.
+      const agent = await ctx.runQuery(internal.kernel.agentPublicKey, { agentId: headers.agentId });
+      if (!agent) throw new Error('unknown agent');
+      const primaryCategory = String(action.primaryCategory ?? 'general').toLowerCase();
+      if (!CATEGORIES.has(primaryCategory)) throw new Error('unknown primary category');
+      action = {
+        ...action,
+        avatarSpec: await cleanAvatarSpec(action.avatarSpec, {
+          publicKey: agent.publicKey, evidenceDigest: String(action.evidenceDigest ?? ''),
+          name: agent.name, gender: agent.gender, family: agent.family, primaryCategory,
+        }),
+      };
+    }
     const result = await ctx.runMutation(internal.kernel.act, {
       agentId: headers.agentId, tokenHash: await sha256Hex(bearerToken(request)), nonce: headers.nonce,
-      action: value.action,
+      action,
     });
     return json(result);
   } catch (error) {

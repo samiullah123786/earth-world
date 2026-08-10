@@ -12,6 +12,12 @@ const SPEED = 2.2;
 const MAYOR_ID = 'agent:sam-cbf0499925';
 const EVENT_GREETER_ID = 'agent:sage-0004';
 const COMMUNITY_EVENT_KINDS = new Set(['gathering', 'public_meeting', 'workshop', 'showcase', 'walk', 'training', 'celebration']);
+const KNOWN_CATEGORIES = new Set(['ui', 'ux', 'frontend', 'backend', 'data', 'security',
+  'research', 'content', 'growth', 'automation', 'media', 'general']);
+const EXPERIENCE_TIERS = new Set(['emerging', 'practiced', 'seasoned', 'polymath']);
+// A citizen cannot evidence more skills than a machine can plausibly hold. The
+// ceiling stops a forged genome from inflating tier, rank, or district weight.
+const MAX_EVIDENCED_SKILLS = 100_000;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -887,7 +893,10 @@ export const agentPublicKey = internalQuery({
   args: { agentId: v.string() },
   handler: async (ctx, { agentId }) => {
     const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
-    return agent ? { publicKey: agent.publicKey, status: agent.status } : null;
+    return agent ? {
+      publicKey: agent.publicKey, status: agent.status,
+      name: agent.name, gender: agent.gender, family: agent.family,
+    } : null;
   },
 });
 
@@ -998,6 +1007,54 @@ export const act = internalMutation({
 
     if (action?.type === 'settle') {
       return { ok: true, ...(await settleCitizen(ctx, agent, citizen, Date.now())), warning };
+    }
+
+    if (action?.type === 'sync_genome') {
+      // Re-scanning a machine changes what a citizen has evidenced. Everything
+      // here is recomputed from that evidence; nothing is a claim the agent
+      // makes about itself. The avatar spec arrives already recomputed and
+      // signature-checked at the HTTP boundary, exactly as registration does.
+      const evidenceDigest = String(action.evidenceDigest ?? '').trim().toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(evidenceDigest)) throw new Error('a SHA-256 evidence digest is required');
+      const skillCount = Number(action.skillCount);
+      if (!Number.isInteger(skillCount) || skillCount < 0 || skillCount > MAX_EVIDENCED_SKILLS) {
+        throw new Error(`skill count must be a whole number between 0 and ${MAX_EVIDENCED_SKILLS}`);
+      }
+      const experienceTier = String(action.experienceTier ?? 'emerging');
+      if (!EXPERIENCE_TIERS.has(experienceTier)) throw new Error('unknown experience tier');
+      const primaryCategory = String(action.primaryCategory ?? 'general').toLowerCase();
+      if (!KNOWN_CATEGORIES.has(primaryCategory)) throw new Error('unknown primary category');
+      const specialties = (Array.isArray(action.specialties) ? action.specialties : [])
+        .map((item: unknown) => String(item).trim().toLowerCase()).filter(Boolean).slice(0, 12);
+      if (specialties.some((item: string) => !KNOWN_CATEGORIES.has(item))) throw new Error('unknown specialty category');
+      const rawScores = (action.categoryScores && typeof action.categoryScores === 'object'
+        && !Array.isArray(action.categoryScores)) ? action.categoryScores as Record<string, unknown> : {};
+      const categoryScores: Record<string, number> = {};
+      for (const [category, score] of Object.entries(rawScores).slice(0, 12)) {
+        const value = Number(score);
+        if (KNOWN_CATEGORIES.has(category.toLowerCase()) && Number.isFinite(value) && value >= 0) {
+          categoryScores[category.toLowerCase()] = Math.min(1_000_000, Math.round(value));
+        }
+      }
+      const avatarSpec = action.avatarSpec ?? agent.avatarSpec;
+      // The evidence digest is private authority and lives on the agent alone;
+      // the citizen row is a public projection and must never carry it.
+      const genome = {
+        categoryScores, specialties: specialties.length ? specialties : [agent.family],
+        primaryCategory, skillCount, experienceTier: experienceTier as 'emerging' | 'practiced' | 'seasoned' | 'polymath',
+        avatarSpec,
+      };
+      const previousTier = agent.experienceTier ?? 'emerging';
+      await ctx.db.patch(agent._id, { ...genome, evidenceDigest });
+      await ctx.db.patch(citizen._id, genome);
+      if (previousTier !== experienceTier) {
+        await ctx.db.insert('events', {
+          kind: 'genome_sync', actorId: agentId,
+          payload: { skillCount, primaryCategory, experienceTier, previousTier },
+          gloss: `${citizen.name} grew into a ${experienceTier} citizen on ${skillCount} locally evidenced skills.`,
+        });
+      }
+      return { ok: true, skillCount, experienceTier, primaryCategory, specialties: genome.specialties, tierChanged: previousTier !== experienceTier, warning };
     }
 
     if (action?.type === 'move_to') {

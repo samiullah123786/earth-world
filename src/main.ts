@@ -4,7 +4,7 @@ import { api } from '../convex/_generated/api';
 import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 import lpcManifest from './data/lpc_manifest.json';
 import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_animations';
-import { resolveAvatarKey, stableIdentityHash, type PublicAvatarSpec } from './avatar_identity';
+import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSpec } from './avatar_identity';
 
 const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
 
@@ -872,6 +872,11 @@ class EarthScene extends Phaser.Scene {
     for (let bit = 0; bit < 9; bit++) {
       if ((markBits >>> bit) & 1) identityMark.fillRect(-3 + (bit % 3) * 2, -13 + Math.floor(bit / 3) * 2, 2, 2);
     }
+    // Skill-tree depth, drawn from the Kernel's computed tier. Never a crown or
+    // officer cap - authority appearance belongs to civic service roles alone.
+    const tierMark = this.add.graphics().setName('tier-insignia');
+    this.drawTierInsignia(tierMark, citizen.experienceTier, accent);
+    tierMark.setData('tier', citizen.experienceTier ?? 'emerging');
     const label = this.add.text(0, -48, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
       backgroundColor: '#1E1E1E', padding: { x: 5, y: 2 },
@@ -889,9 +894,25 @@ class EarthScene extends Phaser.Scene {
     const shield = this.add.graphics().setName('training-shield').setVisible(false);
     shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
-    const container = this.add.container(0, 0, [rankAura, sprite, identityMark, label, bubble, sleepBubble, shield]).setSize(36, 44).setInteractive({ useHandCursor: true });
+    const container = this.add.container(0, 0, [rankAura, sprite, identityMark, tierMark, label, bubble, sleepBubble, shield]).setSize(36, 44).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
+  }
+
+  /** Hard-edged capability pips: one per tier step, a laurel arc at polymath. */
+  drawTierInsignia(graphics: Phaser.GameObjects.Graphics, tier: string | undefined, accent: number) {
+    const { pips, laurel } = tierInsignia(tier);
+    graphics.clear();
+    if (!pips) return;
+    const left = -(pips * 4 - 1) / 2;
+    for (let index = 0; index < pips; index++) {
+      graphics.fillStyle(INK, 0.92).fillRect(left + index * 4 - 1, 8, 4, 4);
+      graphics.fillStyle(accent, 1).fillRect(left + index * 4, 9, 2, 2);
+    }
+    if (laurel) {
+      graphics.fillStyle(accent, 1);
+      for (const [x, y] of [[-8, 7], [-7, 5], [8, 7], [7, 5]]) graphics.fillRect(x, y, 2, 2);
+    }
   }
 
   card(title: string, id: string, rows: string[], note: string) {
@@ -1214,6 +1235,12 @@ class EarthScene extends Phaser.Scene {
       sprite.x = x * TILE + TILE / 2;
       sprite.y = y * TILE + TILE / 2;
       sprite.setDepth(sprite.y);
+
+      const tierMark = sprite.getByName('tier-insignia') as Phaser.GameObjects.Graphics | null;
+      if (tierMark && tierMark.getData('tier') !== (citizen.experienceTier ?? 'emerging')) {
+        this.drawTierInsignia(tierMark, citizen.experienceTier, FAMILY_COLORS[citizen.accent] ?? 0x8b5cf6);
+        tierMark.setData('tier', citizen.experienceTier ?? 'emerging');
+      }
 
       const citImg = sprite.getByName('cit-image') as Phaser.GameObjects.Sprite | null;
       if (citImg) {

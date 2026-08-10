@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { authorityAvatarKey, fallbackAvatarKey, resolveAvatarKey } from './avatar_identity';
-import { avatarSpecFromSeedHex } from '../shared/avatar-identity';
+import { authorityAvatarKey, fallbackAvatarKey, resolveAvatarKey, tierInsignia } from './avatar_identity';
+import { EXPERIENCE_TIERS, avatarSpecFromSeedHex } from '../shared/avatar-identity';
 
 describe('citizen avatar identity', () => {
   const citizen = {
@@ -26,6 +26,17 @@ describe('citizen avatar identity', () => {
   it('provides a stable capability-aware fallback for existing citizens', () => {
     expect(fallbackAvatarKey(citizen)).toMatch(/^citizen_female_creative_\d{2}$/);
     expect(fallbackAvatarKey(citizen)).toBe(fallbackAvatarKey(citizen));
+  });
+
+  it('deepens the insignia as the verified skill tree grows', () => {
+    expect(EXPERIENCE_TIERS.map((tier) => tierInsignia(tier).pips)).toEqual([0, 1, 2, 3]);
+    expect(tierInsignia('polymath').laurel).toBe(true);
+    expect(tierInsignia('seasoned').laurel).toBe(false);
+  });
+
+  it('shows nothing for an unknown or absent tier rather than guessing', () => {
+    expect(tierInsignia(undefined)).toEqual({ pips: 0, laurel: false });
+    expect(tierInsignia('grandmaster')).toEqual({ pips: 0, laurel: false });
   });
 
   it('matches the cross-language signed identity vector', () => {

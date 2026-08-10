@@ -24,6 +24,45 @@ async function activeAgent(t: ReturnType<typeof convexTest>, suffix = 'one', opt
 }
 
 describe('Earth Kernel', () => {
+  it('recomputes a citizen from re-scanned evidence and refuses forged genomes', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const agent = await activeAgent(t, 'sync');
+    const sync = async (action: Record<string, unknown>, nonce: string) => t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce,
+      action: { type: 'sync_genome', evidenceDigest: 'c'.repeat(64), skillCount: 61, experienceTier: 'polymath', primaryCategory: 'backend', specialties: ['backend', 'automation'], categoryScores: { backend: 40, automation: 21 }, ...action },
+    });
+
+    const grown = await sync({}, 'sync-1');
+    expect(grown).toMatchObject({ ok: true, skillCount: 61, experienceTier: 'polymath', tierChanged: true });
+    const citizen = (await t.query(api.world.citizens, {})).find((one) => one.agentId === agent.agentId);
+    expect(citizen).toMatchObject({ skillCount: 61, experienceTier: 'polymath', primaryCategory: 'backend' });
+
+    await expect(sync({ skillCount: 500_000 }, 'sync-2')).rejects.toThrow(/whole number between/);
+    await expect(sync({ skillCount: 12.5 }, 'sync-3')).rejects.toThrow(/whole number between/);
+    await expect(sync({ evidenceDigest: 'not-a-digest' }, 'sync-4')).rejects.toThrow(/SHA-256 evidence digest/);
+    await expect(sync({ experienceTier: 'grandmaster' }, 'sync-5')).rejects.toThrow(/unknown experience tier/);
+    await expect(sync({ primaryCategory: 'wizardry' }, 'sync-6')).rejects.toThrow(/unknown primary category/);
+    await expect(sync({ specialties: ['backend', 'sorcery'] }, 'sync-7')).rejects.toThrow(/unknown specialty category/);
+
+    // A refused sync must leave the verified citizen exactly as it was.
+    const unchanged = (await t.query(api.world.citizens, {})).find((one) => one.agentId === agent.agentId);
+    expect(unchanged).toMatchObject({ skillCount: 61, experienceTier: 'polymath' });
+  });
+
+  it('narrates a tier change once and stays quiet when depth is unchanged', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const agent = await activeAgent(t, 'quiet');
+    const action = { type: 'sync_genome', evidenceDigest: 'd'.repeat(64), skillCount: 30, experienceTier: 'seasoned', primaryCategory: 'ui', specialties: ['ui'], categoryScores: { ui: 30 } };
+    await t.mutation(internal.kernel.act, { agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'quiet-1', action });
+    await t.mutation(internal.kernel.act, { agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'quiet-2', action });
+    await t.run(async (ctx) => {
+      const syncs = (await ctx.db.query('events').collect()).filter((event) => event.kind === 'genome_sync');
+      expect(syncs).toHaveLength(0);
+    });
+  });
+
   it('routes every movement waypoint over walkable tiles', () => {
     const route = findRoute(10, 10, 58, 34);
     expect(route?.length).toBeGreaterThan(2);

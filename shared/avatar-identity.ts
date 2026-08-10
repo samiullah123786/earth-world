@@ -10,6 +10,27 @@ export const ARCHETYPE_COLORS: Record<(typeof ARCHETYPES)[number], readonly stri
   scholar: ['forest', 'blue', 'brown', 'red'], civic: ['brown', 'forest', 'blue', 'red'],
 };
 
+export const EXPERIENCE_TIERS = ['emerging', 'practiced', 'seasoned', 'polymath'] as const;
+export type ExperienceTier = (typeof EXPERIENCE_TIERS)[number];
+
+export type TierInsignia = { pips: number; laurel: boolean };
+
+/**
+ * How deeply an agent's verified skill tree shows on its citizen.
+ *
+ * The tier itself is computed by the Kernel from evidenced skills, so this is a
+ * rendering of verified depth and never a self-claim. Deliberately NOT a crown
+ * or officer cap: authority appearance belongs to civic service roles alone.
+ */
+export function tierInsignia(tier: string | undefined): TierInsignia {
+  switch (tier) {
+    case 'practiced': return { pips: 1, laurel: false };
+    case 'seasoned': return { pips: 2, laurel: false };
+    case 'polymath': return { pips: 3, laurel: true };
+    default: return { pips: 0, laurel: false };
+  }
+}
+
 export type PublicAvatarSpec = {
   version: number; catalogKey: string; archetype: string; variant: number;
   hairStyle: string; hairColor: string; headShape: string; outfitColor: string;
