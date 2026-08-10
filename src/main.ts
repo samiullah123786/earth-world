@@ -501,21 +501,49 @@ class EarthScene extends Phaser.Scene {
       return;
     }
     if (kind === 'industry') {
-      // A working hall: wide timber body, sawtooth roof, warm door, soft chimney.
-      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 5, y + height - 1, width + 6, 10);
-      graphics.fillStyle(INK).fillRect(x, y + height * 0.3 - 2, width, height * 0.7);
-      graphics.fillStyle(0xe9d6ad).fillRect(x + 2, y + height * 0.3, width - 4, height * 0.7 - 4);
-      graphics.fillStyle(0x6f4328).fillRect(x + 2, y + height * 0.3, width - 4, 4);
-      const teeth = Math.max(2, Math.floor(width / 18));
-      for (let tooth = 0; tooth < teeth; tooth++) {
-        const toothX = x + tooth * (width / teeth);
-        graphics.fillStyle(0x9b6a3f).fillTriangle(toothX, y + height * 0.3, toothX + width / teeth, y + height * 0.3, toothX + width / teeth, y + 4);
-        graphics.lineStyle(2, INK).strokeTriangle(toothX, y + height * 0.3, toothX + width / teeth, y + height * 0.3, toothX + width / teeth, y + 4);
+      // A working hall in full native grammar: timber-framed plaster, one
+      // connected sawtooth roof with skylight glints, warm windows, a real
+      // door with a path, crates, and a soft chimney. No empty walls.
+      const wallY = y + Math.max(10, height * 0.34);
+      const wallH = y + height - wallY - 3;
+      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 6, y + height, width + 8, 10);
+      graphics.fillStyle(INK).fillRect(x - 1, wallY - 2, width + 2, wallH + 5);
+      graphics.fillStyle(0xe9d6ad).fillRect(x + 1, wallY, width - 2, wallH);
+      const beams = Math.max(3, Math.floor(width / 16));
+      graphics.fillStyle(0x6f4328);
+      for (let beam = 0; beam <= beams; beam++) {
+        graphics.fillRect(x + 1 + beam * ((width - 5) / beams), wallY, 3, wallH);
       }
-      graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 5, y + height - 16, 10, 12);
-      graphics.fillStyle(0xffd79a).fillRect(x + width / 2 - 3, y + height - 14, 6, 4);
-      graphics.fillStyle(accent).fillRect(x + 5, y + height * 0.3 + 6, 8, 5);
-      graphics.fillStyle(0x8d8d8d, 0.55).fillRect(x + width - 10, y - 2, 3, 3).fillRect(x + width - 8, y - 6, 3, 3);
+      graphics.fillRect(x + 1, wallY, width - 2, 3);
+      const teeth = Math.max(3, Math.floor(width / 14));
+      const toothWidth = width / teeth;
+      const toothHeight = Math.min(12, toothWidth * 0.8);
+      graphics.fillStyle(0x4d301e).fillRect(x - 1, wallY - 7, width + 2, 8);
+      for (let tooth = 0; tooth < teeth; tooth++) {
+        const toothX = x + tooth * toothWidth;
+        graphics.fillStyle(0x9b6a3f).fillTriangle(
+          toothX, wallY - 6, toothX + toothWidth, wallY - 6, toothX + toothWidth, wallY - 6 - toothHeight);
+        graphics.lineStyle(2, INK).strokeTriangle(
+          toothX, wallY - 6, toothX + toothWidth, wallY - 6, toothX + toothWidth, wallY - 6 - toothHeight);
+        graphics.fillStyle(0xffd79a).fillRect(toothX + toothWidth - 6, wallY - 10, 3, 2);
+      }
+      const windowCount = Math.max(2, beams - 1);
+      for (let windowIndex = 0; windowIndex < windowCount; windowIndex++) {
+        const windowX = x + 7 + windowIndex * ((width - 20) / Math.max(1, windowCount - 1));
+        graphics.fillStyle(INK).fillRect(windowX, wallY + 7, 9, 8);
+        graphics.fillStyle(0xffd79a).fillRect(windowX + 1, wallY + 8, 7, 6);
+        graphics.fillStyle(0xfdf6ec, 0.7).fillRect(windowX + 2, wallY + 9, 2, 2);
+      }
+      graphics.fillStyle(INK).fillRect(x + width / 2 - 6, y + height - 18, 12, 15);
+      graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 5, y + height - 17, 10, 14);
+      graphics.fillStyle(0xffd79a).fillRect(x + width / 2 - 2, y + height - 14, 4, 3);
+      graphics.fillStyle(0xd8b879).fillRect(x + width / 2 - 4, y + height - 3, 8, 4);
+      graphics.fillStyle(INK).fillRect(x + 4, wallY - 1, 12, 7);
+      graphics.fillStyle(accent).fillRect(x + 5, wallY, 10, 5);
+      graphics.fillStyle(0x9b6a3f).fillRect(x + width - 13, y + height - 13, 8, 8);
+      graphics.lineStyle(1, INK).strokeRect(x + width - 13, y + height - 13, 8, 8);
+      graphics.fillStyle(0x4d301e).fillRect(x + width - 10, wallY - 18, 5, 12);
+      graphics.fillStyle(0x8d8d8d, 0.5).fillRect(x + width - 9, wallY - 22, 3, 3).fillRect(x + width - 6, wallY - 26, 3, 3);
       return;
     }
     const architecture = build.blueprint?.architecture ?? 'native';
