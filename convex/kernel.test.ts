@@ -172,6 +172,17 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.kernel.decideApproval, {
       tokenHash: agent.ownerToken, approvalId: claim.approvalId, decision: 'approve',
     });
+    await t.run(async (ctx) => {
+      await ctx.db.insert('builds', {
+        buildId: 'build:razed-audit-tombstone', plotId: 'plot-10-10', ownerAgentId: agent.agentId,
+        structure: 'blueprint', state: 'razed', createdAt: Date.now(), x: 10, y: 10, w: 3, h: 3,
+        blueprint: { collision: [{ x: 0, y: 0 }], prefabId: 'community_garden' },
+      });
+      const isWalkable = await loadWorldWalkability(ctx, { width: 64, height: 48 });
+      expect(isWalkable(10, 10)).toBe(true);
+    });
+    expect((await t.query(api.world.worldObjects, {})).builds
+      .some((build) => build.buildId === 'build:razed-audit-tombstone')).toBe(false);
     await expect(t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-unknown',
       action: {

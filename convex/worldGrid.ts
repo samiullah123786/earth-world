@@ -11,7 +11,7 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
   const chunkMap = new Map(chunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
   const dynamicBlocked = new Set<string>();
   for (const build of builds) {
-    if (build.state === 'planned' || build.x === undefined || build.y === undefined) continue;
+    if (build.state === 'planned' || build.state === 'razed' || build.x === undefined || build.y === undefined) continue;
     const collision = Array.isArray(build.blueprint?.collision) ? build.blueprint.collision : [];
     for (const cell of collision) {
       const x = build.x + Number(cell.x), y = build.y + Number(cell.y);
