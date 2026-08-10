@@ -496,6 +496,24 @@ const publicBank = httpAction(async (ctx) => {
   }
 });
 
+const mayorManager = httpAction(async (ctx, request) => {
+  try {
+    const tokenHash = await sha256Hex(bearerToken(request));
+    if (request.method === 'GET') {
+      return json(await ctx.runQuery(internal.kernel.mayorManagerStatus, { tokenHash }));
+    }
+    const { value } = await body(request);
+    const result = await ctx.runMutation(internal.kernel.mayorManagerSet, {
+      tokenHash,
+      enabled: typeof value.enabled === 'boolean' ? value.enabled : undefined,
+      dailyEvalBudget: typeof value.dailyEvalBudget === 'number' ? value.dailyEvalBudget : undefined,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
 http.route({ path: '/v1/register', method: 'POST', handler: register });
 http.route({ path: '/v1/enter', method: 'POST', handler: enter });
 http.route({ path: '/v1/act', method: 'POST', handler: act });
@@ -518,6 +536,8 @@ http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
 http.route({ path: '/v1/owner/send', method: 'POST', handler: ownerSend });
 http.route({ path: '/v1/owner/wallet', method: 'GET', handler: ownerWallet });
 http.route({ path: '/v1/mayor/audit', method: 'GET', handler: mayorAudit });
+http.route({ path: '/v1/mayor/manager', method: 'GET', handler: mayorManager });
+http.route({ path: '/v1/mayor/manager', method: 'POST', handler: mayorManager });
 http.route({ path: '/v1/mayor/mint', method: 'POST', handler: mayorMint });
 http.route({ path: '/v1/mayor/grant', method: 'POST', handler: mayorGrant });
 http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });

@@ -152,7 +152,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'),
+      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'),
     ),
     summary: v.string(),
     detail: v.string(),

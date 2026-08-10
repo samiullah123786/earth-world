@@ -20,7 +20,7 @@ async function citizen(t: ReturnType<typeof convexTest>, suffix: string) {
   });
   await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `claim-${suffix}`, ownerSessionHash: `owner-${suffix}` });
   await t.mutation(internal.kernel.enter, { agentId, nonce: `enter-${suffix}`, sessionTokenHash: `agent-${suffix}` });
-  return { agentId, token: `agent-${suffix}` };
+  return { agentId, token: `agent-${suffix}`, ownerToken: `owner-${suffix}` };
 }
 
 async function newStorageId(t: ReturnType<typeof convexTest>) {
@@ -135,6 +135,157 @@ describe('the Earth Bank vault', () => {
       expect(builds.every((row) => row.blueprint?.assetFramework === 'earthfolk-lpc-v1')).toBe(true);
       const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', 'venue:earth-bank')).first();
       expect(venue?.name).toBe('The Earth Bank');
+    });
+  });
+});
+
+describe('the Bank Manager and the Mayor', () => {
+  async function mayoralWorld(t: ReturnType<typeof convexTest>) {
+    await t.mutation(internal.seed.init, {});
+    const mayor = await citizen(t, 'the-mayor');
+    await t.mutation(internal.kernel.transferGovernance, { targetAgentId: mayor.agentId });
+    return mayor;
+  }
+
+  it('moves the seat and the uniform together, and refuses the unclaimed', async () => {
+    const t = convexTest(schema, modules);
+    const mayor = await mayoralWorld(t);
+    await t.run(async (ctx) => {
+      const world = (await ctx.db.query('worldState').collect())[0];
+      expect(world.mayorAgentId).toBe(mayor.agentId);
+      expect(world.founderAgentId).toBe(mayor.agentId);
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === mayor.agentId);
+      expect(row?.serviceRole).toBe('Mayor of Earth');
+    });
+    await expect(t.mutation(internal.kernel.transferGovernance, { targetAgentId: 'agent:nobody-000' }))
+      .rejects.toThrow(/not active/);
+  });
+
+  it('gates the manager on the switch and the daily budget, reserving what it grants', async () => {
+    const t = convexTest(schema, modules);
+    const depositor = await citizen(t, 'gated');
+    await t.mutation(internal.seed.init, {});
+    await act(t, depositor, deposit({ storageId: await newStorageId(t) }));
+    const paused = await t.mutation(internal.kernel.managerGate, { batch: 3 });
+    expect(paused).toMatchObject({ allowed: false, why: 'manager is paused' });
+
+    await t.mutation(internal.kernel.operatorManagerSet, { enabled: true });
+    const granted = await t.mutation(internal.kernel.managerGate, { batch: 3 });
+    expect(granted.allowed).toBe(true);
+    expect(granted.assets).toHaveLength(1);
+    // The grant reserved budget even though nothing was applied yet.
+    await t.run(async (ctx) => {
+      const config = (await ctx.db.query('bankConfig').collect())[0];
+      expect(config.evalsToday).toBe(1);
+    });
+    // The gate reserves BUDGET, not assets: an unevaluated asset stays
+    // eligible for the next tick, bounded by the daily budget. Shrink the
+    // budget to what is already spent and the gate closes.
+    await t.run(async (ctx) => {
+      const config = (await ctx.db.query('bankConfig').collect())[0];
+      await ctx.db.patch(config._id, { dailyEvalBudget: 1 });
+    });
+    const spent = await t.mutation(internal.kernel.managerGate, { batch: 3 });
+    expect(spent).toMatchObject({ allowed: false, why: 'daily evaluation budget is spent' });
+  });
+
+  it('applies a clean appraisal: evaluated, ranked, categorised', async () => {
+    const t = convexTest(schema, modules);
+    await mayoralWorld(t);
+    const depositor = await citizen(t, 'clean');
+    const banked = await act(t, depositor, deposit({ storageId: await newStorageId(t) }));
+    const result = await t.mutation(internal.kernel.applyEvaluation, {
+      assetId: String(banked.assetId), model: 'test-model',
+      evaluation: { riskLevel: 'none', riskFindings: [], valueRank: 4, categories: ['content', 'not-a-slug'], summary: 'A tidy, useful skill.' },
+    });
+    expect(result.flagged).toBe(false);
+    await t.run(async (ctx) => {
+      const asset = (await ctx.db.query('bankAssets').collect())[0];
+      expect(asset.state).toBe('evaluated');
+      expect(asset.valueRank).toBe(4);
+      expect(asset.llmCategories).toEqual(['content']);
+    });
+  });
+
+  it('enforces the floor: the model can never clear a deterministic flag', async () => {
+    const t = convexTest(schema, modules);
+    const mayor = await mayoralWorld(t);
+    const depositor = await citizen(t, 'floored');
+    const banked = await act(t, depositor, deposit({
+      storageId: await newStorageId(t), digest: 'f'.repeat(64), normalizedDigest: '9'.repeat(64), name: 'sneaky-deploy',
+      safety: { verdict: 'needs_review', flags: ['shell_execution'], note: 'ships a script', scannerVersion: 'earth-safety-1' },
+    }));
+    // The model says all clear. The scanner said otherwise. The scanner wins.
+    const result = await t.mutation(internal.kernel.applyEvaluation, {
+      assetId: String(banked.assetId), model: 'test-model',
+      evaluation: { riskLevel: 'none', riskFindings: [], valueRank: 5, categories: ['automation'], summary: 'Looks fine to me.' },
+    });
+    expect(result.flagged).toBe(true);
+    await t.run(async (ctx) => {
+      const asset = (await ctx.db.query('bankAssets').collect())[0];
+      expect(asset.state).toBe('flagged');
+      const inbox = (await ctx.db.query('approvals').collect())
+        .filter((row) => row.kind === 'bank_flag' && row.agentId === mayor.agentId);
+      expect(inbox).toHaveLength(1);
+      expect(inbox[0].risk).toBe('strict');
+    });
+  });
+
+  it('adds its own flag when it sees high risk in a clean-scanned deposit', async () => {
+    const t = convexTest(schema, modules);
+    const mayor = await mayoralWorld(t);
+    const depositor = await citizen(t, 'suspicious');
+    const banked = await act(t, depositor, deposit({ storageId: await newStorageId(t) }));
+    const result = await t.mutation(internal.kernel.applyEvaluation, {
+      assetId: String(banked.assetId), model: 'test-model',
+      evaluation: { riskLevel: 'high', riskFindings: ['asks the reader to hide actions from the owner'], valueRank: 2, categories: ['content'], summary: 'Reads like a covert instruction.' },
+    });
+    expect(result.flagged).toBe(true);
+    await t.run(async (ctx) => {
+      const inbox = (await ctx.db.query('approvals').collect()).filter((row) => row.kind === 'bank_flag');
+      expect(inbox[0].agentId).toBe(mayor.agentId);
+      expect(inbox[0].payload.flags).toContain('manager_high_risk');
+    });
+  });
+
+  it('opens a novel category once and tells the Mayor', async () => {
+    const t = convexTest(schema, modules);
+    const mayor = await mayoralWorld(t);
+    const depositor = await citizen(t, 'novel');
+    const banked = await act(t, depositor, deposit({ storageId: await newStorageId(t) }));
+    await t.mutation(internal.kernel.applyEvaluation, {
+      assetId: String(banked.assetId), model: 'test-model',
+      evaluation: { riskLevel: 'none', riskFindings: [], valueRank: 3, categories: [], novelCategory: 'DevOps Tooling!', summary: 'Deployment craft.' },
+    });
+    await t.run(async (ctx) => {
+      const created = (await ctx.db.query('bankCategories').collect()).filter((row) => row.createdBy === 'manager');
+      expect(created).toHaveLength(1);
+      expect(created[0].slug).toBe('devops-tooling');
+      const notices = (await ctx.db.query('notifications').collect())
+        .filter((row) => row.recipientAgentId === mayor.agentId && row.title.includes('devops-tooling'));
+      expect(notices).toHaveLength(1);
+    });
+  });
+
+  it('lets the Mayor release a hold', async () => {
+    const t = convexTest(schema, modules);
+    const mayor = await mayoralWorld(t);
+    const depositor = await citizen(t, 'judged');
+    const banked = await act(t, depositor, deposit({
+      storageId: await newStorageId(t), digest: '8'.repeat(64), normalizedDigest: '7'.repeat(64), name: 'judged-skill',
+      safety: { verdict: 'needs_review', flags: ['shell_execution'], note: 'ships a script', scannerVersion: 'earth-safety-1' },
+    }));
+    await t.mutation(internal.kernel.applyEvaluation, {
+      assetId: String(banked.assetId), model: 'test-model',
+      evaluation: { riskLevel: 'low', riskFindings: ['a shell block, plainly labelled'], valueRank: 3, categories: ['automation'], summary: 'Risk is visible, not hidden.' },
+    });
+    const approvalId = await t.run(async (ctx) =>
+      (await ctx.db.query('approvals').collect()).find((row) => row.kind === 'bank_flag')!._id);
+    await t.mutation(internal.kernel.decideApproval, { tokenHash: mayor.ownerToken, approvalId, decision: 'approve' });
+    await t.run(async (ctx) => {
+      const asset = (await ctx.db.query('bankAssets').collect()).find((row) => row.title === 'judged-skill');
+      expect(asset?.state).toBe('evaluated');
+      expect(asset?.valueNote).toContain('Mayor reviewed the hold');
     });
   });
 });

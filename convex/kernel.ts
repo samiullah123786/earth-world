@@ -1,7 +1,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { findRoute, walkableInWorld } from './pathfinding';
-import { assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
+import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
   GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury, payForTrade, sendTokens, supplyAudit,
@@ -15,7 +15,7 @@ const SPEED = 2.2;
 const MAYOR_ID = 'agent:sam-cbf0499925';
 const EVENT_GREETER_ID = 'agent:sage-0004';
 const COMMUNITY_EVENT_KINDS = new Set(['gathering', 'public_meeting', 'workshop', 'showcase', 'walk', 'training', 'celebration']);
-const KNOWN_CATEGORIES = new Set(['ui', 'ux', 'frontend', 'backend', 'data', 'security',
+export const KNOWN_CATEGORIES = new Set(['ui', 'ux', 'frontend', 'backend', 'data', 'security',
   'research', 'content', 'growth', 'automation', 'media', 'general']);
 const EXPERIENCE_TIERS = new Set(['emerging', 'practiced', 'seasoned', 'polymath']);
 // A citizen cannot evidence more skills than a machine can plausibly hold. The
@@ -138,7 +138,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -2683,6 +2683,16 @@ export const decideApproval = internalMutation({
         await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
           `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
       }
+      if (approval.kind === 'bank_flag') {
+        const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
+        if (asset && asset.state === 'flagged') {
+          await ctx.db.patch(asset._id, { state: 'retired', updatedAt: now });
+          await ctx.db.insert('events', {
+            kind: 'bank_retired', actorId: session.agentId, payload: { assetId: asset.assetId },
+            gloss: `The Mayor retired ${asset.title} from the Earth Bank vault.`,
+          });
+        }
+      }
       if (approval.kind === 'package_release') {
         const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', String(approval.payload?.tradeId ?? ''))).first();
         if (trade && trade.state === 'proposed') {
@@ -2767,6 +2777,19 @@ export const decideApproval = internalMutation({
       } else {
         throw new Error('plot expansion stage is invalid');
       }
+      landHandled = true;
+    }
+    if (approval.kind === 'bank_flag') {
+      const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
+      if (!asset || asset.state !== 'flagged') throw new Error('that vault case is no longer open');
+      await ctx.db.patch(asset._id, {
+        state: 'evaluated', updatedAt: now,
+        valueNote: `${asset.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
+      });
+      await ctx.db.insert('events', {
+        kind: 'bank_released', actorId: session.agentId, payload: { assetId: asset.assetId },
+        gloss: `The Mayor reviewed ${asset.title} and released it for withdrawal from the Earth Bank.`,
+      });
       landHandled = true;
     }
     if (approval.kind === 'token_transfer') {
@@ -2879,6 +2902,215 @@ export const decideApproval = internalMutation({
     }
     await ctx.db.patch(approval._id, { state: 'approved', decidedAt: now, decidedBy: session.agentId });
     return { ok: true, state: 'approved' as const, ...landResult };
+  },
+});
+
+/**
+ * Operator migration of the governance seats. Runs through the same committer
+ * as a democratic appointment, so uniforms, services, and narration all move
+ * with the office. Refuses a citizen whose owner never completed the claim.
+ */
+export const transferGovernance = internalMutation({
+  args: { targetAgentId: v.string() },
+  handler: async (ctx, { targetAgentId }) => {
+    const target = await requireActiveAgent(ctx, targetAgentId);
+    const now = Date.now();
+    await commitMayorAppointment(ctx, targetAgentId, 'operator-migration', now);
+    const world = await ensureWorldState(ctx);
+    await ctx.db.patch(world._id, { founderAgentId: targetAgentId, updatedAt: now });
+    return { ok: true, mayorAgentId: targetAgentId, founderAgentId: targetAgentId, name: target.name };
+  },
+});
+
+export const governanceState = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    // Read the same row every governance path writes, without the insert
+    // ensureWorldState would attempt - queries cannot write.
+    const world = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', WORLD_KEY)).first();
+    const mayorAgentId = world?.mayorAgentId ?? null;
+    const inbox = mayorAgentId
+      ? (await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', mayorAgentId).eq('state', 'pending')).collect())
+      : [];
+    return {
+      mayorAgentId, founderAgentId: world?.founderAgentId ?? null,
+      mayorInbox: inbox.map((row) => ({ kind: row.kind, summary: row.summary })),
+    };
+  },
+});
+
+/** Operator dial for the manager: same effect as the Mayor's switch, reachable
+ * only through the deployment CLI, never over HTTP. */
+export const operatorManagerSet = internalMutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, { enabled }) => {
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config) throw new Error('the Bank has not been seeded yet');
+    await ctx.db.patch(config._id, { managerEnabled: enabled });
+    return { ok: true, managerEnabled: enabled };
+  },
+});
+
+/** The manager's dials. Reading is Mayor business; turning them, doubly so. */
+export const mayorManagerStatus = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    await requireMayorSession(ctx, tokenHash);
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    const assets = await ctx.db.query('bankAssets').collect();
+    return {
+      ok: true,
+      managerEnabled: config?.managerEnabled ?? false,
+      dailyEvalBudget: config?.dailyEvalBudget ?? 0,
+      evalsToday: config?.evalsToday ?? 0,
+      pending: assets.filter((row) => row.state !== 'retired' && !row.evaluatedAt).length,
+      flagged: assets.filter((row) => row.state === 'flagged').length,
+      evaluated: assets.filter((row) => Boolean(row.evaluatedAt)).length,
+    };
+  },
+});
+
+export const mayorManagerSet = internalMutation({
+  args: { tokenHash: v.string(), enabled: v.optional(v.boolean()), dailyEvalBudget: v.optional(v.number()) },
+  handler: async (ctx, { tokenHash, enabled, dailyEvalBudget }) => {
+    await requireMayorSession(ctx, tokenHash);
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config) throw new Error('the Bank has not been seeded yet');
+    const patch: Record<string, unknown> = {};
+    if (typeof enabled === 'boolean') patch.managerEnabled = enabled;
+    if (typeof dailyEvalBudget === 'number') {
+      if (!Number.isInteger(dailyEvalBudget) || dailyEvalBudget < 0 || dailyEvalBudget > 5000) throw new Error('daily budget must be 0-5000 evaluations');
+      patch.dailyEvalBudget = dailyEvalBudget;
+    }
+    await ctx.db.patch(config._id, patch);
+    await ctx.db.insert('events', {
+      kind: 'governance', actorId: 'mayor', payload: { manager: patch },
+      gloss: typeof enabled === 'boolean'
+        ? `The Mayor turned the Bank Manager ${enabled ? 'on' : 'off'}.`
+        : 'The Mayor adjusted the Bank Manager evaluation budget.',
+    });
+    return { ok: true, ...patch };
+  },
+});
+
+/**
+ * One manager tick's allowance. Rolls the daily counter, refuses when paused
+ * or spent, and reserves the batch it grants so a stuck action cannot spend
+ * the same budget twice.
+ */
+export const managerGate = internalMutation({
+  args: { batch: v.number() },
+  handler: async (ctx, { batch }) => {
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config || !config.managerEnabled) return { allowed: false, why: 'manager is paused' };
+    const today = new Date().toISOString().slice(0, 10);
+    let spent = config.evalsToday;
+    if (config.dayStamp !== today) {
+      spent = 0;
+      await ctx.db.patch(config._id, { dayStamp: today, evalsToday: 0 });
+    }
+    const remaining = Math.max(0, config.dailyEvalBudget - spent);
+    if (!remaining) return { allowed: false, why: 'daily evaluation budget is spent' };
+    const allowance = Math.min(batch, remaining, 4);
+    const pending = (await ctx.db.query('bankAssets').collect())
+      .filter((row) => row.state !== 'retired' && !row.evaluatedAt).slice(0, allowance);
+    if (!pending.length) return { allowed: false, why: 'nothing awaits evaluation' };
+    await ctx.db.patch(config._id, { evalsToday: spent + pending.length, dayStamp: today });
+    return {
+      allowed: true,
+      assets: pending.map((row) => ({
+        assetId: row.assetId, title: row.title, summary: row.summary, license: row.license,
+        source: row.source, categories: row.categories, sizeBytes: row.sizeBytes,
+        verdict: row.safety.verdict, flags: row.safety.flags, storageId: row.storageId,
+      })),
+    };
+  },
+});
+
+/**
+ * Write one evaluation into the vault. The deterministic scanner is the floor:
+ * the manager may add risk and rank value, and it may never clear a flag.
+ */
+export const applyEvaluation = internalMutation({
+  args: {
+    assetId: v.string(),
+    model: v.string(),
+    evaluation: v.object({
+      riskLevel: v.string(),
+      riskFindings: v.array(v.string()),
+      valueRank: v.number(),
+      categories: v.array(v.string()),
+      novelCategory: v.optional(v.string()),
+      summary: v.string(),
+    }),
+  },
+  handler: async (ctx, { assetId, model, evaluation }) => {
+    const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', assetId)).first();
+    if (!asset) throw new Error('asset is missing');
+    if (asset.evaluatedAt) return { ok: true, alreadyEvaluated: true };
+    const now = Date.now();
+
+    const riskLevel = ['none', 'low', 'high'].includes(evaluation.riskLevel) ? evaluation.riskLevel : 'high';
+    const llmFlagged = riskLevel === 'high';
+    // Floor rule: needs_review stays flagged whatever the model thinks.
+    const flagged = asset.safety.verdict === 'needs_review' || asset.state === 'flagged' || llmFlagged;
+
+    const knownCategories = evaluation.categories.map((item) => item.toLowerCase()).filter((item) => KNOWN_CATEGORIES.has(item));
+    let novelSlug: string | undefined;
+    const proposed = (evaluation.novelCategory ?? '').toLowerCase().trim().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (proposed && proposed.length >= 2 && proposed.length <= 24 && !KNOWN_CATEGORIES.has(proposed)) {
+      const existing = await ctx.db.query('bankCategories').withIndex('slug', (q) => q.eq('slug', proposed)).first();
+      if (!existing) {
+        await ctx.db.insert('bankCategories', { slug: proposed, title: proposed.toUpperCase(), createdBy: 'manager', createdAt: now });
+        const world = await ensureWorldState(ctx);
+        if (world.mayorAgentId) {
+          await notifyOwner(ctx, world.mayorAgentId, 'info', `The Bank Manager opened a new category: ${proposed}`,
+            `Created while evaluating ${asset.title}. Merge or rename it from the Bank if it does not belong.`);
+        }
+        await ctx.db.insert('events', {
+          kind: 'bank_category', actorId: 'bank-manager', payload: { slug: proposed, assetId },
+          gloss: `The Bank Manager opened a new knowledge category: ${proposed}.`,
+        });
+      }
+      novelSlug = proposed;
+    }
+
+    const valueRank = Math.min(5, Math.max(1, Math.round(evaluation.valueRank)));
+    const findings = evaluation.riskFindings.map((item) => String(item).slice(0, 160)).slice(0, 8);
+    await ctx.db.patch(asset._id, {
+      state: flagged ? 'flagged' : 'evaluated',
+      valueRank,
+      valueNote: [evaluation.summary.slice(0, 300), ...(findings.length ? [`Manager risk notes: ${findings.join(' | ')}`] : [])].join(' — ').slice(0, 800),
+      llmCategories: [...new Set([...knownCategories, ...(novelSlug ? [novelSlug] : [])])].slice(0, 5),
+      evaluatedAt: now, updatedAt: now,
+    });
+
+    if (flagged) {
+      const world = await ensureWorldState(ctx);
+      if (world.mayorAgentId) {
+        const open = (await ctx.db.query('approvals')
+          .withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending')).collect())
+          .find((row) => row.kind === 'bank_flag' && row.payload?.assetId === assetId);
+        if (!open) {
+          const allFlags = [...new Set([...asset.safety.flags, ...(llmFlagged ? ['manager_high_risk'] : [])])];
+          const approvalId = await insertApproval(ctx, world.mayorAgentId, 'bank_flag',
+            `Bank hold: ${asset.title}`,
+            `The vault holds ${asset.title} (deposited by ${asset.depositorAgentId}). Scanner: ${asset.safety.verdict}. `
+            + `Manager (${model}) risk ${riskLevel}, value ${valueRank}/5. ${findings.join(' ')} `
+            + 'Approve releases copies for withdrawal; decline retires it from the vault.',
+            { assetId, title: asset.title, flags: allFlags }, 'strict');
+          await notifyOwner(ctx, world.mayorAgentId, 'approval', `The Bank holds ${asset.title} for your judgment`,
+            'The manager finished its review and the case is in your inbox.', approvalId);
+        }
+      }
+    }
+    await ctx.db.insert('events', {
+      kind: 'bank_evaluated', actorId: 'bank-manager', payload: { assetId, valueRank, riskLevel, flagged },
+      gloss: flagged
+        ? `The Bank Manager reviewed ${asset.title} and referred it to the Mayor.`
+        : `The Bank Manager appraised ${asset.title} at ${valueRank}/5 and cleared it for withdrawal.`,
+    });
+    return { ok: true, flagged, valueRank };
   },
 });
 

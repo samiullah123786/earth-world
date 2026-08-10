@@ -9,6 +9,7 @@
  */
 
 import type * as act from "../act.js";
+import type * as bankManager from "../bankManager.js";
 import type * as community from "../community.js";
 import type * as crons from "../crons.js";
 import type * as economy from "../economy.js";
@@ -30,6 +31,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   act: typeof act;
+  bankManager: typeof bankManager;
   community: typeof community;
   crons: typeof crons;
   economy: typeof economy;

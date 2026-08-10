@@ -9,4 +9,8 @@ crons.interval('security cleanup', { minutes: 5 }, internal.kernel.cleanup, {});
 crons.interval('presence sweep', { minutes: 1 }, internal.kernel.presenceSweep, {});
 crons.interval('meeting scheduler', { seconds: 30 }, internal.kernel.meetingTick, {});
 
+// The Bank Manager reads new deposits. Budget-gated and pausable by the Mayor;
+// a tick with nothing pending costs nothing at all.
+crons.interval('bank manager', { minutes: 3 }, internal.bankManager.run, {});
+
 export default crons;
