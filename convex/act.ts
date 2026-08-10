@@ -314,17 +314,26 @@ export const ambientTick = internalMutation({
     // (kind service_reply, deduped via ack:<messageId>). The real reply still
     // comes from the recipient's own brain when their owner returns.
     const agedLetters = (await ctx.db.query('messages').collect()).filter((message: any) =>
-      message.kind === 'letter' && !message.readAt && now - message.sentAt > 10 * 60_000);
-    for (const letter of agedLetters.slice(0, 5)) {
+      message.kind === 'letter' && !message.readAt && !message.ackedAt && now - message.sentAt > 10 * 60_000);
+    let acked = 0;
+    for (const letter of agedLetters) {
+      if (acked >= 5) break;
       const recipient = citizens.find((candidate) => candidate.agentId === letter.recipientId);
-      if (!recipient || recipient.online) continue;
+      if (!recipient || recipient.online) {
+        // Online recipients answer personally; stamp so this letter never
+        // occupies the queue again (the old slice(0,5) starved on these).
+        await ctx.db.patch(letter._id, { ackedAt: now });
+        continue;
+      }
       const ackId = 'ack:' + letter.messageId;
+      await ctx.db.patch(letter._id, { ackedAt: now });
       if (await ctx.db.query('messages').withIndex('messageId', (q: any) => q.eq('messageId', ackId)).first()) continue;
       await ctx.db.insert('messages', {
         messageId: ackId, senderId: letter.recipientId, recipientId: letter.senderId,
         body: `${recipient.name} is away right now. Your letter is safe in their letterbox and they will reply personally when their owner returns.`,
         sentAt: now, kind: 'service_reply',
       });
+      acked++;
     }
   },
 });
