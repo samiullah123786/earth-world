@@ -235,7 +235,8 @@ export const ambientTick = internalMutation({
           fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: now,
           t1: route[route.length - 1].at, route, state: 'ambient', activity,
         });
-        if (Math.random() < 0.25) {
+        // Day-plan steps always narrate (max 8/day); ordinary moves stay sampled.
+        if (planStep || Math.random() < 0.25) {
           await ctx.db.insert('events', {
             kind: 'move', actorId: citizen.agentId, payload: { x: nx, y: ny, steps: path.length },
             gloss: `${citizen.name} is ${activity}.`,
