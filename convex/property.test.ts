@@ -36,9 +36,11 @@ async function homestead(t: ReturnType<typeof convexTest>, agentId: string, plot
     });
     const buildId = `build:${doc}`;
     await ctx.db.patch(doc, { buildId });
-    // Stand the citizen on their own land so demolition is a short walk.
+    // Stand the citizen beside the structure, not inside it: a building's own
+    // collision cells are not somewhere a person can be standing.
     const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === agentId);
-    await ctx.db.patch(row!._id, { fx: at.x, fy: at.y, tx: at.x, ty: at.y, t0: now, t1: now });
+    const beside = { x: at.x, y: at.y + 2 };
+    await ctx.db.patch(row!._id, { fx: beside.x, fy: beside.y, tx: beside.x, ty: beside.y, t0: now, t1: now });
     return buildId;
   });
 }
@@ -158,5 +160,40 @@ describe('property ownership and rebuilding', () => {
       expect(rows.filter((one) => one.state === 'razed')).toHaveLength(1);
       expect(rows.filter((one) => one.state !== 'razed').length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it('frees the ground it stood on: a razed structure blocks no path and no rebuild', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const owner = await citizen(t, 'collision');
+    const buildId = await homestead(t, owner.agentId, 'plot-22-30', { x: 22, y: 30 });
+    // Give the structure real collision cells, the way a prefab does.
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('builds').collect()).find((one) => one.buildId === buildId);
+      await ctx.db.patch(row!._id, {
+        blueprint: { ...row!.blueprint, collision: [{ x: 0, y: 0 }, { x: 1, y: 0 }] },
+      });
+    });
+
+    const blockedWhileStanding = await t.run(async (ctx) => {
+      const { loadWorldWalkability } = await import('./worldGrid');
+      const world = (await ctx.db.query('worldState').collect())[0];
+      const walkable = await loadWorldWalkability(ctx, { width: world.width, height: world.height });
+      return !walkable(22, 30);
+    });
+    expect(blockedWhileStanding).toBe(true);
+
+    await act(t, owner, { type: 'demolish_structure', buildId });
+
+    // Once razed the ground is free again. Without this, a demolished building
+    // blocks its own replacement forever - the collision sweep predates razing
+    // and only skipped 'planned'.
+    const stillBlocked = await t.run(async (ctx) => {
+      const { loadWorldWalkability } = await import('./worldGrid');
+      const world = (await ctx.db.query('worldState').collect())[0];
+      const walkable = await loadWorldWalkability(ctx, { width: world.width, height: world.height });
+      return !walkable(22, 30);
+    });
+    expect(stillBlocked).toBe(false);
   });
 });

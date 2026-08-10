@@ -11,7 +11,11 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
   const chunkMap = new Map(chunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
   const dynamicBlocked = new Set<string>();
   for (const build of builds) {
-    if (build.state === 'planned' || build.x === undefined || build.y === undefined) continue;
+    // Only a structure that actually stands can block a tile. 'planned' has not
+    // been raised yet and 'razed' no longer exists - a demolished building that
+    // kept its collision would block its own replacement forever.
+    if (build.state !== 'building' && build.state !== 'built') continue;
+    if (build.x === undefined || build.y === undefined) continue;
     const collision = Array.isArray(build.blueprint?.collision) ? build.blueprint.collision : [];
     for (const cell of collision) {
       const x = build.x + Number(cell.x), y = build.y + Number(cell.y);
