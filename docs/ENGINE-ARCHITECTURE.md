@@ -10,6 +10,20 @@
   its foot/structure anchor as depth, so smaller screen Y renders behind larger Y.
 - `overheadLayer` contains roofs, canopies, upper overhangs, and arches. It always
   renders over citizens and never contributes a giant flattened collision rectangle.
+- **Only what stands on collision may be drawn above a citizen.** The founding map
+  keeps roofs, canopies, flowers and grass together in `bgtiles[1]`, and the split is
+  derived from the map rather than from a list of frame numbers: a decoration is
+  standing when its own tile carries collision, or when the decoration continues onto
+  collision immediately below it - a tent roof whose peak is deliberately walkable so
+  a citizen can pass behind it. Everything else lies on the ground and is painted into
+  the ground texture, where it cannot occlude anyone.
+
+  This replaced a hand-kept allowlist of "known safe" frames. That list defaulted
+  unknown frames to overhead, so any plant nobody had inspected rendered on top of the
+  people walking past it, and the list only grew when somebody noticed a citizen
+  disappearing. Deriving the answer from collision classifies tiles nobody has looked
+  at yet - which is the only version of this rule that survives a new tileset or a new
+  map. `src/world/foundingLayers.test.ts` asserts the whole plane, not samples.
 - LPC source-sheet crops are registered as real Phaser texture frames. `setCrop` is
   not used because it retains the complete source sheet's display bounds.
 

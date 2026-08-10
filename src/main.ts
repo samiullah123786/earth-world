@@ -222,7 +222,8 @@ class EarthScene extends Phaser.Scene {
         const tile = map.bgtiles[0][x][y];
         if (tile !== -1 && tile !== undefined) ground.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
         const decoration = map.bgtiles[1][x][y];
-        if (decoration !== -1 && decoration !== undefined && foundingDecorationLayer(decoration) === 'ground') {
+        if (decoration !== -1 && decoration !== undefined
+          && foundingDecorationLayer(map.objmap, map.bgtiles[1], x, y) === 'ground') {
           ground.drawFrame('tiles', decoration, tileOrigin(x), tileOrigin(y));
         }
       }
@@ -248,13 +249,14 @@ class EarthScene extends Phaser.Scene {
     }
 
     // The legacy decoration plane mixes roofs/canopy with low grass and
-    // flowers. Ground details were extracted into `ground` above; only true
-    // visual occluders remain isolated above citizens here.
+    // flowers. Ground details were extracted into `ground` above; only what
+    // actually stands on collision remains isolated above citizens here.
     const overhead = this.add.renderTexture(0, 0, map.width * TILE, map.height * TILE).setOrigin(0);
     for (let x = 0; x < map.width; x++) {
       for (let y = 0; y < map.height; y++) {
         const tile = map.bgtiles[1][x][y];
-        if (tile !== -1 && tile !== undefined && foundingDecorationLayer(tile) === 'overhead') {
+        if (tile !== -1 && tile !== undefined
+          && foundingDecorationLayer(map.objmap, map.bgtiles[1], x, y) === 'overhead') {
           overhead.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
         }
       }
