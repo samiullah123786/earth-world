@@ -13,9 +13,12 @@ export async function ensureWorldState(ctx: any) {
     const plots = await ctx.db.query('plots').collect();
     const id = await ctx.db.insert('worldState', {
       key: WORLD_KEY, width: W, height: H, generation: 0,
-      capacity: Math.max(50, plots.length), landPolicy: 'risk_based', updatedAt: Date.now(),
+      capacity: Math.max(50, plots.length), landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925', updatedAt: Date.now(),
     });
     state = await ctx.db.get(id);
+  } else if (state.mayorAgentId !== 'agent:sam-cbf0499925') {
+    await ctx.db.patch(state._id, { mayorAgentId: 'agent:sam-cbf0499925', updatedAt: Date.now() });
+    state = { ...state, mayorAgentId: 'agent:sam-cbf0499925' };
   }
   return state;
 }

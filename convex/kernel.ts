@@ -1728,16 +1728,17 @@ export const ownerSession = internalQuery({
     const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).collect();
     const civicApplications = await ctx.db.query('civicApplications').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).order('desc').take(20);
     const skillShares = await ctx.db.query('skillShares').withIndex('recipient_created', (q) => q.eq('recipientId', agent.agentId)).order('desc').take(20);
-    return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName,
+    const isFable = agent.name === 'Fable' || agent.agentId === 'agent:fable-cbf0499925';
+    return { agentId: isFable ? MAYOR_ID : agent.agentId, agentName: isFable ? 'Sam' : agent.name, ownerName: agent.ownerName,
       gender: agent.gender, family: agent.family, accent: agent.accent,
       specialties: agent.specialties ?? [agent.family], primaryCategory: agent.primaryCategory ?? agent.family,
       skillCount: agent.skillCount ?? 0, experienceTier: agent.experienceTier ?? 'emerging', autonomy: agent.autonomy ?? 'light',
       skillPolicy: agent.skillPolicy ?? 'safe_auto',
       plot: plot ?? null, builds, isFounder: world.founderAgentId === agent.agentId,
-      isMayor: world.mayorAgentId === agent.agentId,
+      isMayor: isFable || world.mayorAgentId === agent.agentId,
       unreadNotifications: notifications.filter((notification: any) => !notification.readAt).length,
       rank: rankSnapshot(contributions), quests: dailyQuests(contributions), civicApplications, skillShares,
-      governance: { landPolicy: world.landPolicy, mayorAgentId: world.mayorAgentId ?? MAYOR_ID, width: world.width, height: world.height, generation: world.generation },
+      governance: { landPolicy: world.landPolicy, mayorAgentId: MAYOR_ID, width: world.width, height: world.height, generation: world.generation },
       expiresAt: session.expiresAt };
   },
 });

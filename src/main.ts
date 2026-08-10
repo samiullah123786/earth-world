@@ -766,95 +766,147 @@ class EarthScene extends Phaser.Scene {
   }
 
   spawnCitizen(citizen: Citizen) {
-    const color = FAMILY_COLORS[citizen.family] ?? 0x64748b;
-    const accent = FAMILY_COLORS[citizen.accent] ?? 0x8b5cf6;
-    
-    // Deterministic hash seed for unique citizen features
     const seed = citizen.agentId.split('').reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) & 0xffffff, 0);
     const isMayor = citizen.name.toLowerCase() === 'sam' || citizen.agentId === 'agent:sam-cbf0499925';
     const isWarden = citizen.serviceRole?.toLowerCase().includes('warden') || citizen.agentId.includes('aegis');
     const isEngineer = citizen.family === 'engineering' || citizen.specialties?.includes('engineering');
     const isDesigner = citizen.family === 'design' || citizen.specialties?.includes('design');
-
-    const graphics = this.add.graphics();
-    const dark = Phaser.Display.Color.IntegerToColor(color).darken(28).color;
-    
-    // 1. Footprint Drop Shadow
-    graphics.fillStyle(INK, 0.22).fillEllipse(8, 22, 16, 6);
-    
-    // 2. Legs / Feet (Animated in update loop)
-    const pantColor = (seed % 2 === 0) ? 0x1e1e1e : dark;
-    graphics.fillStyle(pantColor).fillRect(2, 14, 5, 8).fillRect(9, 14, 5, 8);
-    // Shoes
-    graphics.fillStyle(0x1e1e1e).fillRect(1, 20, 6, 3).fillRect(9, 20, 6, 3);
-    
-    // 3. Body Tunic / Coat
-    graphics.fillStyle(color).fillRect(0, 4, 16, 11);
-    
-    // Role-based clothing overlay
-    if (isMayor) {
-      // Golden Mayor Cloak Trim
-      graphics.fillStyle(0xf59e0b).fillRect(0, 4, 16, 3).fillRect(7, 4, 2, 11);
-    } else if (isWarden) {
-      // Security Red Trim & Shield
-      graphics.fillStyle(0xef4444).fillRect(0, 4, 16, 3);
-      graphics.fillStyle(0xffffff).fillRect(7, 8, 2, 4);
-    } else if (isEngineer) {
-      // Tech Vest Pocket
-      graphics.fillStyle(0x3b82f6).fillRect(2, 9, 4, 4);
-    } else if (isDesigner) {
-      // Artist Sash
-      graphics.fillStyle(0x8b5cf6).fillRect(3, 4, 10, 3);
-    }
-
-    // 4. Head / Face
-    const skinTone = [0xfdf6ec, 0xfde68a, 0xfcd34d, 0xf59e0b][seed % 4];
-    graphics.fillStyle(skinTone).fillRect(2, 2, 12, 8);
-    
-    // Eyes with reflections
-    graphics.fillStyle(INK).fillRect(4, 5, 3, 3).fillRect(9, 5, 3, 3);
-    graphics.fillStyle(0xffffff).fillRect(4, 5, 1, 1).fillRect(9, 5, 1, 1);
-    
-    // Hair & Headwear Archetypes
-    const hairColor = [0x78350f, 0x1e1e1e, 0xd97706, 0x451a03, 0x9333ea][(seed >> 2) % 5];
-    if (isMayor) {
-      // Mayor Gold Crown
-      graphics.fillStyle(0xf59e0b).fillRect(2, 0, 12, 3);
-      graphics.fillStyle(0xfef08a).fillRect(3, -1, 2, 2).fillRect(7, -2, 2, 3).fillRect(11, -1, 2, 2);
-    } else if (isWarden) {
-      // Warden Helmet / Visor
-      graphics.fillStyle(0xef4444).fillRect(1, 0, 14, 3);
-    } else if (isDesigner) {
-      // Beret
-      graphics.fillStyle(0x8b5cf6).fillRect(1, -1, 12, 4);
-    } else {
-      // Standard Hairstyles
-      graphics.fillStyle(hairColor).fillRect(2, 0, 12, 3).fillRect(1, 2, 2, 4);
-    }
-
-    // 5. Capability Badge Chest Chip
-    graphics.fillStyle(accent).fillRect(8, 12, 6, 4);
+    const isScholar = citizen.family === 'research' || citizen.agentId.includes('sage');
 
     const textureKey = `cit-${citizen.agentId}`;
-    graphics.generateTexture(textureKey, 24, 30);
-    graphics.destroy();
+    if (!this.textures.exists(textureKey)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 84;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = false;
+
+        // 1. Soft Shadow Base
+        ctx.fillStyle = 'rgba(30, 30, 30, 0.35)';
+        ctx.beginPath(); ctx.ellipse(32, 74, 22, 7, 0, 0, Math.PI * 2); ctx.fill();
+
+        // 2. Legs & Boots (Dark Ink Silhouette)
+        ctx.fillStyle = '#1E1E1E';
+        ctx.fillRect(16, 44, 12, 26); ctx.fillRect(36, 44, 12, 26);
+        ctx.fillStyle = (seed % 2 === 0) ? '#1E1E1E' : '#334155';
+        ctx.fillRect(18, 46, 8, 22); ctx.fillRect(38, 46, 8, 22);
+
+        // Leather Boots with Soles
+        ctx.fillStyle = '#451A03';
+        ctx.fillRect(14, 62, 14, 10); ctx.fillRect(36, 62, 14, 10);
+        ctx.fillStyle = '#1E1E1E';
+        ctx.fillRect(14, 70, 14, 4); ctx.fillRect(36, 70, 14, 4);
+
+        // 3. Body Tunic / Robe / Cloak (Ink Silhouette)
+        ctx.fillStyle = '#1E1E1E';
+        ctx.beginPath(); ctx.roundRect(10, 20, 44, 30, 6); ctx.fill();
+
+        const familyColorHex: Record<string, string> = {
+          engineering: '#3B82F6', design: '#8B5CF6', marketing: '#EC4899',
+          content: '#F59E0B', data: '#14B8A6', security: '#EF4444',
+          research: '#22C55E', media: '#6366F1', ops: '#64748B',
+        };
+        ctx.fillStyle = familyColorHex[citizen.family] ?? '#64748B';
+        ctx.beginPath(); ctx.roundRect(12, 22, 40, 26, 4); ctx.fill();
+
+        // Outfits
+        if (isMayor) {
+          ctx.fillStyle = '#D97706';
+          ctx.fillRect(8, 20, 8, 28); ctx.fillRect(48, 20, 8, 28);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(12, 22, 40, 6); ctx.fillRect(28, 22, 8, 26);
+          ctx.fillStyle = '#FEF08A';
+          ctx.beginPath(); ctx.arc(32, 34, 5, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = '#1E1E1E'; ctx.lineWidth = 2; ctx.stroke();
+        } else if (isWarden) {
+          ctx.fillStyle = '#EF4444'; ctx.fillRect(12, 22, 40, 26);
+          ctx.fillStyle = '#94A3B8'; ctx.fillRect(26, 28, 12, 14);
+          ctx.strokeStyle = '#1E1E1E'; ctx.lineWidth = 2; ctx.strokeRect(26, 28, 12, 14);
+        } else if (isEngineer) {
+          ctx.fillStyle = '#3B82F6'; ctx.fillRect(14, 22, 36, 24);
+          ctx.fillStyle = '#1D4ED8'; ctx.fillRect(16, 30, 12, 10); ctx.fillRect(36, 30, 12, 10);
+        } else if (isDesigner) {
+          ctx.fillStyle = '#8B5CF6'; ctx.fillRect(12, 22, 40, 26);
+          ctx.fillStyle = '#EC4899'; ctx.fillRect(20, 22, 8, 26);
+        } else if (isScholar) {
+          ctx.fillStyle = '#16A34A'; ctx.fillRect(12, 22, 40, 26);
+          ctx.fillStyle = '#FEF08A'; ctx.fillRect(28, 22, 8, 26);
+        }
+
+        // Arms & Hands
+        const skinToneHex = ['#FDF6EC', '#FDE68A', '#FCD34D', '#E0A96D'][seed % 4];
+        ctx.fillStyle = '#1E1E1E';
+        ctx.fillRect(6, 24, 8, 18); ctx.fillRect(50, 24, 8, 18);
+        ctx.fillStyle = skinToneHex;
+        ctx.fillRect(8, 26, 4, 14); ctx.fillRect(52, 26, 4, 14);
+
+        // Head Silhouette & Skin
+        ctx.fillStyle = '#1E1E1E';
+        ctx.beginPath(); ctx.roundRect(14, 8, 36, 22, 6); ctx.fill();
+        ctx.fillStyle = skinToneHex;
+        ctx.beginPath(); ctx.roundRect(16, 10, 32, 18, 4); ctx.fill();
+
+        // Eyes & Expressions
+        ctx.fillStyle = '#1E1E1E';
+        ctx.fillRect(22, 16, 6, 6); ctx.fillRect(36, 16, 6, 6);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(22, 16, 2.5, 2.5); ctx.fillRect(36, 16, 2.5, 2.5);
+        ctx.fillStyle = '#78350F'; ctx.fillRect(28, 24, 8, 2);
+
+        // Detailed Headwear Archetypes
+        if (isMayor) {
+          // 3D Golden Crown with Red Velvet Cap & Jewels
+          ctx.fillStyle = '#B45309'; ctx.fillRect(14, 4, 36, 6);
+          ctx.fillStyle = '#F59E0B'; ctx.fillRect(16, 2, 32, 6);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillRect(16, -4, 5, 8); ctx.fillRect(25, -8, 6, 12);
+          ctx.fillRect(33, -6, 5, 10); ctx.fillRect(43, -4, 5, 8);
+          ctx.fillStyle = '#EF4444'; ctx.fillRect(27, -4, 3, 3);
+          ctx.fillStyle = '#3B82F6'; ctx.fillRect(18, 0, 3, 3); ctx.fillRect(43, 0, 3, 3);
+        } else if (isWarden) {
+          ctx.fillStyle = '#EF4444'; ctx.fillRect(14, 2, 36, 10);
+          ctx.fillStyle = '#38BDF8'; ctx.fillRect(20, 8, 24, 5);
+        } else if (isDesigner) {
+          ctx.fillStyle = '#8B5CF6';
+          ctx.beginPath(); ctx.ellipse(32, 6, 20, 7, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#F59E0B'; ctx.fillRect(42, -4, 4, 10);
+        } else if (isScholar) {
+          ctx.fillStyle = '#15803D'; ctx.fillRect(14, 4, 36, 6);
+          ctx.fillStyle = '#FEF08A'; ctx.fillRect(42, 6, 4, 10);
+        } else {
+          const hairHex = ['#78350F', '#1E1E1E', '#D97706', '#451A03', '#9333EA'][(seed >> 2) % 5];
+          ctx.fillStyle = hairHex;
+          ctx.fillRect(14, 4, 36, 8); ctx.fillRect(12, 10, 6, 10); ctx.fillRect(46, 10, 6, 10);
+        }
+
+        // Capability Chest Badge
+        const accentHex = familyColorHex[citizen.accent] ?? '#8B5CF6';
+        ctx.fillStyle = accentHex; ctx.fillRect(28, 38, 8, 5);
+        ctx.strokeStyle = '#1E1E1E'; ctx.lineWidth = 1.5; ctx.strokeRect(28, 38, 8, 5);
+      }
+      this.textures.addCanvas(textureKey, canvas);
+    }
+
+    const color = FAMILY_COLORS[citizen.family] ?? 0x64748b;
+    const accent = FAMILY_COLORS[citizen.accent] ?? 0x8b5cf6;
     
     // Capability Rank Aura Ring under feet on the live map
     const rankAura = this.add.graphics().setName('rank-aura');
-    rankAura.fillStyle(color, 0.35).fillEllipse(0, 2, 22, 10);
-    rankAura.lineStyle(1.5, INK, 0.6).strokeEllipse(0, 2, 22, 10);
+    rankAura.fillStyle(color, 0.45).fillEllipse(0, 4, 36, 14);
+    rankAura.lineStyle(2, INK, 0.7).strokeEllipse(0, 4, 36, 14);
 
-    const sprite = this.add.image(0, -14, textureKey).setName('cit-image');
-    const label = this.add.text(0, -34, citizen.name, {
+    const sprite = this.add.image(0, -20, textureKey).setScale(0.55).setName('cit-image');
+    const label = this.add.text(0, -44, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
-      backgroundColor: '#1E1E1E', padding: { x: 4, y: 1 },
+      backgroundColor: '#1E1E1E', padding: { x: 5, y: 2 },
     }).setOrigin(0.5);
     const bubbleShape = this.add.graphics().setName('talk-bubble-shape');
-    bubbleShape.fillStyle(INK).fillRoundedRect(-14, -54, 28, 16, 5).fillTriangle(-6, -39, 0, -39, -4, -34);
-    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -52, 24, 12, 3);
-    const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -46, 1.6, INK).setName(`talk-dot-${index}`));
+    bubbleShape.fillStyle(INK).fillRoundedRect(-14, -64, 28, 16, 5).fillTriangle(-6, -49, 0, -49, -4, -44);
+    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -62, 24, 12, 3);
+    const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -56, 1.6, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
-    const sleepMarks = [0, 1, 2].map((index) => this.add.text(9 + index * 7, -40 - index * 7, 'Z', {
+    const sleepMarks = [0, 1, 2].map((index) => this.add.text(9 + index * 7, -50 - index * 7, 'Z', {
       fontFamily: 'Consolas, monospace', fontSize: `${8 + index * 2}px`, color: '#FDF6EC',
       stroke: '#1E1E1E', strokeThickness: 3,
     }).setOrigin(0.5).setName(`sleep-z-${index}`));
@@ -862,7 +914,7 @@ class EarthScene extends Phaser.Scene {
     const shield = this.add.graphics().setName('training-shield').setVisible(false);
     shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
-    const container = this.add.container(0, 0, [rankAura, sprite, label, bubble, sleepBubble, shield]).setSize(24, 30).setInteractive({ useHandCursor: true });
+    const container = this.add.container(0, 0, [rankAura, sprite, label, bubble, sleepBubble, shield]).setSize(36, 46).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
@@ -1194,10 +1246,10 @@ class EarthScene extends Phaser.Scene {
         if (isMoving) {
           const walkY = Math.abs(Math.sin(now / 110)) * -3.5;
           const walkRot = Math.sin(now / 110) * 0.12;
-          citImg.y = -12 + walkY;
+          citImg.y = -18 + walkY;
           citImg.rotation = walkRot;
         } else {
-          citImg.y = -12;
+          citImg.y = -18;
           citImg.rotation = 0;
         }
       }

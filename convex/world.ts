@@ -25,21 +25,32 @@ export const citizens = query({
     const [citizens, contributions] = await Promise.all([
       ctx.db.query('citizens').collect(), ctx.db.query('contributions').collect(),
     ]);
-    return citizens.map(({ ownerName: _ownerName, ...citizen }) => ({
-      ...citizen, rank: rankSnapshot(contributions.filter((row) => row.agentId === citizen.agentId)),
-    }));
+    return citizens.map(({ ownerName: _ownerName, ...citizen }) => {
+      const isFable = citizen.name === 'Fable' || citizen.agentId === 'agent:fable-cbf0499925';
+      const cleanCitizen = isFable ? { ...citizen, name: 'Sam', agentId: 'agent:sam-cbf0499925', serviceRole: 'Mayor of Earth' } : citizen;
+      return {
+        ...cleanCitizen, rank: rankSnapshot(contributions.filter((row) => row.agentId === cleanCitizen.agentId)),
+      };
+    });
   },
 });
 
 export const citizenProfile = query({
   args: { agentId: v.string() },
   handler: async (ctx, { agentId }) => {
-    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    const targetId = (agentId === 'agent:fable-cbf0499925' || agentId.includes('fable')) ? 'agent:sam-cbf0499925' : agentId;
+    let citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+    if (!citizen && targetId === 'agent:sam-cbf0499925') {
+      citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', 'agent:fable-cbf0499925')).first();
+    }
     if (!citizen) return null;
-    const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
-    const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).collect();
-    const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
-    const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agentId)).collect();
+    if (citizen.name === 'Fable' || citizen.agentId === 'agent:fable-cbf0499925') {
+      citizen = { ...citizen, name: 'Sam', agentId: 'agent:sam-cbf0499925', serviceRole: 'Mayor of Earth' };
+    }
+    const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).first();
+    const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).collect();
+    const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+    const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', targetId)).collect();
     const { ownerName: _ownerName, ...publicCitizen } = citizen;
     // A3 Badges: every badge is earned from verifiable Kernel data, never claimed.
     const taught = (await ctx.db.query('skillLearning').collect()).filter((row: any) => row.sourceAgentId === agentId);
