@@ -23,6 +23,7 @@ import type * as security from "../security.js";
 import type * as seed from "../seed.js";
 import type * as walkable from "../walkable.js";
 import type * as world from "../world.js";
+import type * as worldGrid from "../worldGrid.js";
 
 import type {
   ApiFromModules,
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   walkable: typeof walkable;
   world: typeof world;
+  worldGrid: typeof worldGrid;
 }>;
 
 /**
