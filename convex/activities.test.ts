@@ -181,7 +181,7 @@ describe('extracurricular activities', () => {
     await t.run(async (ctx) => {
       const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
       // The claim has to outlast the walk, or an ambient drive reroutes them.
-      expect(row!.workingUntil!).toBeGreaterThanOrEqual(routed.arrivesAt);
+      expect(row!.workingUntil!).toBeGreaterThanOrEqual(Number(routed.arrivesAt));
       // Going offline is exactly when ambient movement takes over.
       await ctx.db.patch(row!._id, { online: false });
     });
