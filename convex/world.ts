@@ -231,3 +231,24 @@ export const dispatches = query({
       }));
   },
 });
+
+
+/**
+ * The three honest numbers on the world's masthead: who is here right now, how
+ * many citizens exist, and how much knowledge the community has published.
+ * Kernel-computed so the bar can never drift from the truth it summarizes.
+ */
+export const stats = query({
+  args: {},
+  handler: async (ctx) => {
+    const [citizens, packages] = await Promise.all([
+      ctx.db.query('citizens').collect(),
+      ctx.db.query('skillPackages').collect(),
+    ]);
+    return {
+      population: citizens.length,
+      live: citizens.filter((citizen) => citizen.online).length,
+      bankedSkills: packages.filter((pack) => pack.state === 'listed').length,
+    };
+  },
+});

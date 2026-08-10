@@ -24,8 +24,6 @@ const OWNER_DASHBOARD_ORIGINS = new Set([
 const embed = new URLSearchParams(location.search).has('embed');
 const lpcRenderPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('lpc-preview');
 if (embed) document.body.classList.add('embed');
-// ?debug=bubbles forces talk bubbles visible (display-only, spectator-side) so
-// bubble geometry can be reviewed on demand at any zoom. No authority attaches.
 // Speech-bubble geometry, shared by creation AND animation so the two can
 // never disagree again. Derived from the citizen composition: a 64px LPC frame
 // at y=-20 scaled 0.82 puts the visible head top near -40; the name plate (11px
@@ -39,7 +37,13 @@ const BUBBLE_GEOM = {
   sleepBaseX: 12, sleepBaseY: -58,               // Zzz stack base, clear of the plate
 };
 
-const DEBUG_BUBBLES = new URLSearchParams(window.location.search).get('debug') === 'bubbles';
+// ?debug=bubbles,arc — display-only QA modes, spectator-side, no authority.
+// bubbles: force talk bubbles visible so geometry is reviewable at any zoom.
+// arc: loop a demo coin arc between citizens so the trade animation is
+// reviewable without waiting for a real trade to happen in front of the camera.
+const DEBUG_FLAGS = new Set((new URLSearchParams(window.location.search).get('debug') ?? '').split(',').filter(Boolean));
+const DEBUG_BUBBLES = DEBUG_FLAGS.has('bubbles');
+const DEBUG_ARC = DEBUG_FLAGS.has('arc');
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 if (!convexUrl) throw new Error('VITE_CONVEX_URL is required');
@@ -112,8 +116,12 @@ class EarthScene extends Phaser.Scene {
   pendingOwnerFocus = false;
   // The first feed delivery is history, not news: only rewards that land while
   // someone is watching get a coin, so opening the page never rains tokens.
-  seenTokenRewards = new Set<string>();
+  seenMoneyEvents = new Set<string>();
   tokenFeedReady = false;
+  /** Coins currently crossing the world between two parties of a trade. */
+  coinArcs: Array<{ sprite: Phaser.GameObjects.Sprite; from: { x: number; y: number }; to: { x: number; y: number }; start: number; duration: number }> = [];
+  /** QA counter: how many arcs this session has flown (read under ?debug). */
+  arcsFlown = 0;
 
   constructor() {
     super('EarthScene');
@@ -185,6 +193,15 @@ class EarthScene extends Phaser.Scene {
       if (this.mapPanning) this.input.setDefaultCursor('grabbing');
       document.body.classList.toggle('is-panning', this.mapPanning);
     });
+    if (DEBUG_ARC) {
+      this.time.addEvent({ delay: 2400, loop: true, callback: () => {
+        const ids = [...this.sprites.keys()];
+        if (ids.length < 2) return;
+        const a = ids[Math.floor(Math.random() * ids.length)];
+        const b = ids[(ids.indexOf(a) + 1 + Math.floor(Math.random() * (ids.length - 1))) % ids.length];
+        this.coinArc(a, b);
+      } });
+    }
     const releasePan = () => {
       this.mapPanning = false;
       this.input.setDefaultCursor('grab');
@@ -227,6 +244,19 @@ class EarthScene extends Phaser.Scene {
         syncFindButton();
         return;
       }
+      if (event.data.type === 'earth-wallet') {
+        // The dashboard fetched this balance with the owner's HttpOnly cookie;
+        // this page only displays what the owner surface already knows. A
+        // spectator never receives the message, so the chip keeps its dash.
+        const balance = Number(event.data.balance);
+        const balanceEl = document.getElementById('wallet-balance');
+        const chip = document.getElementById('wallet-chip');
+        if (balanceEl && chip && Number.isInteger(balance) && balance >= 0) {
+          balanceEl.textContent = String(balance);
+          chip.title = 'Your Earth Token balance, live from the Kernel';
+        }
+        return;
+      }
       if (event.data.type !== 'earth-focus-agent' || !isAgentId(event.data.agentId)) return;
       const targetAgentId = event.data.agentId;
       this.ownerAgentId = targetAgentId;
@@ -267,16 +297,29 @@ class EarthScene extends Phaser.Scene {
         this.focusWorldTarget(target);
       }
     });
-    convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string; kind?: string; actorId?: string }>) => {
+    convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string; kind?: string; actorId?: string; payload?: { targetId?: string; requesterId?: string } }>) => {
       const feed = document.getElementById('feedLines') || document.getElementById('feed');
       for (const row of rows) {
-        if (row.kind !== 'token_reward' || this.seenTokenRewards.has(row.id)) continue;
-        this.seenTokenRewards.add(row.id);
-        if (this.tokenFeedReady && row.actorId) this.tokenReward(row.actorId);
+        const money = row.kind === 'token_reward' || row.kind === 'token_transfer' || row.kind === 'package_delivered';
+        if (!money || this.seenMoneyEvents.has(row.id)) continue;
+        this.seenMoneyEvents.add(row.id);
+        if (!this.tokenFeedReady) continue; // history primes silently on load
+        const payload = row.payload ?? {};
+        // Payment direction: a transfer flies sender -> recipient; a delivered
+        // package flies the price requester -> provider.
+        if (row.kind === 'token_transfer' && row.actorId && payload.targetId) this.coinArc(row.actorId, payload.targetId);
+        else if (row.kind === 'package_delivered' && payload.requesterId && row.actorId) this.coinArc(payload.requesterId, row.actorId);
+        else if (row.actorId) this.tokenReward(row.actorId);
       }
       this.tokenFeedReady = true;
       if (!feed) return;
       feed.replaceChildren(...rows.slice(0, 6).map((row) => element('div', 'feed-line', row.gloss)));
+    });
+    convex.onUpdate(api.world.stats, {}, (stat: { population: number; live: number; bankedSkills: number }) => {
+      for (const [id, value] of [['m-live', stat.live], ['m-joined', stat.population], ['m-banked', stat.bankedSkills]] as const) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(value);
+      }
     });
     convex.onUpdate(api.world.recentConversations, {}, (rows: Conversation[]) => {
       this.conversations = rows;
@@ -1215,15 +1258,50 @@ class EarthScene extends Phaser.Scene {
   }
 
   /** A citizen who gave verified knowledge away is paid in view of the town. */
+  ensureCoinAnim() {
+    if (this.anims.exists('earth-token-spin')) return;
+    this.anims.create({
+      key: 'earth-token-spin', frameRate: 10, repeat: -1,
+      frames: this.anims.generateFrameNumbers('earth-token', { start: 0, end: 7 }),
+    });
+  }
+
+  /**
+   * A coin physically crossing the world from payer to payee. Fourteen discrete
+   * frames along a quadratic arc - stepped, like everything else here, because
+   * this world does not do smooth gradients. Falls back to the single-citizen
+   * rise when only one party is on the map.
+   */
+  coinArc(fromAgentId: string, toAgentId: string) {
+    const from = this.sprites.get(fromAgentId);
+    const to = this.sprites.get(toAgentId);
+    if (!from || !to) {
+      this.tokenReward(this.sprites.has(toAgentId) ? toAgentId : fromAgentId);
+      return;
+    }
+    this.ensureCoinAnim();
+    const lift = { x: from.x, y: from.y - 24 };
+    const land = { x: to.x, y: to.y - 24 };
+    const sprite = this.add.sprite(lift.x, lift.y, 'earth-token').setScale(0.62).setDepth(10_000);
+    sprite.play('earth-token-spin');
+    this.coinArcs.push({ sprite, from: lift, to: land, start: Date.now(), duration: 900 });
+    this.arcsFlown += 1;
+  }
+
+  /** Hard-edged landing burst in the two token golds. No gradients, no glow. */
+  coinLanding(at: { x: number; y: number }) {
+    const flash = this.add.graphics().setDepth(10_000);
+    for (const [dx, dy] of [[-7, -2], [7, -2], [0, -9], [-5, 5], [5, 5]] as const) {
+      flash.fillStyle(0xf7c948, 1).fillRect(at.x + dx - 1, at.y + dy - 1, 3, 3);
+    }
+    flash.fillStyle(0xd99a1f, 1).fillRect(at.x - 1, at.y - 1, 3, 3);
+    this.time.delayedCall(260, () => flash.destroy());
+  }
+
   tokenReward(agentId: string) {
     const citizen = this.citizens.find((one) => one.agentId === agentId);
     if (!citizen) return;
-    if (!this.anims.exists('earth-token-spin')) {
-      this.anims.create({
-        key: 'earth-token-spin', frameRate: 10, repeat: -1,
-        frames: this.anims.generateFrameNumbers('earth-token', { start: 0, end: 7 }),
-      });
-    }
+    this.ensureCoinAnim();
     const { x, y } = this.positionFor(citizen);
     const coin = this.add.sprite(x * TILE + TILE / 2, y * TILE + TILE / 3, 'earth-token')
       .setScale(0.75).setDepth(10_000);
@@ -1321,6 +1399,25 @@ class EarthScene extends Phaser.Scene {
   }
 
   update() {
+    if (this.coinArcs.length) {
+      const flightNow = Date.now();
+      this.coinArcs = this.coinArcs.filter((arc) => {
+        const t = (flightNow - arc.start) / arc.duration;
+        if (t >= 1) {
+          this.coinLanding(arc.to);
+          arc.sprite.destroy();
+          return false;
+        }
+        const q = Math.floor(t * 14) / 14;
+        const height = Math.min(120, Math.max(44, Math.hypot(arc.to.x - arc.from.x, arc.to.y - arc.from.y) * 0.3));
+        const controlX = (arc.from.x + arc.to.x) / 2;
+        const controlY = Math.min(arc.from.y, arc.to.y) - height;
+        const inv = 1 - q;
+        arc.sprite.x = inv * inv * arc.from.x + 2 * inv * q * controlX + q * q * arc.to.x;
+        arc.sprite.y = inv * inv * arc.from.y + 2 * inv * q * controlY + q * q * arc.to.y;
+        return true;
+      });
+    }
     const now = Date.now();
     for (const citizen of this.citizens) {
       const sprite = this.sprites.get(citizen.agentId);
@@ -1416,7 +1513,7 @@ const game = new Phaser.Game({
 });
 // Under the QA flag only: let tooling position the camera deterministically
 // instead of scripting wheel events. Display access, no authority.
-if (DEBUG_BUBBLES) (window as unknown as Record<string, unknown>).earthGame = game;
+if (DEBUG_FLAGS.size > 0) (window as unknown as Record<string, unknown>).earthGame = game;
 
 for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {
   document.getElementById(id)?.addEventListener('input', () => {
