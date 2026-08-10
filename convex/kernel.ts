@@ -4080,7 +4080,7 @@ export async function ensureGovernanceConfig(ctx: any) {
     authoritiesEnabled: false,
     dailyTokenBudget: 200_000,
     perAuthorityDailyTokens: 50_000,
-    tickMinutes: 10,
+    tickMinutes: 6,
     maxRingsPerDay: 1,
     dayStamp: '',
     ringsToday: 0,
@@ -4129,6 +4129,7 @@ export const authorityGate = internalMutation({
       if (!novel.length) continue;
 
       candidates.push({
+        lastLooked,
         agentId: citizen.agentId, name: citizen.name, role: office.role, duty: office.duty,
         position: { x: Math.round(citizen.fx), y: Math.round(citizen.ty) },
         novel: novel.slice(0, 6).map((event) => event.gloss.slice(0, 160)),
@@ -4136,8 +4137,13 @@ export const authorityGate = internalMutation({
       });
     }
     if (!candidates.length) return { allowed: false, why: 'nothing new happened; deterministic drives continue for free' };
-    // One office per tick keeps spend flat and predictable.
-    return { allowed: true, authority: candidates[0], summaryDue: false };
+    // One office per tick keeps spend flat and predictable, and the turn goes
+    // to whoever has waited longest. Taking the first office in a fixed list
+    // let the Greeter answer nearly every tick while the Warden, Inspector,
+    // Steward and Surveyor were left holding offices they never got to do.
+    candidates.sort((left, right) => left.lastLooked - right.lastLooked);
+    const { lastLooked: _waited, ...authority } = candidates[0];
+    return { allowed: true, authority, summaryDue: false };
   },
 });
 
@@ -4595,20 +4601,39 @@ export const presenceSweep = internalMutation({
     const sessions = await ctx.db.query('sessions').collect();
     const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt
       && session.expiresAt > now && session.lastSeenAt >= now - PRESENCE_LEASE_MS).map((session) => session.agentId));
+
+    // An office has no owner to send a heartbeat, and requiring one kept the
+    // five authorities permanently asleep - walking, speaking and raising
+    // tickets while every visitor saw Zzz over their heads. Their heartbeat is
+    // the always-on mind itself, so the Mayor's switch is what wakes and stops
+    // them. The Mayor's own seat is deliberately NOT in this set: a human
+    // holds it, and the world must never claim a person is present.
+    const config = await ensureGovernanceConfig(ctx);
+    const offices = new Set<string>(LLM_AUTHORITIES.map((office) => office.role));
+
     for (const citizen of await ctx.db.query('citizens').collect()) {
-      if (!citizen.online && live.has(citizen.agentId)) {
+      const holdsOffice = Boolean(citizen.serviceRole) && offices.has(citizen.serviceRole as string);
+      const ownerLive = live.has(citizen.agentId);
+      const shouldBeLive = ownerLive || (holdsOffice && config.authoritiesEnabled);
+      // Only act on a real change, so an authority's own words survive the sweep.
+      if (shouldBeLive === citizen.online) continue;
+      if (shouldBeLive) {
         await ctx.db.patch(citizen._id, {
           online: true, state: citizen.serviceRole ? 'service' : 'live',
-          activity: 'connected through a recent signed owner-agent heartbeat',
+          activity: ownerLive
+            ? 'connected through a recent signed owner-agent heartbeat'
+            : 'on duty; the always-on civic mind is running this office',
         });
-      } else if (citizen.online && !live.has(citizen.agentId)) {
-        await ctx.db.patch(citizen._id, {
-          online: false, state: citizen.serviceRole ? 'service' : 'ambient',
-          activity: citizen.serviceRole
+        continue;
+      }
+      await ctx.db.patch(citizen._id, {
+        online: false, state: citizen.serviceRole ? 'service' : 'ambient',
+        activity: holdsOffice
+          ? 'this office is paused by the Mayor; bounded deterministic routines continue'
+          : citizen.serviceRole
             ? 'on civic duty through bounded Kernel routines; no owner brain is connected'
             : 'owner agent is sleeping; bounded ambient routines continue without live authority',
-        });
-      }
+      });
     }
   },
 });

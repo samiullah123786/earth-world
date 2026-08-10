@@ -24,7 +24,13 @@ crons.interval('civic rsvp', { minutes: 7 }, internal.kernel.civicRsvpTick, {});
 
 // The always-on offices. Gated on novelty and budget, so a quiet town costs
 // nothing at all and the Mayor can stop it instantly.
-crons.interval('civic authorities', { minutes: 10 }, internal.authorities.tick, {});
+//
+// One office thinks per tick and the turn goes to whoever has waited longest,
+// so six minutes gives each of the five a turn every half hour. Measured
+// against real ticks - roughly 750 tokens each, and about one tick in five
+// refused or answered from cache - that lands near 145k of the 200k daily
+// budget, leaving headroom rather than going quiet by evening.
+crons.interval('civic authorities', { minutes: 6 }, internal.authorities.tick, {});
 
 // Fault reports reach the Mayor without anyone having to ask.
 crons.interval('bug triage', { minutes: 15 }, internal.committee.triageBugs, {});
