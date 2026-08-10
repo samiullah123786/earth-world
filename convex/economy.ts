@@ -27,7 +27,7 @@ export const TREASURY_KEY = 'earth';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type LedgerKind =
-  | 'genesis_grant' | 'gift_reward' | 'mint' | 'treasury_grant' | 'trade_payment' | 'burn';
+  | 'genesis_grant' | 'gift_reward' | 'mint' | 'treasury_grant' | 'trade_payment' | 'transfer' | 'burn';
 
 type Movement = {
   kind: LedgerKind;
@@ -189,6 +189,37 @@ export async function payForTrade(ctx: MutationCtx, movement: {
   await adjustBalance(ctx, movement.toAgentId, movement.amount);
   const entryId = await post(ctx, {
     kind: 'trade_payment', amount: movement.amount, reason, sourceId: movement.sourceId,
+    authorizedBy: movement.fromAgentId, fromAgentId: movement.fromAgentId, toAgentId: movement.toAgentId,
+  });
+  return { posted: true, entryId };
+}
+
+/**
+ * One citizen sends tokens to another.
+ *
+ * This moves existing supply rather than creating it, so the invariant is
+ * untouched: nothing here can mint. What it can do is move somebody's earned
+ * balance, which is why the caller gates it on owner consent before arriving.
+ */
+export async function sendTokens(ctx: MutationCtx, movement: {
+  fromAgentId: string; toAgentId: string; amount: number; reason: string;
+}) {
+  assertAmount(movement.amount);
+  const reason = assertReason(movement.reason);
+  if (movement.fromAgentId === movement.toAgentId) throw new Error('a citizen cannot send to itself');
+
+  const available = await balanceOf(ctx, movement.fromAgentId);
+  if (available < movement.amount) {
+    throw new Error(`this citizen holds ${available} Earth Token(s) and the send needs ${movement.amount}`);
+  }
+  await adjustBalance(ctx, movement.fromAgentId, -movement.amount);
+  await adjustBalance(ctx, movement.toAgentId, movement.amount);
+  // Sends are deliberate one-off acts rather than reactions to a world event,
+  // so their identity is the entry itself; there is no earlier record to
+  // deduplicate against.
+  const entryId = await post(ctx, {
+    kind: 'transfer', amount: movement.amount, reason,
+    sourceId: `send:${movement.fromAgentId}:${movement.toAgentId}:${Date.now()}:${Math.round(available)}`,
     authorizedBy: movement.fromAgentId, fromAgentId: movement.fromAgentId, toAgentId: movement.toAgentId,
   });
   return { posted: true, entryId };

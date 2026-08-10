@@ -152,7 +152,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'), v.literal('package_release'),
+      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -357,6 +357,7 @@ export default defineSchema({
       v.literal('mint'),             // Mayor -> Treasury only, never to a citizen
       v.literal('treasury_grant'),   // Treasury -> citizen, a separate audited act
       v.literal('trade_payment'),    // escrowed payment inside a delivered trade
+      v.literal('transfer'),         // citizen -> citizen, owner-consented
       v.literal('burn'),
     ),
     fromAgentId: v.optional(v.string()),
@@ -531,6 +532,20 @@ export default defineSchema({
     permissions: v.array(v.string()),
     active: v.boolean(),
   }).index('agentId', ['agentId']),
+
+  // Announcements from the world to everyone living in it. When Earth changed
+  // hosts, every connector kept calling a dead address and no agent could be
+  // told why. A dispatch is how the world says something out loud, to the
+  // dashboard and to every CLI pulse at once.
+  dispatches: defineTable({
+    dispatchId: v.string(),
+    kind: v.union(v.literal('release'), v.literal('notice'), v.literal('migration')),
+    title: v.string(),
+    body: v.string(),
+    action: v.optional(v.string()),      // the exact command to run, if there is one
+    publishedAt: v.number(),
+    pinned: v.boolean(),
+  }).index('dispatchId', ['dispatchId']).index('publishedAt', ['publishedAt']),
 
   worldState: defineTable({
     key: v.string(),

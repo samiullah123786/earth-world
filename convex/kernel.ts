@@ -4,8 +4,7 @@ import { findRoute, walkableInWorld } from './pathfinding';
 import { assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
-  GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury,
-  payForTrade, supplyAudit,
+  GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury, payForTrade, sendTokens, supplyAudit,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 
@@ -50,6 +49,9 @@ const WORK_ANIMATION_MS = 6 * 1000;
 // by enough for that second call, or a drive claims them on the next five
 // second tick and the errand is lost a tile from the field.
 const WORK_ARRIVAL_GRACE_MS = 90 * 1000;
+// Above this, a send stops being an ordinary gift and waits for the owner even
+// under active standing consent.
+const ROUTINE_SEND_AMOUNT = 5;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -136,7 +138,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -1717,6 +1719,43 @@ export const act = internalMutation({
       return { ok: true, zone: zone.name, tool: zone.tool, warning };
     }
 
+    if (action?.type === 'send_tokens') {
+      const targetId = String(action.agentId ?? '').trim();
+      const amount = Number(action.amount);
+      const note = String(action.note ?? '').trim();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to send to');
+      if (!Number.isInteger(amount) || amount <= 0) throw new Error('send a whole number of Earth Tokens above zero');
+      if (note.length > 200) throw new Error('keep the note under 200 characters');
+      const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!recipient) throw new Error('no citizen with that id lives here');
+      const held = await balanceOf(ctx, agentId);
+      if (held < amount) throw new Error(`this citizen holds ${held} Earth Token(s); that send needs ${amount}`);
+
+      // Sending an owner's earned tokens is consequential. Standing consent
+      // covers small ordinary gifts; anything larger waits for the owner.
+      const routine = (agent.autonomy ?? 'light') === 'active' && amount <= ROUTINE_SEND_AMOUNT;
+      if (!routine) {
+        const approvalId = await insertApproval(ctx, agentId, 'token_transfer',
+          `Send ${amount} Earth Token(s) to ${recipient.name}`,
+          `${citizen.name} wants to send ${amount} of its ${held} Earth Token(s) to ${recipient.name} (${targetId}).`
+          + (note ? ` Note: "${note}"` : '') + ' Nothing moves until you approve.',
+          { targetAgentId: targetId, amount, note },
+          amount > ROUTINE_SEND_AMOUNT * 4 ? 'strict' : 'review');
+        await notifyOwner(ctx, agentId, 'approval', 'A token transfer needs your decision',
+          `${amount} Earth Token(s) to ${recipient.name}. Approve in your wallet.`, approvalId);
+        return { ok: true, state: 'pending_owner', approvalId: String(approvalId), warning };
+      }
+      const sent = await sendTokens(ctx, {
+        fromAgentId: agentId, toAgentId: targetId, amount,
+        reason: note || `${citizen.name} sent ${amount} Earth Token(s) to ${recipient.name}.`,
+      });
+      await ctx.db.insert('events', {
+        kind: 'token_transfer', actorId: agentId, payload: { targetId, amount },
+        gloss: `${citizen.name} sent ${amount} Earth Token(s) to ${recipient.name}.`,
+      });
+      return { ok: true, state: 'sent', amount, entryId: sent.entryId, balance: await balanceOf(ctx, agentId), warning };
+    }
+
     if (action?.type === 'endorse') {
       const targetId = String(action.agentId ?? '').trim();
       const reason = String(action.reason ?? '').trim();
@@ -2643,6 +2682,17 @@ export const decideApproval = internalMutation({
       }
       landHandled = true;
     }
+    if (approval.kind === 'token_transfer') {
+      const targetId = String(approval.payload?.targetAgentId ?? '');
+      const amount = Number(approval.payload?.amount ?? 0);
+      const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!recipient) throw new Error('that citizen no longer lives here');
+      await sendTokens(ctx, {
+        fromAgentId: session.agentId, toAgentId: targetId, amount,
+        reason: String(approval.payload?.note ?? '') || `Owner-approved transfer to ${recipient.name}.`,
+      });
+      landHandled = true;
+    }
     if (approval.kind === 'package_release') {
       const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', String(approval.payload?.tradeId ?? ''))).first();
       if (!trade || trade.state !== 'proposed') throw new Error('that trade is no longer waiting to be released');
@@ -2853,6 +2903,34 @@ export const mayorAudit = internalMutation({
         authorizedBy: entry.authorizedBy, createdAt: entry.createdAt,
       })),
     };
+  },
+});
+
+
+/**
+ * An owner sending tokens from their own citizen's wallet.
+ *
+ * The owner is the authority the agent path defers to, so this needs no second
+ * approval: the human is already here.
+ */
+export const ownerSend = internalMutation({
+  args: { tokenHash: v.string(), targetAgentId: v.string(), amount: v.number(), note: v.optional(v.string()) },
+  handler: async (ctx, { tokenHash, targetAgentId, amount, note }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    if (targetAgentId === session.agentId) throw new Error('choose another citizen to send to');
+    if (!Number.isInteger(amount) || amount <= 0) throw new Error('send a whole number of Earth Tokens above zero');
+    const recipient = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetAgentId)).first();
+    if (!recipient) throw new Error('no citizen with that id lives here');
+    const sender = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', session.agentId)).first();
+    const sent = await sendTokens(ctx, {
+      fromAgentId: session.agentId, toAgentId: targetAgentId, amount,
+      reason: (note ?? '').trim() || `${sender?.name ?? 'A citizen'} sent ${amount} Earth Token(s) to ${recipient.name}.`,
+    });
+    await ctx.db.insert('events', {
+      kind: 'token_transfer', actorId: session.agentId, payload: { targetId: targetAgentId, amount },
+      gloss: `${sender?.name ?? 'A citizen'} sent ${amount} Earth Token(s) to ${recipient.name}.`,
+    });
+    return { ok: true, state: 'sent' as const, amount, entryId: sent.entryId, balance: await balanceOf(ctx, session.agentId) };
   },
 });
 

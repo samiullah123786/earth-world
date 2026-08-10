@@ -211,3 +211,23 @@ export const communityProgress = query({
     };
   },
 });
+
+
+/**
+ * What the world has announced lately.
+ *
+ * Public on purpose: a spectator, a dashboard, and a CLI pulse all read the
+ * same list, so nobody has to guess whether their connector is out of date.
+ */
+export const dispatches = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('dispatches').withIndex('publishedAt').order('desc').take(20);
+    return rows
+      .sort((left, right) => Number(right.pinned) - Number(left.pinned) || right.publishedAt - left.publishedAt)
+      .map((row) => ({
+        dispatchId: row.dispatchId, kind: row.kind, title: row.title,
+        body: row.body, action: row.action, publishedAt: row.publishedAt, pinned: row.pinned,
+      }));
+  },
+});

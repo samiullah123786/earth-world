@@ -1,6 +1,6 @@
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
-import { internal } from './_generated/api';
+import { api, internal } from './_generated/api';
 import {
   base64UrlToBytes, bearerToken, randomToken, readSignedHeaders,
   sha256Hex, verifyRequestSignature,
@@ -461,6 +461,29 @@ const publicFeed = httpAction(async (ctx) => {
 
 const health = httpAction(async () => json({ ok: true, service: 'earth-kernel', protocol: 1 }));
 
+const publicDispatches = httpAction(async (ctx) => {
+  try {
+    return json({ ok: true, dispatches: await ctx.runQuery(api.world.dispatches, {}) });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 503);
+  }
+});
+
+const ownerSend = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const result = await ctx.runMutation(internal.kernel.ownerSend, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      targetAgentId: String(value.targetAgentId ?? ''),
+      amount: Number(value.amount),
+      note: String(value.note ?? ''),
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
 http.route({ path: '/v1/register', method: 'POST', handler: register });
 http.route({ path: '/v1/enter', method: 'POST', handler: enter });
 http.route({ path: '/v1/act', method: 'POST', handler: act });
@@ -480,6 +503,7 @@ http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy 
 http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
 http.route({ path: '/v1/owner/event-rsvp', method: 'POST', handler: ownerEventRsvp });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
+http.route({ path: '/v1/owner/send', method: 'POST', handler: ownerSend });
 http.route({ path: '/v1/owner/wallet', method: 'GET', handler: ownerWallet });
 http.route({ path: '/v1/mayor/audit', method: 'GET', handler: mayorAudit });
 http.route({ path: '/v1/mayor/mint', method: 'POST', handler: mayorMint });
@@ -488,5 +512,6 @@ http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
+http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 
 export default http;

@@ -9,16 +9,24 @@ import {
 const modules = import.meta.glob('./**/*.ts');
 const MAYOR_ID = 'agent:sam-cbf0499925';
 
-async function citizen(t: ReturnType<typeof convexTest>, suffix: string) {
+let nonce = 0;
+/** Signed agent action, the way a connector reaches the Kernel. */
+const act = (t: ReturnType<typeof convexTest>, who: { agentId: string; token?: string }, action: Record<string, unknown>) =>
+  t.mutation(internal.kernel.act, { agentId: who.agentId, tokenHash: who.token!, nonce: `e-${nonce++}`, action });
+
+async function citizen(t: ReturnType<typeof convexTest>, suffix: string,
+                       options: { autonomy?: 'none' | 'light' | 'active' } = {}) {
   const agentId = `agent:test-${suffix}`;
   await t.mutation(internal.kernel.register, {
     agentId, publicKey: `public-${suffix}`, name: `Test ${suffix}`, ownerName: `Owner ${suffix}`,
     gender: 'male', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
     charterVersion: '2026-08-09', claimTokenHash: `claim-${suffix}`, claimExpiresAt: Date.now() + 60_000,
     evidenceDigest: 'b'.repeat(64), specialties: ['ui'], primaryCategory: 'ui', skillCount: 4,
+    autonomy: options.autonomy ?? 'light',
   });
   await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `claim-${suffix}`, ownerSessionHash: `owner-${suffix}` });
-  return { agentId, ownerToken: `owner-${suffix}` };
+  await t.mutation(internal.kernel.enter, { agentId, nonce: `enter-${suffix}`, sessionTokenHash: `agent-${suffix}` });
+  return { agentId, ownerToken: `owner-${suffix}`, token: `agent-${suffix}` };
 }
 
 /** Bind an owner session to the seeded Mayor so treasury routes are reachable. */
@@ -221,5 +229,76 @@ describe('refusals do not describe the Kernel', () => {
     const cleaned = withStack.replace(/^.*?Uncaught Error:\s*/s, '').split(/\n\s*at\s/)[0].trim().slice(0, 240);
     expect(cleaned).toBe('only the sitting Mayor of Earth can reach the treasury');
     expect(cleaned).not.toMatch(/convex|\.ts:|at /);
+  });
+});
+
+describe('citizens sending tokens to each other', () => {
+  it('moves supply without ever creating it', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const giver = await citizen(t, 'giver', { autonomy: 'active' });
+    const taker = await citizen(t, 'taker');
+    const before = await t.run(async (ctx) => supplyAudit(ctx));
+
+    const sent = await act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 3, note: 'for the help yesterday' });
+    expect(sent.state).toBe('sent');
+    await t.run(async (ctx) => {
+      expect(await balanceOf(ctx, giver.agentId)).toBe(2);
+      expect(await balanceOf(ctx, taker.agentId)).toBe(8);
+      const after = await supplyAudit(ctx);
+      // A transfer is a move, not a mint.
+      expect(after.minted).toBe(before.minted);
+      expect(after.circulating).toBe(before.circulating);
+      await assertSupplyInvariant(ctx);
+    });
+  });
+
+  it('refuses to send more than a citizen holds', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const giver = await citizen(t, 'broke', { autonomy: 'active' });
+    const taker = await citizen(t, 'hopeful');
+    await expect(act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 99 }))
+      .rejects.toThrow(/holds 5 Earth Token/);
+    await t.run(async (ctx) => assertSupplyInvariant(ctx));
+  });
+
+  it('refuses a citizen sending to itself', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const lonely = await citizen(t, 'lonely', { autonomy: 'active' });
+    await expect(act(t, lonely, { type: 'send_tokens', agentId: lonely.agentId, amount: 1 }))
+      .rejects.toThrow(/another citizen/);
+  });
+
+  it('holds a large send for the owner even under active consent', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const giver = await citizen(t, 'generous', { autonomy: 'active' });
+    const taker = await citizen(t, 'lucky');
+    await t.run(async (ctx) => {
+      await issue(ctx, { toAgentId: giver.agentId, amount: 50, kind: 'gift_reward', sourceId: 'gift:test:generous', reason: 'seeded for the test' });
+    });
+    const held = await act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 40 });
+    expect(held.state).toBe('pending_owner');
+    await t.run(async (ctx) => {
+      expect(await balanceOf(ctx, taker.agentId)).toBe(5);
+    });
+    await t.mutation(internal.kernel.decideApproval, {
+      tokenHash: giver.ownerToken, approvalId: held.approvalId, decision: 'approve',
+    });
+    await t.run(async (ctx) => {
+      expect(await balanceOf(ctx, taker.agentId)).toBe(45);
+      await assertSupplyInvariant(ctx);
+    });
+  });
+
+  it('holds every send from a light-consent agent', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const careful = await citizen(t, 'careful-sender', { autonomy: 'light' });
+    const taker = await citizen(t, 'waiting-hands');
+    const held = await act(t, careful, { type: 'send_tokens', agentId: taker.agentId, amount: 1 });
+    expect(held.state).toBe('pending_owner');
   });
 });
