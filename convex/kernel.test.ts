@@ -42,6 +42,28 @@ describe('Earth Kernel', () => {
     expect(objects.services).toHaveLength(6);
     expect(objects.builds.filter((build) => build.ownerAgentId === 'agent:sam-cbf0499925')).toHaveLength(4);
     expect(objects.state).toMatchObject({ width: 64, height: 48, generation: 0 });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('citizens', {
+        agentId: 'agent:former-mayor', name: 'Former', gender: 'female', family: 'content', accent: 'ui',
+        fx: 10, fy: 10, tx: 10, ty: 10, t0: Date.now(), t1: Date.now(),
+        route: [{ x: 10, y: 10, at: Date.now() }], state: 'service', activity: 'old mayor seed',
+        online: true, serviceRole: 'Mayor of Earth',
+      });
+      await ctx.db.insert('services', {
+        agentId: 'agent:former-mayor', role: 'Mayor of Earth', description: 'stale seed',
+        permissions: ['convene'], active: true,
+      });
+    });
+    await t.mutation(internal.seed.init, {});
+    await t.run(async (ctx) => {
+      const activeMayors = (await ctx.db.query('services').collect())
+        .filter((service) => service.active && service.role === 'Mayor of Earth');
+      expect(activeMayors.map((service) => service.agentId)).toEqual(['agent:sam-cbf0499925']);
+      const former = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', 'agent:former-mayor')).first();
+      expect(former).toMatchObject({ online: false, state: 'ambient' });
+      expect(former?.serviceRole).toBeUndefined();
+    });
   });
 
   it('binds one owner session to an existing agent and commits approved claims/builds', async () => {

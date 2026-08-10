@@ -93,6 +93,22 @@ export const init = internalMutation({
       if (authority) await ctx.db.patch(authority._id, { role: service.role, description: service.description, permissions: [...service.permissions], active: true });
       else await ctx.db.insert('services', { agentId: service.agentId, role: service.role, description: service.description, permissions: [...service.permissions], active: true });
     }
+    // Mayor succession must leave one public authority. Older seeds used a
+    // different founding mayor, so retire any stale Mayor service during every
+    // idempotent seed without deleting that citizen or their history.
+    const civicServices = await ctx.db.query('services').collect();
+    for (const service of civicServices) {
+      if (service.active && service.role === 'Mayor of Earth' && service.agentId !== MAYOR_ID) {
+        await ctx.db.patch(service._id, { active: false });
+        const formerMayor = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).first();
+        if (formerMayor?.serviceRole === 'Mayor of Earth') {
+          await ctx.db.patch(formerMayor._id, {
+            serviceRole: undefined, online: false, state: 'ambient',
+            activity: 'resting as a resident after civic service',
+          });
+        }
+      }
+    }
     const duplicateMayorPlot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', 'plot-mayor-estate')).first();
     if (duplicateMayorPlot) {
       const duplicateBuilds = await ctx.db.query('builds').withIndex('plotId', (q) => q.eq('plotId', duplicateMayorPlot.plotId)).collect();
