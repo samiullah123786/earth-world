@@ -277,6 +277,9 @@ export const bankAssets = query({
       license: row.license, source: row.source, priceTokens: row.priceTokens,
       state: row.state, verdict: row.safety.verdict, flags: row.safety.flags,
       depositorAgentId: row.depositorAgentId, alsoDepositedBy: row.alsoDepositedBy.length,
+      // Two depositors on a fresh composition is a lineage, not a duplicate:
+      // the Bank shows offspring as the family record it is.
+      lineage: row.alsoDepositedBy.length === 1 ? [row.depositorAgentId, ...row.alsoDepositedBy] : undefined,
       valueRank: row.valueRank, valueNote: row.valueNote?.slice(0, 200), createdAt: row.createdAt,
     }));
   },

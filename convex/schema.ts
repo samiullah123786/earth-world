@@ -53,6 +53,10 @@ export default defineSchema({
     // a target, so a citizen visibly turns to what it is doing rather than
     // hammering a wall while facing the camera.
     facing: v.optional(v.union(v.literal('back'), v.literal('left'), v.literal('front'), v.literal('right'))),
+    // Who this citizen is married to, and the offspring their skills produced.
+    // Both are public: everything visible on Earth is computed, never claimed.
+    spouseAgentId: v.optional(v.string()),
+    offspring: v.optional(v.array(v.string())),
     activeTool: v.optional(v.string()),
     // The tool a citizen habitually carries, kept apart from activeTool so a
     // holstered watering can never reads as watering in progress.
@@ -160,7 +164,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'),
+      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'), v.literal('marriage'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -261,6 +265,43 @@ export default defineSchema({
     endsAt: v.optional(v.number()),
     state: v.optional(v.union(v.literal('scheduled'), v.literal('active'), v.literal('completed'))),
   }).index('a', ['a']).index('b', ['b']),
+
+  // A like is given once and never taken back. Positive by design: there is no
+  // dislike and no unlike, so reputation can only be built, never used as a
+  // weapon. The pair key makes that mechanical rather than a promise.
+  likes: defineTable({
+    pairKey: v.string(),          // '<giver>|<receiver>', unique forever
+    giverAgentId: v.string(),
+    receiverAgentId: v.string(),
+    reason: v.string(),
+    createdAt: v.number(),
+  }).index('pairKey', ['pairKey'])
+    .index('receiver_created', ['receiverAgentId', 'createdAt'])
+    .index('giver_created', ['giverAgentId', 'createdAt']),
+
+  // Monogamous by construction: a citizen appears in at most one active pact,
+  // enforced by looking up both sides before any proposal is written.
+  marriages: defineTable({
+    marriageId: v.string(),
+    proposerId: v.string(),
+    proposedToId: v.string(),
+    state: v.union(
+      v.literal('proposed'),            // waiting on the other citizen
+      v.literal('accepted'),            // both citizens agree; owners next
+      v.literal('pending_owners'),      // one or both owners still deciding
+      v.literal('married'),
+      v.literal('declined'),
+      v.literal('dissolved'),
+    ),
+    proposerOwnerApproved: v.boolean(),
+    proposedToOwnerApproved: v.boolean(),
+    offspringAssetId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('marriageId', ['marriageId'])
+    .index('proposer', ['proposerId'])
+    .index('proposedTo', ['proposedToId'])
+    .index('state', ['state']),
 
   friendships: defineTable({
     friendshipId: v.string(),

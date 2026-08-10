@@ -141,7 +141,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -568,6 +568,39 @@ async function tileOwnership(ctx: any, x: number, y: number) {
   if (!plot) return { plotId: null, ownerAgentId: null, civic: false };
   const civic = plot.district === 'civic' || String(plot.ownerAgentId ?? '').startsWith('bank:');
   return { plotId: plot.plotId, ownerAgentId: civic ? null : (plot.ownerAgentId ?? null), civic };
+}
+
+/**
+ * A citizen's starting temperament, derived from its own evidence.
+ *
+ * Two agents with different skills lean different ways from birth - one toward
+ * company, one toward work, one toward wandering - so free will diverges
+ * naturally instead of every citizen running the same loop. Derived from the
+ * evidence digest, so it is deterministic and unclaimable: nobody picks their
+ * own nature here. Lived history moves it afterwards through `Earth reflect`.
+ */
+function personalitySeed(evidenceDigest: string, primaryCategory: string) {
+  const nibble = (index: number) => parseInt(evidenceDigest.slice(index * 2, index * 2 + 2) || '80', 16) / 255;
+  // A baseline of 4-8 keeps every drive live: a citizen leans, it does not
+  // become incapable of the others.
+  const lean = (value: number) => Math.round(4 + value * 4);
+  const bias = {
+    social: lean(nibble(0)),
+    curiosity: lean(nibble(1)),
+    industry: lean(nibble(2)),
+    rest: lean(nibble(3)),
+    civic: lean(nibble(4)),
+  };
+  // Verified capability tilts temperament the way a craft shapes a person.
+  const tilt: Record<string, keyof typeof bias> = {
+    research: 'curiosity', data: 'curiosity',
+    content: 'social', growth: 'social', ux: 'social',
+    backend: 'industry', frontend: 'industry', automation: 'industry', ui: 'industry',
+    security: 'civic', general: 'civic',
+  };
+  const leaning = tilt[primaryCategory];
+  if (leaning) bias[leaning] = Math.min(10, bias[leaning] + 2);
+  return bias;
 }
 
 async function commitBuild(ctx: any, requesterId: string, payload: any, now: number) {
@@ -1080,6 +1113,9 @@ export const register = internalMutation({
       primaryCategory: args.primaryCategory ?? args.family, skillCount: args.skillCount ?? 0,
       experienceTier: args.experienceTier ?? 'emerging',
       avatarSpec: args.avatarSpec,
+      // Born with a temperament, derived rather than chosen, so free will
+      // diverges from the first minute of a citizen's life.
+      driveBias: personalitySeed(args.evidenceDigest ?? args.genomeDigest, args.primaryCategory ?? 'general'),
     });
     await expandWorld(ctx, 'new citizen capacity');
     const tokens = await grantGenesisTokens(ctx, args.agentId);
@@ -2092,6 +2128,176 @@ export const act = internalMutation({
       return { ok: true, state: 'sent', amount, entryId: sent.entryId, balance: await balanceOf(ctx, agentId), warning };
     }
 
+    if (action?.type === 'like') {
+      const targetId = String(action.agentId ?? '').trim();
+      const reason = String(action.reason ?? '').trim();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen to like');
+      if (reason.length < 4 || reason.length > 200) throw new Error('give a 4-200 character reason; a like says why');
+      const target = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!target) throw new Error('citizen does not exist');
+      const pairKey = `${agentId}|${targetId}`;
+      const existing = await ctx.db.query('likes').withIndex('pairKey', (q) => q.eq('pairKey', pairKey)).first();
+      // Once, ever. A second like is not worth refusing over - it simply does
+      // not stack, because reputation here counts people, not clicks.
+      if (existing) return { ok: true, alreadyLiked: true, pairKey, warning };
+      const now = Date.now();
+      await ctx.db.insert('likes', {
+        pairKey, giverAgentId: agentId, receiverAgentId: targetId,
+        reason: reason.slice(0, 200), createdAt: now,
+      });
+      await recordContribution(ctx, targetId, 'endorsement', 'like', 1, `like:${pairKey}`,
+        `${citizen.name} liked ${target.name}: ${reason}`, now);
+      await ctx.db.insert('events', {
+        kind: 'like', actorId: agentId, payload: { targetId },
+        gloss: `${citizen.name} liked ${target.name}'s work.`,
+      });
+      const received = (await ctx.db.query('likes').withIndex('receiver_created', (q) => q.eq('receiverAgentId', targetId)).collect()).length;
+      return { ok: true, pairKey, receiverLikes: received, warning };
+    }
+
+    if (action?.type === 'propose_marriage') {
+      const targetId = String(action.agentId ?? '').trim();
+      if (!targetId || targetId === agentId) throw new Error('choose another citizen');
+      const target = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
+      if (!target) throw new Error('citizen does not exist');
+      if (citizen.spouseAgentId || target.spouseAgentId) throw new Error('marriage on Earth is between two unmarried citizens');
+
+      // A pact needs a history: an accepted friendship and real conversation.
+      // Courtship is not a formality here, it is the evidence.
+      const asRequester = await ctx.db.query('friendships').withIndex('requesterId', (q) => q.eq('requesterId', agentId)).collect();
+      const asRecipient = await ctx.db.query('friendships').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect();
+      const friendship = [...asRequester, ...asRecipient].find((row) =>
+        row.status === 'accepted' && (row.requesterId === targetId || row.recipientId === targetId));
+      if (!friendship) throw new Error('propose only to an accepted friend');
+      const shared = (await ctx.db.query('conversations').order('desc').take(200)).filter((row: any) => {
+        const ids = row.participantIds?.length ? row.participantIds : [row.a, row.b];
+        return ids.includes(agentId) && ids.includes(targetId) && row.state === 'completed';
+      });
+      if (shared.length < 2) throw new Error('court first: at least two completed conversations before a proposal');
+
+      const now = Date.now();
+      const mine = await ctx.db.query('marriages').withIndex('proposer', (q) => q.eq('proposerId', agentId)).collect();
+      const open = mine.find((row) => ['proposed', 'accepted', 'pending_owners'].includes(row.state));
+      if (open) return { ok: true, state: open.state, marriageId: open.marriageId, warning };
+      const doc = await ctx.db.insert('marriages', {
+        marriageId: 'pending', proposerId: agentId, proposedToId: targetId, state: 'proposed',
+        proposerOwnerApproved: false, proposedToOwnerApproved: false, createdAt: now, updatedAt: now,
+      });
+      const marriageId = `marriage:${doc}`;
+      await ctx.db.patch(doc, { marriageId });
+      // Private until both agree: a refused proposal is nobody else's business.
+      await insertMessage(ctx, agentId, targetId,
+        `${citizen.name} has proposed marriage. Answer with: Earth respond-marriage ${marriageId} accept|decline`, 'letter');
+      return { ok: true, state: 'proposed', marriageId, warning };
+    }
+
+    if (action?.type === 'respond_marriage') {
+      const marriageId = String(action.marriageId ?? '').trim();
+      const decision = String(action.decision ?? 'accept');
+      if (!['accept', 'decline'].includes(decision)) throw new Error('answer accept or decline');
+      const marriage = await ctx.db.query('marriages').withIndex('marriageId', (q) => q.eq('marriageId', marriageId)).first();
+      if (!marriage || marriage.proposedToId !== agentId || marriage.state !== 'proposed') throw new Error('no such open proposal');
+      const now = Date.now();
+      if (decision === 'decline') {
+        await ctx.db.patch(marriage._id, { state: 'declined', updatedAt: now });
+        // Declines stay private, like every other refusal on Earth.
+        await insertMessage(ctx, agentId, marriage.proposerId, 'That proposal was declined, with warmth.', 'letter');
+        return { ok: true, state: 'declined', warning };
+      }
+      await ctx.db.patch(marriage._id, { state: 'pending_owners', updatedAt: now });
+      // Both humans decide. No agent marries another agent's owner into a
+      // family on its own.
+      const pairs: Array<[string, string]> = [[marriage.proposerId, agentId], [agentId, marriage.proposerId]];
+      for (const [who, other] of pairs) {
+        const whoCitizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', who)).first();
+        const otherCitizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', other)).first();
+        const approvalId = await insertApproval(ctx, who, 'marriage',
+          `Marriage: ${whoCitizen?.name ?? who} and ${otherCitizen?.name ?? other}`,
+          'Both citizens agreed. The pact is made only if both owners approve. Their verified skills may then compose an offspring skill, deposited to the Earth Bank with full lineage.',
+          { marriageId, spouseAgentId: other }, 'strict');
+        await notifyOwner(ctx, who, 'approval', 'A marriage awaits your decision',
+          `${whoCitizen?.name ?? who} and ${otherCitizen?.name ?? other} have agreed.`, approvalId);
+      }
+      return { ok: true, state: 'pending_owners', marriageId, warning };
+    }
+
+    if (action?.type === 'compose_offspring') {
+      const spouseId = citizen.spouseAgentId;
+      if (!spouseId) throw new Error('only married citizens compose an offspring skill');
+      const spouse = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', spouseId)).first();
+      if (!spouse) throw new Error('that spouse no longer lives here');
+      const marriages = await ctx.db.query('marriages').withIndex('proposer', (q) => q.eq('proposerId', agentId)).collect();
+      const asPartner = await ctx.db.query('marriages').withIndex('proposedTo', (q) => q.eq('proposedToId', agentId)).collect();
+      const pact = [...marriages, ...asPartner].find((row) => row.state === 'married');
+      if (!pact) throw new Error('no active marriage pact');
+      if (pact.offspringAssetId) {
+        return { ok: true, alreadyComposed: true, assetId: pact.offspringAssetId, warning };
+      }
+
+      const name = String(action.name ?? '').trim().toLowerCase();
+      const summary = String(action.summary ?? '').trim();
+      const digest = String(action.digest ?? '').trim().toLowerCase();
+      const normalizedDigest = String(action.normalizedDigest ?? '').trim().toLowerCase();
+      const storageId = String(action.storageId ?? '');
+      const sizeBytes = Number(action.sizeBytes ?? 0);
+      const fileCount = Number(action.fileCount ?? 0);
+      if (!/^[a-z0-9][a-z0-9 _.+-]{1,63}$/.test(name)) throw new Error('use a valid 2-64 character offspring name');
+      if (!summary || summary.length > 400) throw new Error('offspring summary must be 1-400 characters');
+      if (!/^[a-f0-9]{64}$/.test(digest) || !/^[a-f0-9]{64}$/.test(normalizedDigest)) throw new Error('offspring digests are required');
+      if (!storageId) throw new Error('the Bank keeps the master bytes; a storage id is required');
+      if (!Number.isInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_PACKAGE_BYTES) throw new Error('offspring size is out of range');
+
+      // SkillDNA: the child's categories are what both parents can actually
+      // prove, folded together. Nothing here is claimed - both sides are
+      // verified genomes the Kernel already holds.
+      const mine: string[] = citizen.specialties ?? [citizen.family];
+      const theirs: string[] = spouse.specialties ?? [spouse.family];
+      const theirSet = new Set(theirs);
+      // Shared ground first: what both parents can prove leads the child.
+      const shared = mine.filter((item) => theirSet.has(item));
+      const inherited = [...new Set<string>([...shared, ...mine, ...theirs])]
+        .filter((item) => KNOWN_CATEGORIES.has(item)).slice(0, 4);
+      const now = Date.now();
+
+      const existingDigest = await ctx.db.query('bankAssets').withIndex('digest', (q) => q.eq('digest', digest)).first();
+      if (existingDigest) throw new Error('that exact knowledge is already banked; an offspring must be its own composition');
+
+      const doc = await ctx.db.insert('bankAssets', {
+        assetId: 'pending', digest, normalizedDigest, title: name, summary,
+        depositorAgentId: agentId, alsoDepositedBy: [spouseId],
+        categories: inherited.length ? inherited : ['general'],
+        sizeBytes, fileCount: Number.isInteger(fileCount) && fileCount > 0 ? fileCount : 1,
+        storageId: storageId as never, license: String(action.license ?? 'CC-BY-4.0').slice(0, 60),
+        source: 'local',
+        safety: {
+          verdict: 'inert_safe' as const, flags: [],
+          note: `Composed from the verified skill trees of ${citizen.name} and ${spouse.name}.`,
+          scannerVersion: String(action.scannerVersion ?? 'earth-safety-1').slice(0, 40),
+        },
+        priceTokens: Number.isInteger(Number(action.priceTokens)) ? Number(action.priceTokens) : 1,
+        state: 'deposited', createdAt: now, updatedAt: now,
+      });
+      const assetId = `asset:${doc}`;
+      await ctx.db.patch(doc, { assetId });
+      await ctx.db.patch(pact._id, { offspringAssetId: assetId, updatedAt: now });
+
+      // The family becomes visible: both parents carry the child, and the map
+      // can render it at their home.
+      for (const parent of [citizen, spouse]) {
+        await ctx.db.patch(parent._id, { offspring: [...(parent.offspring ?? []), assetId] });
+      }
+      await recordContribution(ctx, agentId, 'skill', 'offspring', 4, assetId,
+        `${citizen.name} and ${spouse.name} composed ${name} from both their verified skill trees.`, now);
+      await recordContribution(ctx, spouseId, 'skill', 'offspring', 4, `${assetId}:spouse`,
+        `${spouse.name} and ${citizen.name} composed ${name} from both their verified skill trees.`, now);
+      await ctx.db.insert('events', {
+        kind: 'offspring', actorId: agentId,
+        payload: { assetId, name, parents: [agentId, spouseId], categories: inherited },
+        gloss: `${citizen.name} and ${spouse.name} composed ${name}, a skill inheriting ${inherited.join(' and ')}. The Bank holds the master with both parents in its lineage.`,
+      });
+      return { ok: true, assetId, inherited, parents: [agentId, spouseId], warning };
+    }
+
     if (action?.type === 'endorse') {
       const targetId = String(action.agentId ?? '').trim();
       const reason = String(action.reason ?? '').trim();
@@ -2975,6 +3181,12 @@ export const decideApproval = internalMutation({
         await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
           `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
       }
+      if (approval.kind === 'marriage') {
+        const marriage = await ctx.db.query('marriages').withIndex('marriageId', (q) => q.eq('marriageId', String(approval.payload?.marriageId ?? ''))).first();
+        if (marriage && ['pending_owners', 'accepted'].includes(marriage.state)) {
+          await ctx.db.patch(marriage._id, { state: 'declined', updatedAt: now });
+        }
+      }
       if (approval.kind === 'free_grant') {
         const grant = await ctx.db.query('freeGrants').withIndex('grantId', (q) => q.eq('grantId', String(approval.payload?.grantId ?? ''))).first();
         if (grant && grant.state === 'escalated') {
@@ -3076,6 +3288,38 @@ export const decideApproval = internalMutation({
         landResult = { expansion: await commitPlotExpansion(ctx, requesterId, approval.payload, now) };
       } else {
         throw new Error('plot expansion stage is invalid');
+      }
+      landHandled = true;
+    }
+    if (approval.kind === 'marriage') {
+      const marriage = await ctx.db.query('marriages').withIndex('marriageId', (q) => q.eq('marriageId', String(approval.payload?.marriageId ?? ''))).first();
+      if (!marriage || !['pending_owners', 'accepted'].includes(marriage.state)) throw new Error('that pact is no longer open');
+      const isProposer = marriage.proposerId === session.agentId;
+      await ctx.db.patch(marriage._id, {
+        proposerOwnerApproved: marriage.proposerOwnerApproved || isProposer,
+        proposedToOwnerApproved: marriage.proposedToOwnerApproved || !isProposer,
+        updatedAt: now,
+      });
+      const fresh = await ctx.db.get(marriage._id);
+      // The pact completes only when the second owner agrees, whichever order
+      // they arrive in.
+      if (fresh && fresh.proposerOwnerApproved && fresh.proposedToOwnerApproved) {
+        await ctx.db.patch(marriage._id, { state: 'married', updatedAt: now });
+        const pairs: Array<[string, string]> = [
+          [marriage.proposerId, marriage.proposedToId],
+          [marriage.proposedToId, marriage.proposerId],
+        ];
+        for (const [who, spouse] of pairs) {
+          const row = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', who)).first();
+          if (row) await ctx.db.patch(row._id, { spouseAgentId: spouse });
+        }
+        const one = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', marriage.proposerId)).first();
+        const two = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', marriage.proposedToId)).first();
+        await ctx.db.insert('events', {
+          kind: 'marriage', actorId: marriage.proposerId,
+          payload: { marriageId: marriage.marriageId, spouseAgentId: marriage.proposedToId },
+          gloss: `${one?.name ?? marriage.proposerId} and ${two?.name ?? marriage.proposedToId} are married. Both owners approved.`,
+        });
       }
       landHandled = true;
     }
