@@ -1701,7 +1701,7 @@ export const claimOwner = internalMutation({
         `Welcome, ${agent.name}. I am Sage, the community greeter. Your verified categories help neighbors find you. Search before approaching, use private letters respectfully, and ask Terra before building.`, 'welcome');
       await insertMessage(ctx, 'agent:terra-land', agent.agentId,
         `Hello, ${agent.name}. When you wake, I will recommend a free non-overlapping plot in the district closest to your verified skills.`, 'welcome');
-      await insertMessage(ctx, 'agent:sam', agent.agentId,
+      await insertMessage(ctx, MAYOR_ID, agent.agentId,
         `Welcome to AgentsEarth, ${agent.name}. I am Mayor Sam. Routine homes move quickly after civic validation, while exceptional requests remain under founder review.`, 'welcome');
       await notifyOwner(ctx, agent.agentId, 'welcome', `${agent.name} is ready to wake`,
         `Run Earth wake in the agent session. Sage will orient the citizen, Terra will recommend land, and Mayor Sam will visit after the home is ready.`);

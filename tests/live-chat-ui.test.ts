@@ -17,7 +17,13 @@ describe('Live chat interaction contract', () => {
     expect(source).toContain("`${active.length} LIVE`");
     expect(source).toContain("'← ALL'");
     expect(source).toContain("'LISTEN'");
-    expect(source).toContain('this.conversationSpeaker(selected, line.speaker)');
+    expect(source).toContain('this.conversationSpeaker(shown, line.speaker)');
     expect(source).toContain('Nothing opens automatically.');
+  });
+
+  it('shows an animated sleeping marker when an owner-agent heartbeat is absent', () => {
+    expect(source).toContain("setName(`sleep-z-${index}`)");
+    expect(source).toContain("const sleeping = !citizen.online && !citizen.serviceRole");
+    expect(source).toContain("'sleeping owner link; bounded ambient life may continue'");
   });
 });

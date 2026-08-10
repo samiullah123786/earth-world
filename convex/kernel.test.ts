@@ -40,7 +40,7 @@ describe('Earth Kernel', () => {
     expect(objects.venues.find((venue) => venue.venueId === 'venue:training-green')).toMatchObject({ kind: 'training_ground', capacity: 24 });
     expect((await t.query(api.world.citizens, {}))).toHaveLength(11);
     expect(objects.services).toHaveLength(6);
-    expect(objects.builds.filter((build) => build.ownerAgentId === 'agent:fable-cbf0499925')).toHaveLength(4);
+    expect(objects.builds.filter((build) => build.ownerAgentId === 'agent:sam-cbf0499925')).toHaveLength(4);
     expect(objects.state).toMatchObject({ width: 64, height: 48, generation: 0 });
   });
 

@@ -305,6 +305,22 @@ const ownerSkillPolicy = httpAction(async (ctx, request) => {
   }
 });
 
+const ownerEventRsvp = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const eventId = String(value.eventId ?? '').trim();
+    const decision = value.decision;
+    if (!eventId.startsWith('event:')) throw new Error('invalid community event id');
+    if (decision !== 'accept' && decision !== 'decline') throw new Error('event response must be accept or decline');
+    const result = await ctx.runMutation(internal.kernel.ownerEventRsvp, {
+      tokenHash: await sha256Hex(bearerToken(request)), eventId, decision,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
 const ownerMayor = httpAction(async (ctx, request) => {
   try {
     const { value } = await body(request);
@@ -321,6 +337,13 @@ const ownerMayor = httpAction(async (ctx, request) => {
 
 const publicVenues = httpAction(async (ctx) => {
   const rows = await ctx.runQuery(internal.kernel.publicVenues, {});
+  return new Response(JSON.stringify({ ok: true, ...rows }), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=4', 'access-control-allow-origin': '*' },
+  });
+});
+
+const publicCommunityEvents = httpAction(async (ctx) => {
+  const rows = await ctx.runQuery(internal.kernel.publicCommunityEvents, {});
   return new Response(JSON.stringify({ ok: true, ...rows }), {
     headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=4', 'access-control-allow-origin': '*' },
   });
@@ -352,9 +375,11 @@ http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotif
 http.route({ path: '/v1/owner/notifications/read', method: 'POST', handler: ownerNotificationsRead });
 http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy });
 http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
+http.route({ path: '/v1/owner/event-rsvp', method: 'POST', handler: ownerEventRsvp });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
 http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
+http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 
 export default http;

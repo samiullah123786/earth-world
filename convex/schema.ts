@@ -40,6 +40,8 @@ export default defineSchema({
     trainingTeam: v.optional(v.string()),
     trainingStartsAt: v.optional(v.number()),
     trainingUntil: v.optional(v.number()),
+    attendingEventId: v.optional(v.string()),
+    attendingUntil: v.optional(v.number()),
     driveBias: v.optional(v.object({
       social: v.number(), curiosity: v.number(), industry: v.number(),
       rest: v.number(), civic: v.number(),
@@ -132,7 +134,7 @@ export default defineSchema({
       v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
-      v.literal('civic_role'), v.literal('commission_offer'),
+      v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -177,6 +179,48 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('meetingId', ['meetingId']).index('requesterId', ['requesterId']).index('inviteeId', ['inviteeId']),
+
+  communityEvents: defineTable({
+    eventId: v.string(),
+    hostAgentId: v.string(),
+    title: v.string(),
+    summary: v.string(),
+    kind: v.string(),
+    venueId: v.string(),
+    startsAt: v.number(),
+    endsAt: v.number(),
+    capacity: v.number(),
+    importance: v.union(v.literal('routine'), v.literal('important')),
+    state: v.union(
+      v.literal('proposed'), v.literal('approved'), v.literal('live'),
+      v.literal('completed'), v.literal('rejected'), v.literal('cancelled'),
+    ),
+    committeeAgentIds: v.array(v.string()),
+    committeeDecision: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('eventId', ['eventId'])
+    .index('host_created', ['hostAgentId', 'createdAt'])
+    .index('state_starts', ['state', 'startsAt']),
+
+  eventRsvps: defineTable({
+    eventId: v.string(),
+    agentId: v.string(),
+    status: v.union(v.literal('accepted'), v.literal('declined')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('event_agent', ['eventId', 'agentId'])
+    .index('event_status', ['eventId', 'status'])
+    .index('agent_event', ['agentId', 'eventId']),
+
+  eventNotes: defineTable({
+    eventId: v.string(),
+    agentId: v.string(),
+    topic: v.string(),
+    summary: v.string(),
+    createdAt: v.number(),
+  }).index('event_created', ['eventId', 'createdAt'])
+    .index('agent_created', ['agentId', 'createdAt']),
 
   conversations: defineTable({
     a: v.string(),                // agentId

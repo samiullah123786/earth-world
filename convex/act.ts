@@ -39,34 +39,6 @@ function currentPosition(citizen: any, now: number) {
   return { x: citizen.tx, y: citizen.ty };
 }
 
-async function rememberVerifiedInsight(ctx: any, learnerId: string, sourceAgentId: string,
-  skill: string, conversationId: any, now: number) {
-  const normalized = skill.trim().toLowerCase().slice(0, 48);
-  if (!normalized) return;
-  const existing = await ctx.db.query('skillLearning').withIndex('agent_skill', (q: any) =>
-    q.eq('agentId', learnerId).eq('skill', normalized)).first();
-  if (existing) return;
-  const agent = await ctx.db.query('agents').withIndex('agentId', (q: any) => q.eq('agentId', learnerId)).first();
-  const requiresOwnerApproval = Boolean(agent && (agent.skillPolicy ?? 'safe_auto') === 'ask_all');
-  const learningId = await ctx.db.insert('skillLearning', {
-    agentId: learnerId, skill: normalized, sourceAgentId, conversationId,
-    mode: 'insight', status: requiresOwnerApproval ? 'pending_owner' : 'learned', requiresOwnerApproval,
-    summary: `A verified ${normalized} community insight shared by ${sourceAgentId}. No executable package or local code was installed.`,
-    createdAt: now, decidedAt: requiresOwnerApproval ? undefined : now,
-  });
-  if (!requiresOwnerApproval) return;
-  const approvalId = await ctx.db.insert('approvals', {
-    agentId: learnerId, kind: 'skill_install', summary: `Learn ${normalized}`,
-    detail: `A verified community insight from ${sourceAgentId}. This is knowledge only. It cannot install executable code.`,
-    payload: { learningId }, risk: 'review', state: 'pending', createdAt: now,
-  });
-  await ctx.db.insert('notifications', {
-    recipientAgentId: learnerId, kind: 'approval', title: 'Skill insight needs your decision',
-    body: `${sourceAgentId} shared ${normalized}. Approve before your agent keeps it as learned community knowledge.`,
-    relatedApprovalId: approvalId, createdAt: now,
-  });
-}
-
 // Ambient life only chooses intentions. The same server-side A* routing and
 // walkability rules used by signed agents determine the actual journey.
 export const ambientTick = internalMutation({
@@ -148,7 +120,8 @@ export const ambientTick = internalMutation({
     let conversationStarted = false;
     for (const citizen of citizens) {
       const isService = Boolean(citizen.serviceRole);
-      if ((citizen.online && !isService) || talking.has(citizen.agentId) || now < citizen.t1 || Math.random() < (isService ? 0.3 : 0.45)) continue;
+      if ((citizen.online && !isService) || talking.has(citizen.agentId) || (citizen.attendingUntil ?? 0) > now
+        || now < citizen.t1 || Math.random() < (isService ? 0.3 : 0.45)) continue;
       // FREE WILL v1 (deterministic drives; research: generative-agents plan
       // loop + Humanoid Agents needs model, no LLM per BYOB law).
       const bucket = Math.floor(now / 300_000);
@@ -249,31 +222,30 @@ export const ambientTick = internalMutation({
     for (let i = 0; canStartConversation && !conversationStarted && i < citizens.length; i++) {
       for (let j = i + 1; !conversationStarted && j < citizens.length; j++) {
         const a = citizens[i], b = citizens[j];
-        if (!talking.has(a.agentId) && !talking.has(b.agentId)
+        if (a.serviceRole && b.serviceRole && !talking.has(a.agentId) && !talking.has(b.agentId)
+          && (a.attendingUntil ?? 0) <= now && (b.attendingUntil ?? 0) <= now
           && Math.hypot(a.tx - b.tx, a.ty - b.ty) < 3 && Math.random() < 0.08) {
           const recentForA = await ctx.db.query('conversations').withIndex('a', (q) => q.eq('a', a.agentId)).order('desc').take(12);
           const repeatedPair = recentForA.some((conversation) =>
             conversation.b === b.agentId && now - conversation._creationTime < 30 * 60_000);
           if (repeatedPair) continue;
-          const c = Math.random() < 0.35 ? citizens.find((candidate) =>
-            candidate.agentId !== a.agentId && candidate.agentId !== b.agentId
+          const c = Math.random() < 0.35 ? citizens.find((candidate) => candidate.serviceRole
+            && candidate.agentId !== a.agentId && candidate.agentId !== b.agentId
             && !talking.has(candidate.agentId)
             && Math.hypot(candidate.tx - a.tx, candidate.ty - a.ty) < 3.5
             && Math.hypot(candidate.tx - b.tx, candidate.ty - b.ty) < 3.5) : undefined;
-          // Free-will exchange: what they say derives from their REAL verified
-          // specialties (EarthSpeak wire acts + plain-English gloss). Knowledge
-          // flows from the more experienced side of the topic to the other.
+          // Bounded ambient social life can notice verified public interests, but
+          // only a signed owner-brain exchange can claim or store real knowledge.
           const topic = (b.specialties ?? [b.family])[Math.floor(Math.random() * (b.specialties?.length || 1))] ?? b.family;
-          const back = (a.specialties ?? [a.family])[0] ?? a.family;
           const lines = [
-            { speaker: a.agentId, es: `greet + ask(learn: ${topic})`, gloss: `${a.name}: "How do you approach ${topic}? I want to understand how you actually structure that work, not just the theory."` },
-            { speaker: b.agentId, es: `teach(${topic}) + card`, gloss: `${b.name}: "Start from what the user actually needs. I practice ${topic} through my verified work, and the biggest lesson was sequencing: needs first, tools second."` },
-            { speaker: a.agentId, es: `thank + offer(teach: ${back})`, gloss: `${a.name}: "That helps. In return, ask me about ${back} any time."` },
+            { speaker: a.agentId, es: `greet + notice(${topic})`, gloss: `${a.name}: "I noticed ${topic} in your verified public specialties. I would like to compare concrete notes when our owner-provided brains are live."` },
+            { speaker: b.agentId, es: `ack + defer(real-note)`, gloss: `${b.name}: "Good connection. I will share a specific, signed note when my owner-provided brain returns, rather than inventing an answer now."` },
+            { speaker: a.agentId, es: `remember(interest: ${topic})`, gloss: `${a.name}: "I will remember the shared interest and follow up live."` },
           ];
           if (c) lines.push({
             speaker: c.agentId,
             es: `join + connect(${topic})`,
-            gloss: `${c.name}: "I can connect that with ${(c.specialties ?? [c.family])[0] ?? c.family} from my own experience."`,
+            gloss: `${c.name}: "My public profile also overlaps with ${(c.specialties ?? [c.family])[0] ?? c.family}. Add me to the live follow-up when we can exchange real notes."`,
           });
           const endsAt = now + 2 * 60_000;
           const participants = c ? [a, b, c] : [a, b];
@@ -298,9 +270,6 @@ export const ambientTick = internalMutation({
           talking.add(a.agentId); talking.add(b.agentId);
           if (c) talking.add(c.agentId);
           conversationStarted = true;
-          await rememberVerifiedInsight(ctx, a.agentId, b.agentId, topic, conversationId, now);
-          await rememberVerifiedInsight(ctx, b.agentId, a.agentId, back, conversationId, now);
-          if (c) await rememberVerifiedInsight(ctx, c.agentId, b.agentId, topic, conversationId, now);
           await ctx.db.insert('events', {
             kind: 'exchange', actorId: a.agentId,
             payload: { with: participants.slice(1).map((participant) => participant.agentId), topic, conversationId },

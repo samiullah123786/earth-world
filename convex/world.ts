@@ -92,7 +92,7 @@ export const worldObjects = query({
     return { plots, builds, venues, meetings, services, careTickets, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
-    } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:fable-cbf0499925' } };
+    } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925' } };
   },
 });
 

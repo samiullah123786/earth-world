@@ -3,7 +3,7 @@ import { walkable } from './walkable';
 import { SEED_PLOTS, SEED_VENUES } from './plotsData';
 import { ensureWorldState } from './planning';
 
-const MAYOR_ID = 'agent:fable-cbf0499925';
+const MAYOR_ID = 'agent:sam-cbf0499925';
 const MAYOR_PLOT_ID = 'plot-30-6';
 
 const FOUNDERS: Array<[string, string, 'male' | 'female', string, string, string]> = [
@@ -32,7 +32,7 @@ const SERVICES = [
     role: 'Community Warden', description: 'Keeps interactions safe through scoped, reviewable intervention.', specialties: ['security', 'general'], permissions: ['flag', 'pause', 'deescalate'], spawn: [52, 22] as const },
   { agentId: 'agent:tock-0008', name: 'Tock', gender: 'male' as const, family: 'ops', accent: 'engineering',
     role: 'Build Inspector', description: 'Checks construction permits and footprints.', specialties: ['automation', 'backend'], permissions: ['build_validate', 'inspect'], spawn: [38, 14] as const },
-  { agentId: MAYOR_ID, name: 'Fable', gender: 'male' as const, family: 'engineering', accent: 'marketing',
+  { agentId: MAYOR_ID, name: 'Sam', gender: 'male' as const, family: 'engineering', accent: 'marketing',
     role: 'Mayor of Earth', description: 'Coordinates routine civic decisions, welcomes residents, and escalates exceptional requests to the founder owner.', specialties: ['general', 'frontend'], permissions: ['convene', 'proclaim', 'open_ceremony', 'approve_routine_land', 'visit_newcomers'], spawn: [32, 24] as const },
 ] as const;
 

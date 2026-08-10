@@ -59,7 +59,7 @@ export async function expandWorld(ctx: any, reason: string, force = false) {
   await ctx.db.insert('events', {
     kind: 'world_expand', actorId: 'agent:atlas-boundary',
     payload: { width, height, generation: state.generation + 1, plotsAdded: accepted.length, reason },
-    gloss: `Atlas surveyed boundary ring ${state.generation + 1}. Mayor Fable authorized ${accepted.length} protected plots, and Earth now spans ${width} by ${height} tiles.`,
+    gloss: `Atlas surveyed boundary ring ${state.generation + 1}. Mayor Sam authorized ${accepted.length} protected plots, and Earth now spans ${width} by ${height} tiles.`,
   });
   return { expanded: true, state: { ...state, width, height, generation: state.generation + 1 }, plotsAdded: accepted.length };
 }
