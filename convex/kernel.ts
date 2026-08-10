@@ -45,6 +45,11 @@ const GATHER_COOLDOWN_MS = 20 * 60 * 1000;
 const ROUTINE_RELEASE_PRICE = 25;
 // How long a work animation plays after the act that started it.
 const WORK_ANIMATION_MS = 6 * 1000;
+// Work is credited where the citizen stands, so arriving is only half of it -
+// the agent still has to ask again. The hold therefore has to outlast the walk
+// by enough for that second call, or a drive claims them on the next five
+// second tick and the errand is lost a tile from the field.
+const WORK_ARRIVAL_GRACE_MS = 90 * 1000;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -1615,7 +1620,7 @@ export const act = internalMutation({
         // without this a citizen sent to the fields gets pulled away by an
         // ambient drive halfway there and the work never happens.
         const arrivesAt = route[route.length - 1].at;
-        await ctx.db.patch(citizen._id, { workingUntil: arrivesAt + WORK_ANIMATION_MS });
+        await ctx.db.patch(citizen._id, { workingUntil: arrivesAt + WORK_ARRIVAL_GRACE_MS });
         return { ok: true, routed: true, arrivesAt, zone: zone.name, warning };
       }
 
