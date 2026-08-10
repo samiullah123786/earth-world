@@ -981,6 +981,7 @@ class EarthScene extends Phaser.Scene {
     // Earthfolk confetti: hard-edged 3px squares in the citizen's capability
     // color plus cream and ink - stepped motion, no gradients, gone in 1.1s.
     const { x, y } = this.positionFor(citizen);
+    (window as any).__lastArrivalConfetti = { agentId: citizen.agentId, at: Date.now() };
     const accent = FAMILY_COLORS[citizen.family] ?? 0x64748b;
     const palette = [accent, 0xfdf6ec, 0x1e1e1e, accent];
     for (let i = 0; i < 14; i++) {
