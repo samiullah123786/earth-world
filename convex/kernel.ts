@@ -3,6 +3,9 @@ import { v } from 'convex/values';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
+import {
+  GENESIS_GRANT, GIFT_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury, supplyAudit,
+} from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
@@ -934,7 +937,8 @@ export const register = internalMutation({
         avatarSpec: args.avatarSpec,
       });
       await ctx.db.insert('claimTokens', { tokenHash: args.claimTokenHash, agentId: byKey.agentId, expiresAt: args.claimExpiresAt });
-      return { agentId: byKey.agentId, status: byKey.status };
+      const carried = await grantGenesisTokens(ctx, byKey.agentId);
+      return { agentId: byKey.agentId, status: byKey.status, tokens: carried };
     }
     if (await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', args.agentId)).first()) {
       throw new Error('agent id already exists');
@@ -964,9 +968,23 @@ export const register = internalMutation({
       avatarSpec: args.avatarSpec,
     });
     await expandWorld(ctx, 'new citizen capacity');
-    return { agentId: args.agentId, status: 'pending_owner' as const };
+    const tokens = await grantGenesisTokens(ctx, args.agentId);
+    return { agentId: args.agentId, status: 'pending_owner' as const, tokens };
   },
 });
+
+/**
+ * Every citizen starts with exactly five Earth Tokens, once. The sourceId is
+ * the agent id, so re-registering the same agent can never grant a second time.
+ */
+async function grantGenesisTokens(ctx: any, agentId: string) {
+  const granted = await issue(ctx, {
+    toAgentId: agentId, amount: GENESIS_GRANT, kind: 'genesis_grant',
+    sourceId: `genesis:${agentId}`,
+    reason: 'Arrival grant: every citizen begins with five Earth Tokens.',
+  });
+  return granted.balance;
+}
 
 export const enter = internalMutation({
   args: { agentId: v.string(), nonce: v.string(), sessionTokenHash: v.string() },
@@ -1258,11 +1276,25 @@ export const act = internalMutation({
       const learning = await recordSkillInsight(ctx, agentId, share.senderId, share.skill, share.conversationId, now);
       await recordContribution(ctx, share.senderId, 'adoption', 'verified_share', 4, `accepted:${share.shareId}`,
         `${agentId} matched the signed evidence card and accepted the ${share.skill} reference${share.repoUrl ? ' after independently checking its repository root' : ''}.`, now);
+      // Tokens are earned by giving verified knowledge away, never by asking.
+      // The share id is unique, so this reward can only ever be paid once.
+      const reward = await issue(ctx, {
+        toAgentId: share.senderId, amount: GIFT_REWARD, kind: 'gift_reward',
+        sourceId: `gift:${share.shareId}`,
+        reason: `${citizen.name} verified and accepted the ${share.skill} knowledge card.`,
+      });
       await ctx.db.insert('events', {
         kind: 'skill_verified', actorId: agentId, payload: { shareId: share.shareId, senderId: share.senderId, skill: share.skill },
         gloss: `${citizen.name} matched and accepted a signed ${share.skill} knowledge card${share.repoUrl ? ' after checking its repository root' : ''}. No code was installed.`,
       });
-      return { ok: true, status: 'accepted', learning, executableInstalled: false, warning };
+      if (reward.posted) {
+        await ctx.db.insert('events', {
+          kind: 'token_reward', actorId: share.senderId,
+          payload: { shareId: share.shareId, amount: GIFT_REWARD, skill: share.skill },
+          gloss: `${share.senderId} earned ${GIFT_REWARD} Earth Token for giving verified ${share.skill} knowledge away.`,
+        });
+      }
+      return { ok: true, status: 'accepted', learning, executableInstalled: false, reward: reward.balance, warning };
     }
 
     if (action?.type === 'endorse') {
@@ -1860,6 +1892,7 @@ export const pulse = internalMutation({
       rank, quests: dailyQuests(contributionRows), buildGuide: nativeBuildingKnowledge(),
       communications: { publicUpdates: events.length, liveConversations: conversations.length, verifiedShares: skillShares.length,
         privateOfflineLetters: messages.length, eventInvitations: eventInvitations.length, pendingOwnerApprovals: approvals.length },
+      wallet: await walletFor(ctx, agentId),
       messageAckRequired: messages.map((message) => message.messageId), pendingOwnerApprovals: approvals.length };
   },
 });
@@ -2286,6 +2319,114 @@ export const setOwnerGovernance = internalMutation({
     return { ok: true, landPolicy };
   },
 });
+
+/**
+ * Economic authority is strict. The owner-session projection widens `isMayor`
+ * for display (a founder demo alias), so minting deliberately does NOT reuse
+ * it: the only Mayor here is the agent the world state actually records.
+ */
+async function requireMayorSession(ctx: any, tokenHash: string) {
+  const session = await requireSession(ctx, tokenHash, 'owner');
+  const state = await ensureWorldState(ctx);
+  if (!state.mayorAgentId || state.mayorAgentId !== session.agentId) {
+    throw new Error('only the sitting Mayor of Earth can reach the treasury');
+  }
+  return { session, state };
+}
+
+export const mayorMint = internalMutation({
+  args: { tokenHash: v.string(), amount: v.number(), reason: v.string(), sourceId: v.string() },
+  handler: async (ctx, { tokenHash, amount, reason, sourceId }) => {
+    const { session, state } = await requireMayorSession(ctx, tokenHash);
+    if (!/^[a-z0-9][a-z0-9:_-]{3,63}$/.test(sourceId)) throw new Error('every mint needs a 4-64 character idempotency key');
+    const minted = await mintToTreasury(ctx, { amount, reason, sourceId: `mint:${sourceId}`, authorizedBy: session.agentId });
+    if (minted.posted) {
+      await ctx.db.insert('events', {
+        kind: 'treasury_mint', actorId: session.agentId, payload: { amount, reason },
+        gloss: `The Mayor minted ${amount} Earth Tokens into the public Treasury: ${reason}`,
+      });
+      // Minting is the one power that can dilute every citizen's holding, so
+      // the founder is told about it whether or not they asked.
+      if (state.founderAgentId && state.founderAgentId !== session.agentId) {
+        await notifyOwner(ctx, state.founderAgentId, 'info', `Treasury minted ${amount} Earth Tokens`,
+          `Mayor ${session.agentId} minted ${amount} tokens into the Treasury. Reason given: ${reason}`);
+      }
+    }
+    return { ok: true, ...minted, audit: await supplyAudit(ctx) };
+  },
+});
+
+export const mayorGrant = internalMutation({
+  args: {
+    tokenHash: v.string(), targetAgentId: v.string(), amount: v.number(),
+    reason: v.string(), sourceId: v.string(),
+  },
+  handler: async (ctx, { tokenHash, targetAgentId, amount, reason, sourceId }) => {
+    const { session } = await requireMayorSession(ctx, tokenHash);
+    if (!/^[a-z0-9][a-z0-9:_-]{3,63}$/.test(sourceId)) throw new Error('every grant needs a 4-64 character idempotency key');
+    const target = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', targetAgentId)).first();
+    if (!target) throw new Error('grant Earth Tokens only to a registered citizen');
+    const granted = await grantFromTreasury(ctx, {
+      toAgentId: targetAgentId, amount, reason, sourceId: `grant:${sourceId}`, authorizedBy: session.agentId,
+    });
+    if (granted.posted) {
+      await ctx.db.insert('events', {
+        kind: 'treasury_grant', actorId: session.agentId, payload: { targetAgentId, amount, reason },
+        gloss: `The Treasury granted ${target.name} ${amount} Earth Tokens: ${reason}`,
+      });
+      await notifyOwner(ctx, targetAgentId, 'info', `${target.name} received ${amount} Earth Tokens`,
+        `The Treasury granted ${amount} Earth Tokens. Reason given: ${reason}`);
+    }
+    return { ok: true, ...granted, audit: await supplyAudit(ctx) };
+  },
+});
+
+export const mayorAudit = internalMutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const { session } = await requireMayorSession(ctx, tokenHash);
+    const audit = await supplyAudit(ctx);
+    const entries = await ctx.db.query('ledger').withIndex('createdAt').order('desc').take(100);
+    const balances = await ctx.db.query('balances').collect();
+    const names = new Map((await ctx.db.query('agents').collect()).map((agent) => [agent.agentId, agent.name]));
+    const holders = balances
+      .filter((row) => row.amount > 0)
+      .sort((left, right) => right.amount - left.amount)
+      .slice(0, 25)
+      .map((row) => ({ agentId: row.agentId, name: names.get(row.agentId) ?? row.agentId, amount: row.amount }));
+    return {
+      ok: true, mayorAgentId: session.agentId, audit, holders,
+      entries: entries.map((entry) => ({
+        entryId: entry.entryId, kind: entry.kind, amount: entry.amount, reason: entry.reason,
+        fromAgentId: entry.fromAgentId, toAgentId: entry.toAgentId,
+        fromName: entry.fromAgentId ? names.get(entry.fromAgentId) ?? entry.fromAgentId : null,
+        toName: entry.toAgentId ? names.get(entry.toAgentId) ?? entry.toAgentId : null,
+        authorizedBy: entry.authorizedBy, createdAt: entry.createdAt,
+      })),
+    };
+  },
+});
+
+export const ownerWallet = internalMutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    return { ok: true, ...(await walletFor(ctx, session.agentId)) };
+  },
+});
+
+async function walletFor(ctx: any, agentId: string) {
+  const received = await ctx.db.query('ledger').withIndex('to_created', (q: any) => q.eq('toAgentId', agentId)).order('desc').take(40);
+  const sent = await ctx.db.query('ledger').withIndex('from_created', (q: any) => q.eq('fromAgentId', agentId)).order('desc').take(40);
+  const history = [...received, ...sent]
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, 40)
+    .map((entry) => ({
+      entryId: entry.entryId, kind: entry.kind, reason: entry.reason, createdAt: entry.createdAt,
+      amount: entry.fromAgentId === agentId ? -entry.amount : entry.amount,
+    }));
+  return { agentId, balance: await balanceOf(ctx, agentId), history };
+}
 
 // Founder authority is private-operator only. Public agent and owner sessions
 // have no route that can self-elevate into this role.

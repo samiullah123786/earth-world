@@ -277,6 +277,57 @@ const ownerGovernance = httpAction(async (ctx, request) => {
   }
 });
 
+const ownerWallet = httpAction(async (ctx, request) => {
+  try {
+    const result = await ctx.runMutation(internal.kernel.ownerWallet, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const mayorAudit = httpAction(async (ctx, request) => {
+  try {
+    const result = await ctx.runMutation(internal.kernel.mayorAudit, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const mayorMint = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const result = await ctx.runMutation(internal.kernel.mayorMint, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      amount: Number(value.amount), reason: String(value.reason ?? ''),
+      sourceId: String(value.sourceId ?? '').trim().toLowerCase(),
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const mayorGrant = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const result = await ctx.runMutation(internal.kernel.mayorGrant, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      targetAgentId: String(value.targetAgentId ?? '').trim(),
+      amount: Number(value.amount), reason: String(value.reason ?? ''),
+      sourceId: String(value.sourceId ?? '').trim().toLowerCase(),
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
 const ownerSkills = httpAction(async (ctx, request) => {
   try {
     const skills = await ctx.runQuery(internal.kernel.ownerSkills, { tokenHash: await sha256Hex(bearerToken(request)) });
@@ -409,6 +460,10 @@ http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy 
 http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
 http.route({ path: '/v1/owner/event-rsvp', method: 'POST', handler: ownerEventRsvp });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
+http.route({ path: '/v1/owner/wallet', method: 'GET', handler: ownerWallet });
+http.route({ path: '/v1/mayor/audit', method: 'GET', handler: mayorAudit });
+http.route({ path: '/v1/mayor/mint', method: 'POST', handler: mayorMint });
+http.route({ path: '/v1/mayor/grant', method: 'POST', handler: mayorGrant });
 http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });

@@ -89,6 +89,10 @@ class EarthScene extends Phaser.Scene {
   uiInteractionUntil = 0;
   ownerAgentId?: string;
   pendingOwnerFocus = false;
+  // The first feed delivery is history, not news: only rewards that land while
+  // someone is watching get a coin, so opening the page never rains tokens.
+  seenTokenRewards = new Set<string>();
+  tokenFeedReady = false;
 
   constructor() {
     super('EarthScene');
@@ -97,6 +101,7 @@ class EarthScene extends Phaser.Scene {
   preload() {
     this.load.json('map', '/assets/map.json');
     this.load.spritesheet('tiles', '/assets/gentle-obj.png', { frameWidth: 32, frameHeight: 32 });
+    this.load.spritesheet('earth-token', '/assets/currency/earth_token_spin.png', { frameWidth: 32, frameHeight: 32 });
     for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
       this.load.spritesheet(`lpc-agent-${agentKey}`, definition.sheet, {
         frameWidth: LPC_AGENT_FRAME_SIZE,
@@ -229,8 +234,14 @@ class EarthScene extends Phaser.Scene {
         this.focusWorldTarget(target);
       }
     });
-    convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string }>) => {
+    convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string; kind?: string; actorId?: string }>) => {
       const feed = document.getElementById('feedLines') || document.getElementById('feed');
+      for (const row of rows) {
+        if (row.kind !== 'token_reward' || this.seenTokenRewards.has(row.id)) continue;
+        this.seenTokenRewards.add(row.id);
+        if (this.tokenFeedReady && row.actorId) this.tokenReward(row.actorId);
+      }
+      this.tokenFeedReady = true;
       if (!feed) return;
       feed.replaceChildren(...rows.slice(0, 6).map((row) => element('div', 'feed-line', row.gloss)));
     });
@@ -1164,6 +1175,26 @@ class EarthScene extends Phaser.Scene {
     panel.replaceChildren(head, body);
     panel.classList.toggle('minimized', this.conversationMinimized);
     panel.style.display = 'block';
+  }
+
+  /** A citizen who gave verified knowledge away is paid in view of the town. */
+  tokenReward(agentId: string) {
+    const citizen = this.citizens.find((one) => one.agentId === agentId);
+    if (!citizen) return;
+    if (!this.anims.exists('earth-token-spin')) {
+      this.anims.create({
+        key: 'earth-token-spin', frameRate: 10, repeat: -1,
+        frames: this.anims.generateFrameNumbers('earth-token', { start: 0, end: 7 }),
+      });
+    }
+    const { x, y } = this.positionFor(citizen);
+    const coin = this.add.sprite(x * TILE + TILE / 2, y * TILE + TILE / 3, 'earth-token')
+      .setScale(0.75).setDepth(10_000);
+    coin.play('earth-token-spin');
+    this.tweens.add({
+      targets: coin, y: coin.y - 34, alpha: 0, duration: 1400, ease: 'Stepped.easeOut',
+      onComplete: () => coin.destroy(),
+    });
   }
 
   arrivalConfetti(citizen: Citizen) {

@@ -334,6 +334,47 @@ export default defineSchema({
     .index('recipient_created', ['recipientId', 'createdAt'])
     .index('sender_created', ['senderId', 'createdAt']),
 
+  // --- Earth Token economy -------------------------------------------------
+  // Balances are a cache of the ledger, never the source of truth. Every
+  // movement posts exactly one ledger row keyed by a unique sourceId, so a
+  // retried mutation can never pay twice.
+  balances: defineTable({
+    agentId: v.string(),
+    amount: v.number(),
+    updatedAt: v.number(),
+  }).index('agentId', ['agentId']),
+
+  ledger: defineTable({
+    entryId: v.string(),
+    kind: v.union(
+      v.literal('genesis_grant'),    // 5 tokens, once, at registration
+      v.literal('gift_reward'),      // earned by verified knowledge given away
+      v.literal('mint'),             // Mayor -> Treasury only, never to a citizen
+      v.literal('treasury_grant'),   // Treasury -> citizen, a separate audited act
+      v.literal('trade_payment'),    // escrowed payment inside a delivered trade
+      v.literal('burn'),
+    ),
+    fromAgentId: v.optional(v.string()),
+    toAgentId: v.optional(v.string()),
+    amount: v.number(),
+    reason: v.string(),
+    sourceId: v.string(),
+    authorizedBy: v.string(),
+    createdAt: v.number(),
+  }).index('sourceId', ['sourceId'])
+    .index('from_created', ['fromAgentId', 'createdAt'])
+    .index('to_created', ['toAgentId', 'createdAt'])
+    .index('createdAt', ['createdAt']),
+
+  treasury: defineTable({
+    key: v.string(),
+    minted: v.number(),
+    burned: v.number(),
+    granted: v.number(),
+    held: v.number(),
+    updatedAt: v.number(),
+  }).index('key', ['key']),
+
   contributions: defineTable({
     agentId: v.string(),
     dimension: v.union(v.literal('civic'), v.literal('skill'), v.literal('adoption'), v.literal('endorsement')),
