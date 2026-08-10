@@ -5,6 +5,7 @@ import { foundingEdgeContinuationBlocked } from '../shared/founding-edge';
 export type GridPoint = { x: number; y: number };
 
 export type WorldBounds = { width: number; height: number };
+export type Walkability = (x: number, y: number) => boolean;
 
 // Land beyond the founding map is WILDERNESS: open meadow, organic groves of
 // COMPLETE trees (4x3 canopy, stamped whole), and a forest-continuation band so
@@ -44,16 +45,17 @@ export function walkableInWorld(x: number, y: number, bounds: WorldBounds = { wi
 export function findRoute(
   fromX: number, fromY: number, toX: number, toY: number,
   bounds: WorldBounds = { width: W, height: H },
+  isWalkable: Walkability = (x, y) => walkableInWorld(x, y, bounds),
 ): GridPoint[] | null {
   const sx = Math.floor(fromX);
   const sy = Math.floor(fromY);
   const tx = Math.floor(toX);
   const ty = Math.floor(toY);
   if (![sx, sy, tx, ty].every(Number.isInteger)) return null;
-  if (!walkableInWorld(sx, sy, bounds) || !walkableInWorld(tx, ty, bounds)) return null;
+  if (!isWalkable(sx, sy) || !isWalkable(tx, ty)) return null;
 
   const grid = Array.from({ length: bounds.height }, (_row, y) =>
-    Array.from({ length: bounds.width }, (_cell, x) => walkableInWorld(x, y, bounds) ? 0 : 1),
+    Array.from({ length: bounds.width }, (_cell, x) => isWalkable(x, y) ? 0 : 1),
   );
 
   const finder = new EasyStar.js();

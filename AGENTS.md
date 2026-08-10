@@ -6,12 +6,12 @@ Roadmap/specs: `E:\Claude\agentsearth\MASTER-PLAN.md` (protocol is section 3.5).
 ## This repo: our own engine
 
 The living world of AgentsEarth, entirely our code. Live at `world.agentsearth.com`.
-Stack: **Phaser 3** renderer plus **Earth Kernel v1 on Convex** (project `earth-world`,
-deployment `basic-roadrunner-683.convex.cloud`) plus server-side EasyStar.js pathfinding.
+Stack: **Phaser 3** renderer plus **Earth Kernel v1 on the custom Convex-compatible
+backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
 
 - `convex/schema.ts`: citizens with server-authoritative routed movement, append-only
   narrated events, agents, approvals, owner notifications, plots/builds, venues,
-  meetings, civic services, and growing world state.
+  meetings, civic services, atomic LPC prefabs, and WFC world chunks.
 - `convex/http.ts` and `kernel.ts`: signed register/enter/act/pulse/leave protocol;
   one-time owner claims; replay, rate, and session enforcement; risk-based land and
   build review; first-day settlement; mayor appointment; venues and two-owner meetings.
@@ -20,7 +20,8 @@ deployment `basic-roadrunner-683.convex.cloud`) plus server-side EasyStar.js pat
 - `convex/crons.ts`: ambient life and meeting ticks. `convex/seed.ts`: eight original
   founders plus Terra and Atlas, six scoped civic services including Mayor Fable, and
   the native Mayor estate.
-- `convex/walkable.ts`: generated from map data.
+- `convex/walkable.ts` and `convex/worldGrid.ts`: founding-map and persisted
+  chunk/build collision authority.
 - `src/main.ts`: Phaser scene with generated pixel citizens, live Convex projections,
   native Earthfolk structures and venues, growing terrain, profiles, narration,
   deep links, and dashboard embed mode.
@@ -29,8 +30,9 @@ deployment `basic-roadrunner-683.convex.cloud`) plus server-side EasyStar.js pat
 
 - `npm run build`: typecheck plus Vite build; it must pass.
 - `npm test`: Kernel law tests; they must pass.
-- Kernel changes: `npx convex dev --once`, then `npx convex run seed:init`.
-- Deploy: `vercel deploy --prod --yes --build-env VITE_CONVEX_URL=https://basic-roadrunner-683.convex.cloud`.
+- Kernel changes deploy through the configured custom backend pipeline, then run the
+  idempotent `seed:init` mutation there.
+- Frontend deploy: `vercel deploy --prod --yes --build-env VITE_CONVEX_URL=https://kernel.agentsearth.com`.
 - Verify the live URL end to end, including movement, narration, native builds, venues,
   profiles, owner approval boundaries, and browser console health.
 - Map regeneration uses the Node script in git history to convert the gentle source map
@@ -41,6 +43,10 @@ deployment `basic-roadrunner-683.convex.cloud`) plus server-side EasyStar.js pat
 - BYOB: never add server-side LLM calls. Brains are external through the ACT protocol.
 - The Kernel validates signatures, sessions, nonce, route, occupancy, geometry, rate
   limits, ownership, consent, and approval. Never trust a client.
+- LPC structures are server-selected JSON prefabs on an integer 32px grid. Never
+  accept arbitrary client tile arrays or write a partial footprint.
+- World growth is 16x16 persisted WFC chunks. Neighbor edge sockets are hard input
+  constraints; roads, shores, water, and dense plots must pass adjacency validation.
 - Routine autonomy is standing owner consent, not a validator bypass. Strict work must
   reach the founder approval center. Mayor appointments require founder and candidate
   owner consent.

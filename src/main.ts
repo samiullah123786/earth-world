@@ -5,6 +5,10 @@ import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 import lpcManifest from './data/lpc_manifest.json';
 import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_animations';
 import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSpec } from './avatar_identity';
+import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, tileCenter, tileOrigin } from './world/grid';
+import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
+import { LPC_PREFABS, type LpcPrefab } from '../shared/lpc-prefabs';
+import { generateWfcChunk, wfcRule, type DistrictBiome } from '../shared/wfc';
 
 const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
 
@@ -51,6 +55,7 @@ const BUBBLE_GEOM = {
 const DEBUG_FLAGS = new Set((new URLSearchParams(window.location.search).get('debug') ?? '').split(',').filter(Boolean));
 const DEBUG_BUBBLES = DEBUG_FLAGS.has('bubbles');
 const DEBUG_ARC = DEBUG_FLAGS.has('arc');
+const DEBUG_WFC = DEBUG_FLAGS.has('wfc');
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 if (!convexUrl) throw new Error('VITE_CONVEX_URL is required');
@@ -74,7 +79,8 @@ type Plot = { plotId: string; x: number; y: number; w: number; h: number; distri
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
   blueprint?: { name: string; kind: string; style?: string; architecture?: string; features?: string[];
     offsetX?: number; offsetY?: number; w?: number; h?: number; assetFramework?: string;
-    placements?: Array<{ assetId: string; kind: 'tile' | 'prop'; xOffset: number; yOffset: number }> };
+    prefabId?: string; entry?: { x: number; y: number }; collision?: Array<{ x: number; y: number }>;
+    placements?: Array<{ assetId: string; kind: 'tile' | 'prop'; layer?: WorldRenderLayer; xOffset: number; yOffset: number }> };
   x?: number; y?: number; w?: number; h?: number; constructionStartsAt?: number; constructionEndsAt?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
@@ -82,14 +88,17 @@ type Meeting = { meetingId: string; venueId: string; requesterId: string; invite
 type CareTicket = { ticketId: string; reporterId: string; category: string; x: number; y: number; state: string; assignedAgentId?: string };
 type ActivityZone = { zoneId: string; kind: string; name: string; x: number; y: number; w: number; h: number; tool: string };
 type FarmField = { fieldId: string; zoneId: string; x: number; y: number; crop: string; stage: number; readyAt: number; tenders: number };
+type WorldChunk = { chunkId: string; chunkX: number; chunkY: number; size: number; biome: DistrictBiome;
+  generation: number; seed: number; tiles: string[];
+  edges: Readonly<Record<'north' | 'east' | 'south' | 'west', ReadonlyArray<string>>> };
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
   services: Array<{ agentId: string; role: string }>; careTickets?: CareTicket[];
-  activityZones?: ActivityZone[]; farmPlots?: FarmField[]; state: WorldState };
+  activityZones?: ActivityZone[]; farmPlots?: FarmField[]; chunks?: WorldChunk[]; state: WorldState };
 type Conversation = { id: string; a: string; b: string; aName: string; bName: string; topic: string;
   participantIds?: string[]; participantNames?: string[]; at: number; endsAt?: number; state: string;
   lines: Array<{ speaker: string; es: string; gloss: string }> };
 
-let TILE = 32;
+let TILE: number = LPC_GRID_SIZE;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const node = document.createElement(tag);
@@ -103,9 +112,12 @@ class EarthScene extends Phaser.Scene {
   citizens: Citizen[] = [];
   objects: WorldObjects = { plots: [], builds: [], venues: [], meetings: [], services: [],
     state: { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'service_auto' } };
-  objectLayer?: Phaser.GameObjects.Container;
+  groundLayer?: Phaser.GameObjects.Layer;
+  objectLayer?: Phaser.GameObjects.Layer;
+  overheadLayer?: Phaser.GameObjects.Layer;
   expansionLayer?: Phaser.GameObjects.Graphics;
   expansionRT?: Phaser.GameObjects.RenderTexture;
+  expansionOverheadRT?: Phaser.GameObjects.RenderTexture;
   grassFrames?: number[];
   baseWidth = 64;
   baseHeight = 48;
@@ -153,6 +165,17 @@ class EarthScene extends Phaser.Scene {
   }
 
   create() {
+    // Phaser's Image#setCrop keeps the dimensions of the complete source
+    // sheet. That made correctly cropped LPC pieces retain enormous display
+    // bounds and appear offset/overlapping. Register each crop as a real
+    // texture frame so its origin and dimensions are exactly its tile-aligned
+    // blueprint component.
+    for (const [componentId, component] of Object.entries(lpcManifest.components)) {
+      const texture = this.textures.get(`lpc-component-${componentId}`);
+      if (!texture.has('blueprint-frame')) {
+        texture.add('blueprint-frame', 0, component.frame.x, component.frame.y, component.frame.width, component.frame.height);
+      }
+    }
     for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
       // The catalog carries <state>_<direction> keys plus a bare <state> alias
       // pointing at the front row; registering all of them keeps older callers
@@ -170,20 +193,61 @@ class EarthScene extends Phaser.Scene {
     }
     const map = this.cache.json.get('map');
     TILE = map.tile;
+    assertGridSize(TILE);
+    assertGridSize(Number(lpcManifest.gridSize));
     this.baseWidth = map.width;
     this.baseHeight = map.height;
-    this.expansionLayer = this.add.graphics().setDepth(-3);
+    this.groundLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.ground);
+    this.objectLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.midground);
+    this.overheadLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.overhead);
+    document.documentElement.dataset.worldLayers = 'ground,midground,overhead';
+    if (import.meta.env.DEV || DEBUG_FLAGS.size > 0) {
+      const debugWindow = window as unknown as Record<string, unknown>;
+      debugWindow.earthGame = this.game;
+      debugWindow.__earthDiagnostics = () => this.diagnostics();
+    }
+    this.expansionLayer = this.add.graphics();
+    this.expansionLayer.setData('persistent-world', true);
+    this.groundLayer.add(this.expansionLayer);
     const ground = this.add.renderTexture(0, 0, map.width * TILE, map.height * TILE).setOrigin(0);
-    for (const layer of [...map.bgtiles, ...map.objmap]) {
+    for (let x = 0; x < map.width; x++) {
+      for (let y = 0; y < map.height; y++) {
+        const tile = map.bgtiles[0][x][y];
+        if (tile !== -1 && tile !== undefined) ground.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
+      }
+    }
+    ground.setData('persistent-world', true);
+    this.groundLayer.add(ground);
+
+    // Founding-map collision/object tiles enter the same sortable plane as
+    // citizens. This is deliberately not a flattened RenderTexture: each row
+    // keeps a foot anchor that an agent can move behind or in front of.
+    for (const layer of map.objmap as number[][][]) {
       for (let x = 0; x < map.width; x++) {
         for (let y = 0; y < map.height; y++) {
           const tile = layer[x][y];
-          if (tile !== -1 && tile !== undefined) ground.drawFrame('tiles', tile, x * TILE, y * TILE);
+          if (tile === -1 || tile === undefined) continue;
+          const image = this.add.image(tileOrigin(x), tileOrigin(y), 'tiles', tile)
+            .setOrigin(0)
+            .setDepth(structureSortAnchor(y));
+          image.setData('persistent-world', true);
+          this.objectLayer.add(image);
         }
       }
     }
-    ground.setDepth(-2);
-    this.objectLayer = this.add.container(0, 0).setDepth(-1);
+
+    // The legacy decoration plane contains the founding roofs, canopy, and
+    // upper cliff silhouettes. It is isolated above the sortable plane so its
+    // transparent bounds never clip citizens walking underneath.
+    const overhead = this.add.renderTexture(0, 0, map.width * TILE, map.height * TILE).setOrigin(0);
+    for (let x = 0; x < map.width; x++) {
+      for (let y = 0; y < map.height; y++) {
+        const tile = map.bgtiles[1][x][y];
+        if (tile !== -1 && tile !== undefined) overhead.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
+      }
+    }
+    overhead.setData('persistent-world', true);
+    this.overheadLayer.add(overhead);
 
     this.cameras.main.setBounds(0, 0, map.width * TILE, map.height * TILE);
     this.cameras.main.setBackgroundColor(CREAM);
@@ -381,7 +445,13 @@ class EarthScene extends Phaser.Scene {
     }
     if (!this.expansionRT || this.expansionRT.width !== width * TILE || this.expansionRT.height !== height * TILE) {
       this.expansionRT?.destroy();
-      this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0).setDepth(-3);
+      this.expansionOverheadRT?.destroy();
+      this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0);
+      this.expansionRT.setData('persistent-world', true);
+      this.groundLayer?.add(this.expansionRT);
+      this.expansionOverheadRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0);
+      this.expansionOverheadRT.setData('persistent-world', true);
+      this.overheadLayer?.add(this.expansionOverheadRT);
       // Wilderness: IDENTICAL math to convex/pathfinding.ts (wildHash/isGroveCell/
       // isEdgeForest/isTreeAnchor). Complete 4x3 trees, forest continues at borders.
       const hash = (hx: number, hy: number, salt: number) => {
@@ -408,26 +478,26 @@ class EarthScene extends Phaser.Scene {
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
           if (x < W0 && y < H0) continue;
-          this.expansionRT.drawFrame('tiles', hash(x, y, 3) % 97 === 0 ? GRASS_ALT : GRASS, x * TILE, y * TILE);
+          this.expansionRT.drawFrame('tiles', hash(x, y, 3) % 97 === 0 ? GRASS_ALT : GRASS, tileOrigin(x), tileOrigin(y));
         }
       }
       for (let x = 0; x < width; x++) {
         for (let y = 0; y < height; y++) {
           const edgeFrame = foundingEdgeContinuationFrame(x, y);
-          if (edgeFrame !== undefined) this.expansionRT.drawFrame('tiles', edgeFrame, x * TILE, y * TILE);
+          if (edgeFrame !== undefined) this.expansionRT.drawFrame('tiles', edgeFrame, tileOrigin(x), tileOrigin(y));
           if (edgeFrame === undefined && (x >= W0 || y >= H0) && !treeAnchor(x, y)) {
             const nearGrove = treeAnchor(x + 2, y) || treeAnchor(x - 2, y) || treeAnchor(x, y + 2) || treeAnchor(x, y - 2)
               || treeAnchor(x + 2, y + 2) || treeAnchor(x - 2, y - 2);
             if (nearGrove && hash(x, y, 61) % 9 === 0) {
               const flowers = [934, 935, 935, 936, 937];
-              this.expansionRT.drawFrame('tiles', flowers[hash(x, y, 67) % flowers.length], x * TILE, y * TILE);
+              this.expansionRT.drawFrame('tiles', flowers[hash(x, y, 67) % flowers.length], tileOrigin(x), tileOrigin(y));
             } else if (hash(x, y, 71) % 97 === 0) {
               const tufts = [889, 890, 891];
-              this.expansionRT.drawFrame('tiles', tufts[hash(x, y, 73) % tufts.length], x * TILE, y * TILE);
+              this.expansionRT.drawFrame('tiles', tufts[hash(x, y, 73) % tufts.length], tileOrigin(x), tileOrigin(y));
             } else if (hash(x, y, 79) % 499 === 0) {
-              this.expansionRT.drawFrame('tiles', 938, x * TILE, y * TILE);
+              this.expansionRT.drawFrame('tiles', 938, tileOrigin(x), tileOrigin(y));
             } else if (hash(x, y, 83) % 613 === 0) {
-              this.expansionRT.drawFrame('tiles', 896, x * TILE, y * TILE);
+              this.expansionRT.drawFrame('tiles', 896, tileOrigin(x), tileOrigin(y));
             }
           }
           if (treeAnchor(x, y)) {
@@ -440,17 +510,18 @@ class EarthScene extends Phaser.Scene {
                   const px = x - 1 + dx, py = y - 1 + dy;
                   if (px < 0 || py < 0 || px >= width || py >= height) continue;
                   if (px < W0 && py < H0) continue;
-                  this.expansionRT.drawFrame('tiles', frame, px * TILE, py * TILE);
+                  this.expansionRT.drawFrame('tiles', frame, tileOrigin(px), tileOrigin(py));
                 }
               }
             } else {
               // verified single-tile trees: 894 pine, 939 round, 940 bush
               const single = variant < 14 ? 894 : variant < 18 ? 939 : 940;
-              this.expansionRT.drawFrame('tiles', single, x * TILE, y * TILE);
+              this.expansionRT.drawFrame('tiles', single, tileOrigin(x), tileOrigin(y));
             }
           }
         }
       }
+      this.renderWfcChunks();
     }
     this.applyWorldBounds();
     const boundary = document.getElementById('boundary');
@@ -759,12 +830,90 @@ class EarthScene extends Phaser.Scene {
     if (active) graphics.lineStyle(3, 0xec4899, 0.95).strokeCircle(cx, cy, 20);
     const zone = this.add.zone(cx, cy, 42, 42).setInteractive({ useHandCursor: true });
     zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showVenue(venue); });
+    graphics.setDepth(Math.round(cy));
+    zone.setDepth(Math.round(cy));
     this.objectLayer.add([graphics, zone]);
     if (!embed) {
       const label = this.add.text(cx, cy - 27, venue.name, {
         fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC', backgroundColor: '#3A2A1E', padding: { x: 3, y: 1 },
       }).setOrigin(0.5);
+      label.setDepth(Math.round(cy));
       this.objectLayer.add(label);
+    }
+  }
+
+  renderWfcChunks() {
+    if (!this.expansionRT || !this.expansionOverheadRT) return;
+    let chunks = this.objects.chunks ?? [];
+    if (!chunks.length && DEBUG_WFC) {
+      const preview = generateWfcChunk({ seed: 0x4c5043, biome: 'Residential_Suburbs', size: 16 });
+      chunks = [{
+        chunkId: 'debug:wfc-preview', chunkX: 3, chunkY: 1, size: 16,
+        biome: 'Residential_Suburbs', generation: 0, seed: 0x4c5043,
+        tiles: preview.tiles, edges: preview.edges,
+      }];
+    }
+    if (!chunks.length) return;
+    const paint = this.add.graphics();
+    for (const chunk of chunks) {
+      for (let localY = 0; localY < chunk.size; localY++) for (let localX = 0; localX < chunk.size; localX++) {
+        const tileId = chunk.tiles[localY * chunk.size + localX];
+        const rule = wfcRule(tileId);
+        const tileX = chunk.chunkX * chunk.size + localX, tileY = chunk.chunkY * chunk.size + localY;
+        // renderExpansion already stamped the founding atlas continuation.
+        // Preserve it so pixels and worldGrid share the same fixed boundary.
+        if (foundingEdgeContinuationFrame(tileX, tileY) !== undefined) continue;
+        const px = tileOrigin(tileX), py = tileOrigin(tileY);
+        // Every collapsed cell first erases legacy noise with the canonical
+        // grass tile. Its Wang sockets then paint only connected features.
+        this.expansionRT.drawFrame('tiles', 271, px, py);
+        if (rule.terrain === 'field') {
+          this.expansionRT.drawFrame('crop-growth', 0, px, py);
+        } else if (rule.terrain === 'forest') {
+          this.expansionOverheadRT.drawFrame('tiles', 894, px, py);
+        } else if (rule.terrain === 'plot') {
+          paint.fillStyle(0xd0b77d, 0.5).fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
+          paint.lineStyle(2, INK, 0.45).strokeRect(px + 2, py + 2, TILE - 4, TILE - 4);
+        } else if (rule.terrain === 'road') {
+          const lane = 12, inset = (TILE - lane) / 2;
+          paint.fillStyle(0x72553b, 1).fillRect(px + inset, py + inset, lane, lane);
+          if (rule.sockets.north === 'road') paint.fillRect(px + inset, py, lane, TILE / 2);
+          if (rule.sockets.east === 'road') paint.fillRect(px + TILE / 2, py + inset, TILE / 2, lane);
+          if (rule.sockets.south === 'road') paint.fillRect(px + inset, py + TILE / 2, lane, TILE / 2);
+          if (rule.sockets.west === 'road') paint.fillRect(px, py + inset, TILE / 2, lane);
+          paint.lineStyle(2, 0xb99162, 0.75).strokeRect(px + inset, py + inset, lane, lane);
+        } else if (rule.terrain === 'water') {
+          paint.fillStyle(0x2b779f, 1).fillRect(px, py, TILE, TILE);
+          paint.fillStyle(0x4b9fc0, 0.85).fillRect(px + 3, py + 7, 12, 2).fillRect(px + 17, py + 21, 11, 2);
+        } else if (rule.terrain === 'shore') {
+          paint.fillStyle(0x2b779f, 1);
+          if (rule.sockets.north === 'water') paint.fillRect(px, py, TILE, TILE / 2);
+          if (rule.sockets.east === 'water') paint.fillRect(px + TILE / 2, py, TILE / 2, TILE);
+          if (rule.sockets.south === 'water') paint.fillRect(px, py + TILE / 2, TILE, TILE / 2);
+          if (rule.sockets.west === 'water') paint.fillRect(px, py, TILE / 2, TILE);
+          paint.lineStyle(3, 0xd0b77d, 1);
+          if (rule.sockets.north === 'grass') paint.lineBetween(px, py + 2, px + TILE, py + 2);
+          if (rule.sockets.east === 'grass') paint.lineBetween(px + TILE - 2, py, px + TILE - 2, py + TILE);
+          if (rule.sockets.south === 'grass') paint.lineBetween(px, py + TILE - 2, px + TILE, py + TILE - 2);
+          if (rule.sockets.west === 'grass') paint.lineBetween(px + 2, py, px + 2, py + TILE);
+        }
+      }
+    }
+    this.expansionRT.draw(paint);
+    paint.destroy();
+  }
+
+  worldLayer(layer: WorldRenderLayer) {
+    return layer === 'ground' ? this.groundLayer : layer === 'overhead' ? this.overheadLayer : this.objectLayer;
+  }
+
+  clearGeneratedWorldObjects() {
+    for (const layer of [this.groundLayer, this.objectLayer, this.overheadLayer]) {
+      if (!layer) continue;
+      for (const child of [...layer.getChildren()]) {
+        const gameObject = child as Phaser.GameObjects.GameObject;
+        if (gameObject.getData('persistent-world') !== true) gameObject.destroy();
+      }
     }
   }
 
@@ -780,7 +929,7 @@ class EarthScene extends Phaser.Scene {
         const frame = decor[srcX + dx]?.[srcY + dy];
         if (frame === -1 || frame === undefined) continue;
         const img = this.add.image(destPx + dx * TILE * scale, destPy + dy * TILE * scale, 'tiles', frame)
-          .setOrigin(0).setScale(scale);
+          .setOrigin(0).setScale(scale).setDepth(Math.round(destPy + (dy + 1) * TILE * scale));
         this.objectLayer?.add(img);
       }
     }
@@ -794,6 +943,7 @@ class EarthScene extends Phaser.Scene {
       if (build.blueprint?.architecture === 'modern-earthfolk') {
         const graphics = this.add.graphics();
         this.drawNativeStructure(graphics, build, plot, x, y, width, height);
+        graphics.setDepth(structureSortAnchor(build.y ?? plot.y, build.h ?? plot.h));
         this.objectLayer?.add(graphics);
         return;
       }
@@ -803,41 +953,55 @@ class EarthScene extends Phaser.Scene {
       if (build.blueprint?.features?.length) {
         const graphics = this.add.graphics();
         this.drawNativeFeatures(graphics, build, x, y, width, height);
+        graphics.setDepth(structureSortAnchor(build.y ?? plot.y, build.h ?? plot.h));
         this.objectLayer?.add(graphics);
       }
       return;
     }
     const graphics = this.add.graphics();
     this.drawNativeStructure(graphics, build, plot, x, y, width, height);
+    graphics.setDepth(structureSortAnchor(build.y ?? plot.y, build.h ?? plot.h));
     this.objectLayer?.add(graphics);
   }
 
-  stampLpcBuild(build: Build) {
-    const placements = build.blueprint?.placements ?? [];
+  stampLpcBuild(build: Build, plot?: Plot) {
+    const compatibilityPrefabId = build.blueprint?.prefabId
+      ?? (build.buildId === 'build:earth-bank' ? 'bank_lpc_grand'
+        : build.buildId === 'build:earth-bank-forecourt' ? 'bank_forecourt' : undefined);
+    const prefab = compatibilityPrefabId ? LPC_PREFABS[compatibilityPrefabId] : undefined;
+    const placements = prefab
+      ? prefab.placements.map((placement) => ({ ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const }))
+      : build.blueprint?.placements ?? [];
     for (const placement of placements) {
       const component = (lpcManifest.components as Record<string, {
+        width: number;
+        height: number;
+        solid: boolean;
         webPath: string;
         frame: { x: number; y: number; width: number; height: number };
       }>)[placement.assetId];
       if (!component) continue;
+      const render = componentRenderContract(placement.assetId, component);
+      const layer = placement.layer ?? render.layer;
+      const tileX = (build.x ?? plot?.x ?? 0) + placement.xOffset;
+      const tileY = (build.y ?? plot?.y ?? 0) + placement.yOffset;
       const image = this.add.image(
-        ((build.x ?? 0) + placement.xOffset) * TILE,
-        ((build.y ?? 0) + placement.yOffset) * TILE,
+        tileOrigin(tileX),
+        tileOrigin(tileY),
         `lpc-component-${placement.assetId}`,
-      ).setOrigin(0).setCrop(
-        component.frame.x,
-        component.frame.y,
-        component.frame.width,
-        component.frame.height,
-      );
+        'blueprint-frame',
+      ).setOrigin(0);
       if (build.state === 'building') image.setAlpha(0.62);
-      this.objectLayer?.add(image);
+      if (layer === 'midground') image.setDepth(structureSortAnchor(tileY, component.height));
+      image.setData('prefab-id', prefab?.id ?? build.blueprint?.prefabId ?? 'legacy');
+      image.setData('world-layer', layer);
+      this.worldLayer(layer)?.add(image);
     }
   }
 
   renderWorldObjects() {
     if (!this.objectLayer) return;
-    this.objectLayer.removeAll(true);
+    this.clearGeneratedWorldObjects();
     this.renderActivityZones();
     for (const plot of this.objects.plots) {
       if (!embed) {
@@ -847,41 +1011,46 @@ class EarthScene extends Phaser.Scene {
         graphics.strokeRect(plot.x * TILE, plot.y * TILE, plot.w * TILE, plot.h * TILE);
         const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive({ useHandCursor: true });
         zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showPlot(plot); });
-        this.objectLayer.add([graphics, zone]);
+        this.groundLayer?.add(graphics);
+        zone.setDepth(structureSortAnchor(plot.y, plot.h));
+        this.objectLayer.add(zone);
       }
     }
     for (const build of this.objects.builds) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
       if (build.blueprint?.assetFramework === lpcManifest.standard && build.blueprint.placements?.length) {
-        this.stampLpcBuild(build);
+        this.stampLpcBuild(build, plot);
       } else {
         this.stampNativeBuild(build, plot);
       }
     }
     if (lpcRenderPreview) {
-      const previewPlacements = lpcManifest.templates.community_garden.map((placement) => ({
-        assetId: String('tile' in placement ? placement.tile : placement.prop),
-        kind: ('tile' in placement ? 'tile' : 'prop') as 'tile' | 'prop',
-        xOffset: placement.xOffset,
-        yOffset: placement.yOffset,
-      }));
+      const previewPrefab: LpcPrefab = LPC_PREFABS.house_small_brick;
       this.stampLpcBuild({
         buildId: 'local:lpc-render-check', plotId: 'local:preview', ownerAgentId: 'local:preview',
-        structure: 'blueprint', state: 'built', x: 75, y: 44, w: 4, h: 2,
+        structure: previewPrefab.structureType, state: 'built', x: 37, y: 17,
+        w: previewPrefab.width, h: previewPrefab.height,
         blueprint: {
-          name: 'Local LPC Render Check', kind: 'community_garden', assetFramework: lpcManifest.standard,
-          placements: previewPlacements,
+          name: 'Local LPC Render Check', kind: previewPrefab.structureType,
+          prefabId: previewPrefab.id, assetFramework: lpcManifest.standard,
+          placements: previewPrefab.placements.map((placement) => ({
+            ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
+          })),
         },
       });
-      const previewLabel = this.add.text(75 * TILE, 43.65 * TILE, 'LOCAL LPC RENDER CHECK', {
+      const previewLabel = this.add.text(tileOrigin(37), tileOrigin(16), 'STRICT LPC PREFAB', {
         fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
         backgroundColor: '#3A2A1E', padding: { x: 4, y: 2 },
       });
-      const previewBuilder = this.add.sprite(74.55 * TILE, 45.45 * TILE, 'lpc-agent-engineer', 27)
-        .setScale(0.82)
+      const previewBuilder = this.add.sprite(tileCenter(39), tileCenter(21), 'lpc-agent-engineer', 27)
         .play('lpc-engineer-build_hammer');
-      this.objectLayer.add([previewLabel, previewBuilder]);
+      const previewBehind = this.add.sprite(tileCenter(39), tileCenter(18), 'lpc-agent-designer', 27)
+        .play('lpc-designer-walk');
+      previewLabel.setDepth(structureSortAnchor(16));
+      previewBuilder.setDepth(citizenDepth(tileCenter(21)));
+      previewBehind.setDepth(citizenDepth(tileCenter(18)));
+      this.objectLayer.add([previewLabel, previewBehind, previewBuilder]);
     }
     for (const venue of this.objects.venues) this.renderVenue(venue);
     for (const ticket of this.objects.careTickets ?? []) {
@@ -894,8 +1063,38 @@ class EarthScene extends Phaser.Scene {
         `${ticket.category} near tile ${ticket.x}, ${ticket.y}`, `State: ${ticket.state}`,
         ticket.assignedAgentId ? `Assigned to ${ticket.assignedAgentId}` : 'Awaiting an authorized inspection',
       ], 'A report is not counted as repaired until an authority inspects and resolves it.'));
+      marker.setDepth(Math.round(cy));
+      zone.setDepth(Math.round(cy));
       this.objectLayer.add([marker, zone]);
     }
+  }
+
+  diagnostics() {
+    const layerSummary = (layer: Phaser.GameObjects.Layer | undefined) => ({
+      count: layer?.getChildren().length ?? 0,
+      fractionalPositions: (layer?.getChildren() ?? []).filter((child) => {
+        const positioned = child as Phaser.GameObjects.GameObject & { x?: number; y?: number };
+        return (typeof positioned.x === 'number' && !Number.isInteger(positioned.x))
+          || (typeof positioned.y === 'number' && !Number.isInteger(positioned.y));
+      }).length,
+    });
+    const prefabObjects = [this.groundLayer, this.objectLayer, this.overheadLayer]
+      .flatMap((layer) => layer?.getChildren() ?? [])
+      .filter((child) => Boolean((child as Phaser.GameObjects.GameObject).getData('prefab-id')));
+    return {
+      gridSize: TILE,
+      layers: {
+        ground: layerSummary(this.groundLayer),
+        midground: layerSummary(this.objectLayer),
+        overhead: layerSummary(this.overheadLayer),
+      },
+      prefabObjects: prefabObjects.length,
+      prefabLayers: [...new Set(prefabObjects.map((child) => (child as Phaser.GameObjects.GameObject).getData('world-layer')))],
+      citizens: this.sprites.size,
+      citizenPixelsAreWhole: [...this.sprites.values()].every((sprite) => Number.isInteger(sprite.x) && Number.isInteger(sprite.y)),
+      persistedChunks: this.objects.chunks?.length ?? 0,
+      debugWfcPreview: DEBUG_WFC && !(this.objects.chunks?.length),
+    };
   }
 
   focusWorldTarget(target: string) {
@@ -957,8 +1156,8 @@ class EarthScene extends Phaser.Scene {
     rankAura.fillStyle(color, 0.45).fillEllipse(0, 4, 36, 14);
     rankAura.lineStyle(2, INK, 0.7).strokeEllipse(0, 4, 36, 14);
 
-    const sprite = this.add.sprite(0, -20, `lpc-agent-${lpcPreset}`, 0)
-      .setScale(0.82)
+    const sprite = this.add.sprite(0, 0, `lpc-agent-${lpcPreset}`, 0)
+      .setOrigin(0.5, 0.75)
       .setName('cit-image');
     sprite.setData('lpc-preset', lpcPreset);
     sprite.setData('lpc-state', 'idle');
@@ -996,8 +1195,10 @@ class EarthScene extends Phaser.Scene {
     const shield = this.add.graphics().setName('training-shield').setVisible(false);
     shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
-    const container = this.add.container(0, 0, [rankAura, sprite, identityMark, tierMark, label, bubble, sleepBubble, shield]).setSize(36, 44).setInteractive({ useHandCursor: true });
+    const container = this.add.container(0, 0, [rankAura, sprite, identityMark, tierMark, label, bubble, sleepBubble, shield]).setSize(64, 64).setInteractive({ useHandCursor: true });
+    container.setData('persistent-world', true);
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
+    this.objectLayer?.add(container);
     this.sprites.set(citizen.agentId, container);
   }
 
@@ -1338,7 +1539,7 @@ class EarthScene extends Phaser.Scene {
 
   /** Community grounds and whatever is currently growing on them. */
   renderActivityZones() {
-    if (!this.objectLayer) return;
+    if (!this.objectLayer || !this.groundLayer) return;
     const ZONE_TINTS: Record<string, number> = {
       farm: 0x88c04d, orchard: 0x52a35a, forest: 0x3e7d43, quarry: 0x9aa0a8,
     };
@@ -1348,27 +1549,29 @@ class EarthScene extends Phaser.Scene {
         .fillRect(zone.x * TILE, zone.y * TILE, zone.w * TILE, zone.h * TILE);
       ground.lineStyle(2, INK, 0.55)
         .strokeRect(zone.x * TILE, zone.y * TILE, zone.w * TILE, zone.h * TILE);
-      this.objectLayer.add(ground);
+      this.groundLayer.add(ground);
       const sign = this.add.text(zone.x * TILE + 4, zone.y * TILE + 4,
         `${zone.name.toUpperCase()} · ${zone.tool.replace('_', ' ')}`, {
         fontFamily: 'Consolas, monospace', fontSize: '9px', color: CREAM,
         backgroundColor: '#1E1E1E', padding: { x: 3, y: 1 },
       });
+      sign.setDepth(structureSortAnchor(zone.y));
       this.objectLayer.add(sign);
     }
     for (const field of this.objects.farmPlots ?? []) {
       // Real LPC tiles: worked soil underneath, the growth frame on top, so a
       // field reads the same here as it does in the tileset it came from.
       const originX = field.x * TILE, originY = field.y * TILE;
-      this.objectLayer.add(this.add.image(originX, originY, 'crop-growth', 0).setOrigin(0));
+      this.groundLayer.add(this.add.image(originX, originY, 'crop-growth', 0).setOrigin(0));
       const stage = Math.min(4, Math.max(1, field.stage));
-      this.objectLayer.add(this.add.image(originX, originY, 'crop-growth', stage).setOrigin(0));
+      this.groundLayer.add(this.add.image(originX, originY, 'crop-growth', stage).setOrigin(0));
       if (stage >= 4) {
         // Ripe fields get a small hard-edged marker so a harvest is visible
         // from across the map without changing the tile art.
         const ready = this.add.graphics();
         ready.fillStyle(INK, 0.9).fillRect(originX + 12, originY - 8, 8, 8);
         ready.fillStyle(0xf7c948, 1).fillRect(originX + 14, originY - 6, 4, 4);
+        ready.setDepth(structureSortAnchor(field.y));
         this.objectLayer.add(ready);
       }
     }
@@ -1459,9 +1662,10 @@ class EarthScene extends Phaser.Scene {
           }
         }
       }
-      sprite.x = x * TILE + TILE / 2;
-      sprite.y = y * TILE + TILE / 2;
-      sprite.setDepth(sprite.y);
+      const rendered = renderRoutePoint({ x, y });
+      sprite.x = rendered.x;
+      sprite.y = rendered.y;
+      sprite.setDepth(citizenDepth(rendered.y));
 
       const tierMark = sprite.getByName('tier-insignia') as Phaser.GameObjects.Graphics | null;
       if (tierMark && tierMark.getData('tier') !== (citizen.experienceTier ?? 'emerging')) {
@@ -1500,7 +1704,7 @@ class EarthScene extends Phaser.Scene {
           citImg.setData('lpc-key', nextKey);
           citImg.setData('lpc-state', nextState);
         }
-        citImg.y = -20;
+        citImg.y = 0;
         citImg.rotation = 0;
       }
 
@@ -1544,7 +1748,14 @@ const game = new Phaser.Game({
 });
 // Under the QA flag only: let tooling position the camera deterministically
 // instead of scripting wheel events. Display access, no authority.
-if (DEBUG_FLAGS.size > 0) (window as unknown as Record<string, unknown>).earthGame = game;
+if (import.meta.env.DEV || DEBUG_FLAGS.size > 0) {
+  const debugWindow = window as unknown as Record<string, unknown>;
+  debugWindow.earthGame = game;
+  debugWindow.__earthDiagnostics = () => {
+    const scene = game.scene.getScene('EarthScene') as EarthScene | undefined;
+    return scene?.diagnostics() ?? null;
+  };
+}
 
 for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {
   document.getElementById(id)?.addEventListener('input', () => {

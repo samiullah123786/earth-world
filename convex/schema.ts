@@ -639,4 +639,23 @@ export default defineSchema({
     mayorAgentId: v.optional(v.string()),
     updatedAt: v.number(),
   }).index('key', ['key']),
+
+  worldChunks: defineTable({
+    chunkId: v.string(),
+    chunkX: v.number(),
+    chunkY: v.number(),
+    size: v.number(),
+    biome: v.union(
+      v.literal('Town_Center'), v.literal('Residential_Suburbs'),
+      v.literal('Farmland'), v.literal('Forest_Wilderness'),
+    ),
+    generation: v.number(),
+    seed: v.number(),
+    tiles: v.array(v.string()),
+    edges: v.object({
+      north: v.array(v.string()), east: v.array(v.string()),
+      south: v.array(v.string()), west: v.array(v.string()),
+    }),
+    createdAt: v.number(),
+  }).index('chunkId', ['chunkId']).index('coordinates', ['chunkX', 'chunkY']).index('generation', ['generation']),
 });

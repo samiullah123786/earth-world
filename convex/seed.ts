@@ -2,6 +2,7 @@ import { internalMutation } from './_generated/server';
 import { walkable } from './walkable';
 import { SEED_PLOTS, SEED_VENUES } from './plotsData';
 import { ensureWorldState } from './planning';
+import { requireLpcPrefab } from '../shared/lpc-prefabs';
 
 const MAYOR_ID = 'agent:sam-cbf0499925';
 const MAYOR_PLOT_ID = 'plot-30-6';
@@ -287,42 +288,32 @@ export const init = internalMutation({
   }
   const BANK_BUILDS = [
     {
-      buildId: 'build:earth-bank', x: 30, y: 17, w: 6, h: 5, name: 'The Earth Bank',
-      placements: [
-        { assetId: 'stone_wall', xOffset: 0, yOffset: 2 },
-        { assetId: 'stone_wall', xOffset: 3, yOffset: 2 },
-        { assetId: 'roof_tile', xOffset: 0, yOffset: 0 },
-        { assetId: 'roof_tile', xOffset: 3, yOffset: 0 },
-        { assetId: 'window', xOffset: 1, yOffset: 3 },
-        { assetId: 'window', xOffset: 4, yOffset: 3 },
-        { assetId: 'wood_door', xOffset: 2, yOffset: 3 },
-      ],
+      buildId: 'build:earth-bank', x: 30, y: 17, prefabId: 'bank_lpc_grand',
     },
     {
-      buildId: 'build:earth-bank-forecourt', x: 30, y: 22, w: 6, h: 1, name: 'Bank Forecourt',
-      placements: [
-        { assetId: 'cobblestone_road', xOffset: 0, yOffset: 0 },
-        { assetId: 'cobblestone_road', xOffset: 3, yOffset: 0 },
-        { assetId: 'streetlamp', xOffset: 0, yOffset: 0 },
-        { assetId: 'streetlamp', xOffset: 5, yOffset: 0 },
-        // No signpost: the LPC signs sheet renders an INN shingle, which is
-        // the wrong message on a bank. The venue label names the building.
-      ],
+      buildId: 'build:earth-bank-forecourt', x: 30, y: 22, prefabId: 'bank_forecourt',
     },
   ];
   for (const bank of BANK_BUILDS) {
     // Civic buildings stay in their canonical shape: seed upserts rather than
     // skipping, so a corrected facade reaches worlds that already seeded.
-    const blueprint = { name: bank.name, kind: 'bank', assetFramework: 'earthfolk-lpc-v1', placements: bank.placements };
+    const prefab = requireLpcPrefab(bank.prefabId);
+    const blueprint = {
+      prefabId: prefab.id, name: prefab.name, kind: prefab.structureType,
+      architecture: 'native', features: [], offsetX: bank.x - 30, offsetY: bank.y - 17,
+      w: prefab.width, h: prefab.height, style: 'earthfolk-lpc-v1', assetFramework: 'earthfolk-lpc-v1',
+      entry: prefab.entry, collision: prefab.collision,
+      placements: prefab.placements.map((placement) => ({ ...placement, kind: placement.layer === 'ground' ? 'tile' : 'prop' })),
+    };
     const existing = await ctx.db.query('builds').withIndex('buildId', (q: any) => q.eq('buildId', bank.buildId)).first();
     if (existing) {
-      await ctx.db.patch(existing._id, { blueprint, x: bank.x, y: bank.y, w: bank.w, h: bank.h });
+      await ctx.db.patch(existing._id, { blueprint, x: bank.x, y: bank.y, w: prefab.width, h: prefab.height });
       continue;
     }
     await ctx.db.insert('builds', {
       buildId: bank.buildId, plotId: 'plot:earth-bank', ownerAgentId: 'bank:earth',
       structure: 'blueprint', state: 'built', createdAt: now, completedAt: now,
-      x: bank.x, y: bank.y, w: bank.w, h: bank.h, blueprint,
+      x: bank.x, y: bank.y, w: prefab.width, h: prefab.height, blueprint,
     });
   }
   if (!await ctx.db.query('venues').withIndex('venueId', (q: any) => q.eq('venueId', 'venue:earth-bank')).first()) {

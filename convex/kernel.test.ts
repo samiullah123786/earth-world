@@ -5,6 +5,8 @@ import schema from './schema';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { walkable } from './walkable';
 import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
+import { boundariesMatch, validateWfcChunk, wfcRule } from '../shared/wfc';
+import { loadWorldWalkability } from './worldGrid';
 
 const modules = import.meta.glob('./**/*.ts');
 
@@ -174,29 +176,36 @@ describe('Earth Kernel', () => {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-unknown',
       action: {
         type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 10, y: 10 },
-        blueprint: [{ tile: 'downloaded_from_somewhere', xOffset: 0, yOffset: 0 }],
+        prefabId: 'downloaded_from_somewhere',
       },
-    })).rejects.toThrow(/unknown LPC asset/i);
+    })).rejects.toThrow(/unknown LPC prefab/i);
     await expect(t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-solid-overlap',
       action: {
         type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 10, y: 10 },
-        blueprint: [
-          { prop: 'water_barrel', xOffset: 0, yOffset: 0 },
-          { prop: 'wooden_fence', xOffset: 0, yOffset: 0 },
-        ],
+        prefabId: 'store_wooden',
       },
-    })).rejects.toThrow(/overlaps another solid/i);
+    })).rejects.toThrow(/does not match/i);
+    const beforeRejectedSweep = await t.run(async (ctx) => ({
+      builds: (await ctx.db.query('builds').collect()).length,
+      approvals: (await ctx.db.query('approvals').collect()).length,
+    }));
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-outside-owned-plot',
+      action: {
+        type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 11, y: 10 },
+        prefabId: 'community_garden',
+      },
+    })).rejects.toThrow(/owned plot|footprint/i);
+    expect(await t.run(async (ctx) => ({
+      builds: (await ctx.db.query('builds').collect()).length,
+      approvals: (await ctx.db.query('approvals').collect()).length,
+    }))).toEqual(beforeRejectedSweep);
     const request = await t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'lpc-valid',
       action: {
         type: 'construct_structure', structureType: 'community_garden', coordinates: { x: 10, y: 10 },
-        blueprint: [
-          { tile: 'plowed_dirt', xOffset: 0, yOffset: 0 },
-          { tile: 'crop_stage_1', xOffset: 1, yOffset: 0 },
-          { prop: 'water_barrel', xOffset: 0, yOffset: 1 },
-          { prop: 'wooden_fence', xOffset: 1, yOffset: 1 },
-        ],
+        prefabId: 'community_garden',
       },
     });
     expect(request).toMatchObject({ awaitingOwner: true, review: { standard: 'earthfolk-lpc-v1', manifestAllowlist: 'pass' } });
@@ -207,7 +216,8 @@ describe('Earth Kernel', () => {
     await t.run(async (ctx) => {
       const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agent.agentId)).collect();
       const build = builds.find((candidate) => candidate.blueprint?.assetFramework === 'earthfolk-lpc-v1');
-      expect(build).toMatchObject({ state: 'building', w: 2, h: 2 });
+      expect(build).toMatchObject({ state: 'building', w: 3, h: 3,
+        blueprint: { prefabId: 'community_garden' } });
       expect(build?.constructionEndsAt).toBeGreaterThan(Date.now());
       lpcBuildId = String(build?.buildId);
       const premature = (await ctx.db.query('contributions').withIndex('sourceId', (q) => q.eq('sourceId', lpcBuildId)).first());
@@ -748,6 +758,31 @@ describe('Earth Kernel', () => {
     const expanded = await t.query(api.world.worldObjects, {});
     expect(expanded.state).toMatchObject({ width: 80, height: 64, generation: 1 });
     expect(expanded.plots.length).toBeGreaterThan(50);
+    expect(expanded.chunks).toHaveLength(8);
+    await t.run(async (ctx) => {
+      const isWalkable = await loadWorldWalkability(ctx, { width: 80, height: 64 });
+      expect(foundingEdgeContinuationFrame(64, 34)).toBeDefined();
+      expect(isWalkable(64, 34)).toBe(false);
+    });
+    const chunkMap = new Map(expanded.chunks.map((chunk) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
+    for (const chunk of expanded.chunks) {
+      expect(validateWfcChunk(chunk.tiles, chunk.size, chunk.edges as any)).toBe(true);
+      const east = chunkMap.get(`${chunk.chunkX + 1},${chunk.chunkY}`);
+      const south = chunkMap.get(`${chunk.chunkX},${chunk.chunkY + 1}`);
+      if (east) expect(boundariesMatch(chunk.edges as any, 'east', east.edges as any, 'west')).toBe(true);
+      if (south) expect(boundariesMatch(chunk.edges as any, 'south', south.edges as any, 'north')).toBe(true);
+    }
+    for (const plot of expanded.plots.filter((candidate) => candidate.plotId.startsWith('plot-g1-'))) {
+      const touchesRoad = [[-1, 0], [plot.w, 0], [0, -1], [0, plot.h]].some(([dx, dy]) => {
+        const x = plot.x + dx, y = plot.y + dy;
+        const chunk = chunkMap.get(`${Math.floor(x / 16)},${Math.floor(y / 16)}`);
+        if (!chunk) return false;
+        const localX = x - chunk.chunkX * chunk.size, localY = y - chunk.chunkY * chunk.size;
+        return localX >= 0 && localY >= 0 && localX < chunk.size && localY < chunk.size
+          && wfcRule(chunk.tiles[localY * chunk.size + localX]).terrain === 'road';
+      });
+      expect(touchesRoad).toBe(true);
+    }
     for (let i = 0; i < expanded.plots.length; i++) for (let j = i + 1; j < expanded.plots.length; j++) {
       const a = expanded.plots[i], b = expanded.plots[j];
       expect(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y).toBe(true);

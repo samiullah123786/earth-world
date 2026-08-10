@@ -16,24 +16,22 @@ describe('AgentBuildService', () => {
       type: 'construct_structure',
       structureType: 'community_garden',
       coordinates: { x: 140, y: 85 },
+      prefabId: 'community_garden',
     }));
     expect(result).toMatchObject({ ok: true });
   });
 
-  it('rejects unknown assets and overlapping solid components before signing', async () => {
+  it('rejects ad-hoc placement lists and mismatched prefab types before signing', async () => {
     const submit = vi.fn();
     const service = new AgentBuildService(submit);
     await expect(service.executeWorldAction({
       action: 'construct_structure', structureType: 'community_garden', coordinates: { x: 1, y: 1 },
       blueprint: [{ tile: 'not_in_manifest', xOffset: 0, yOffset: 0 }],
-    })).rejects.toThrow(/unknown LPC asset/i);
+    })).rejects.toThrow(/registered atomic LPC prefab/i);
     await expect(service.executeWorldAction({
       action: 'construct_structure', structureType: 'community_garden', coordinates: { x: 1, y: 1 },
-      blueprint: [
-        { prop: 'water_barrel', xOffset: 0, yOffset: 0 },
-        { prop: 'wooden_fence', xOffset: 0, yOffset: 0 },
-      ],
-    })).rejects.toThrow(/overlaps another solid/i);
+      prefabId: 'store_wooden',
+    })).rejects.toThrow(/does not match/i);
     expect(submit).not.toHaveBeenCalled();
   });
 });
