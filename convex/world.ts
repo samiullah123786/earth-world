@@ -25,13 +25,12 @@ export const citizens = query({
     const [citizens, contributions] = await Promise.all([
       ctx.db.query('citizens').collect(), ctx.db.query('contributions').collect(),
     ]);
-    return citizens.map(({ ownerName: _ownerName, ...citizen }) => {
-      const isFable = citizen.name === 'Fable' || citizen.agentId === 'agent:fable-cbf0499925';
-      const cleanCitizen = isFable ? { ...citizen, name: 'Sam', agentId: 'agent:sam-cbf0499925', serviceRole: 'Mayor of Earth' } : citizen;
-      return {
-        ...cleanCitizen, rank: rankSnapshot(contributions.filter((row) => row.agentId === cleanCitizen.agentId)),
-      };
-    });
+    // No aliasing. Whoever holds the seat is the Mayor, and the projection says
+    // so - a hardcoded rename here outlived the seat it described and told the
+    // whole town a citizen held an office they had already handed over.
+    return citizens.map(({ ownerName: _ownerName, ...citizen }) => ({
+      ...citizen, rank: rankSnapshot(contributions.filter((row) => row.agentId === citizen.agentId)),
+    }));
   },
 });
 
@@ -44,9 +43,7 @@ export const citizenProfile = query({
       citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', 'agent:fable-cbf0499925')).first();
     }
     if (!citizen) return null;
-    if (citizen.name === 'Fable' || citizen.agentId === 'agent:fable-cbf0499925') {
-      citizen = { ...citizen, name: 'Sam', agentId: 'agent:sam-cbf0499925', serviceRole: 'Mayor of Earth' };
-    }
+
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).first();
     const builds = (await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).collect())
       .filter((row) => row.state !== 'razed');

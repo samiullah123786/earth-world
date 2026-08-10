@@ -141,7 +141,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -2365,6 +2365,45 @@ export const act = internalMutation({
       return { ok: true, applicationId, approvalId, awaitingOwner: true, rank, warning };
     }
 
+    if (action?.type === 'report_bug') {
+      const summary = String(action.summary ?? '').trim();
+      const failedAct = String(action.act ?? '').trim().slice(0, 60);
+      const refusal = String(action.refusal ?? '').trim().slice(0, 300);
+      const surface = String(action.surface ?? 'kernel').trim().slice(0, 40);
+      const x = Number(action.x ?? citizen.fx);
+      const y = Number(action.y ?? citizen.fy);
+      if (summary.length < 12 || summary.length > 400) throw new Error('describe the fault in 12-400 characters');
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('a bug report needs the coordinate it happened at');
+      const now = Date.now();
+
+      // The same fault reported twice is one fault seen twice. Merging by
+      // place and failing act keeps a real problem loud and a flaky one quiet.
+      const open = (await ctx.db.query('careTickets').withIndex('state', (q) => q.eq('state', 'open')).collect())
+        .find((row) => row.category === 'bug' && Math.round(row.x) === Math.round(x)
+          && Math.round(row.y) === Math.round(y) && row.diagnostics?.act === failedAct);
+      if (open) {
+        await ctx.db.patch(open._id, {
+          diagnostics: { ...open.diagnostics!, occurrences: (open.diagnostics?.occurrences ?? 1) + 1 },
+          updatedAt: now,
+        });
+        return { ok: true, ticketId: open.ticketId, merged: true, occurrences: (open.diagnostics?.occurrences ?? 1) + 1, warning };
+      }
+
+      const doc = await ctx.db.insert('careTickets', {
+        ticketId: 'pending', reporterId: agentId, category: 'bug',
+        x: Math.round(x), y: Math.round(y), summary,
+        diagnostics: { act: failedAct, refusal, occurrences: 1, surface },
+        state: 'open', createdAt: now, updatedAt: now,
+      });
+      const ticketId = `bug:${doc}`;
+      await ctx.db.patch(doc, { ticketId });
+      await ctx.db.insert('events', {
+        kind: 'bug_reported', actorId: agentId, payload: { ticketId, x: Math.round(x), y: Math.round(y), act: failedAct },
+        gloss: `${citizen.name} filed a fault report at (${Math.round(x)}, ${Math.round(y)}): ${summary.slice(0, 90)}`,
+      });
+      return { ok: true, ticketId, merged: false, occurrences: 1, warning };
+    }
+
     if (action?.type === 'report_issue') {
       const categoryValue = String(action.category ?? '').trim();
       const summary = String(action.summary ?? '').trim();
@@ -3195,6 +3234,14 @@ export const decideApproval = internalMutation({
         await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
           `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
       }
+      if (approval.kind === 'bug_report') {
+        const ticket = await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', String(approval.payload?.ticketId ?? ''))).first();
+        if (ticket) {
+          await ctx.db.patch(ticket._id, {
+            state: 'dismissed', resolution: 'Reviewed by the Mayor and judged working as intended.', updatedAt: now,
+          });
+        }
+      }
       if (approval.kind === 'marriage') {
         const marriage = await ctx.db.query('marriages').withIndex('marriageId', (q) => q.eq('marriageId', String(approval.payload?.marriageId ?? ''))).first();
         if (marriage && ['pending_owners', 'accepted'].includes(marriage.state)) {
@@ -3302,6 +3349,17 @@ export const decideApproval = internalMutation({
         landResult = { expansion: await commitPlotExpansion(ctx, requesterId, approval.payload, now) };
       } else {
         throw new Error('plot expansion stage is invalid');
+      }
+      landHandled = true;
+    }
+    if (approval.kind === 'bug_report') {
+      const ticket = await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', String(approval.payload?.ticketId ?? ''))).first();
+      if (ticket) {
+        await ctx.db.patch(ticket._id, { state: 'claimed', resolution: 'Accepted for repair by the Mayor.', updatedAt: now });
+        await ctx.db.insert('events', {
+          kind: 'bug_accepted', actorId: session.agentId, payload: { ticketId: ticket.ticketId },
+          gloss: `The Mayor accepted the fault at (${ticket.x}, ${ticket.y}) for repair.`,
+        });
       }
       landHandled = true;
     }
@@ -3986,6 +4044,335 @@ export const backfillPersonalities = internalMutation({
       seeded += 1;
     }
     return { seeded, total: citizens.length };
+  },
+});
+
+/** The five offices that run themselves. The Mayor is not among them. */
+const LLM_AUTHORITIES = [
+  { role: 'Community Greeter', duty: 'welcome newcomers and walk them to the Earth Bank' },
+  { role: 'Community Warden', duty: 'patrol the grounds and raise care tickets for anything unsafe' },
+  { role: 'Build Inspector', duty: 'audit new structures against their plots and footprints' },
+  { role: 'Land Steward', duty: 'watch plot occupancy and protect land from overlap' },
+  { role: 'Boundary Surveyor', duty: 'watch density and survey where the world should grow' },
+] as const;
+
+export async function ensureGovernanceConfig(ctx: any) {
+  const existing = await ctx.db.query('governanceConfig').withIndex('key', (q: any) => q.eq('key', 'earth')).first();
+  if (existing) return existing;
+  const id = await ctx.db.insert('governanceConfig', {
+    key: 'earth',
+    // Off until a human turns it on. An always-on mind with no ceiling is an
+    // open wallet, so the ceiling exists before the first tick does.
+    authoritiesEnabled: false,
+    dailyTokenBudget: 200_000,
+    perAuthorityDailyTokens: 50_000,
+    tickMinutes: 10,
+    maxRingsPerDay: 1,
+    dayStamp: '',
+    ringsToday: 0,
+  });
+  return await ctx.db.get(id);
+}
+
+/**
+ * Decide whether an authority may consult a model at all.
+ *
+ * The cheapest call is the one never made. A tick only earns a model when
+ * something NEW happened in the authority's world since it last looked;
+ * otherwise the deterministic drive engine keeps it patrolling, greeting and
+ * visibly alive for nothing. Budgets are checked before novelty, because a
+ * spent budget should not even be interesting.
+ */
+export const authorityGate = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const config = await ensureGovernanceConfig(ctx);
+    if (!config.authoritiesEnabled) return { allowed: false, why: 'authorities are paused by the Mayor' };
+    const today = new Date().toISOString().slice(0, 10);
+
+    const spentRows = await ctx.db.query('aiSpend').withIndex('dayStamp', (q) => q.eq('dayStamp', today)).collect();
+    const spentToday = spentRows.reduce((total, row) => total + row.promptTokens + row.completionTokens, 0);
+    if (spentToday >= config.dailyTokenBudget) {
+      return { allowed: false, why: `daily token budget spent (${spentToday}/${config.dailyTokenBudget})` };
+    }
+
+    const citizens = await ctx.db.query('citizens').collect();
+    const events = await ctx.db.query('events').order('desc').take(40);
+    const candidates = [];
+    for (const office of LLM_AUTHORITIES) {
+      const citizen = citizens.find((row) => row.serviceRole === office.role);
+      if (!citizen) continue;
+      const mine = spentRows.find((row) => row.agentId === citizen.agentId);
+      const myTokens = mine ? mine.promptTokens + mine.completionTokens : 0;
+      if (myTokens >= config.perAuthorityDailyTokens) continue;
+
+      const memory = await ctx.db.query('authorityMemory')
+        .withIndex('agent_created', (q) => q.eq('agentId', citizen.agentId)).order('desc').take(1);
+      const lastLooked = memory[0]?.createdAt ?? 0;
+      // Novelty, measured honestly: events this office has not seen, near it.
+      const novel = events.filter((event) =>
+        event._creationTime > lastLooked && event.actorId !== citizen.agentId);
+      if (!novel.length) continue;
+
+      candidates.push({
+        agentId: citizen.agentId, name: citizen.name, role: office.role, duty: office.duty,
+        position: { x: Math.round(citizen.fx), y: Math.round(citizen.ty) },
+        novel: novel.slice(0, 6).map((event) => event.gloss.slice(0, 160)),
+        tokensSpent: myTokens, tokenBudget: config.perAuthorityDailyTokens,
+      });
+    }
+    if (!candidates.length) return { allowed: false, why: 'nothing new happened; deterministic drives continue for free' };
+    // One office per tick keeps spend flat and predictable.
+    return { allowed: true, authority: candidates[0], summaryDue: false };
+  },
+});
+
+/** Record what a call actually cost, so the Mayor sees a number not a promise. */
+export const recordSpend = internalMutation({
+  args: {
+    agentId: v.string(), model: v.string(),
+    promptTokens: v.number(), cachedTokens: v.number(), completionTokens: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = (await ctx.db.query('aiSpend').withIndex('day_agent', (q) => q.eq('dayStamp', today).eq('agentId', args.agentId)).collect())[0];
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        promptTokens: existing.promptTokens + args.promptTokens,
+        cachedTokens: existing.cachedTokens + args.cachedTokens,
+        completionTokens: existing.completionTokens + args.completionTokens,
+        calls: existing.calls + 1,
+      });
+      return { ok: true };
+    }
+    await ctx.db.insert('aiSpend', { dayStamp: today, ...args, calls: 1 });
+    return { ok: true };
+  },
+});
+
+/** Look for a cached answer to a situation this world has already paid for. */
+export const cacheLookup = internalQuery({
+  args: { cacheKey: v.string() },
+  handler: async (ctx, { cacheKey }) => {
+    const row = await ctx.db.query('semanticCache').withIndex('cacheKey', (q) => q.eq('cacheKey', cacheKey)).first();
+    if (!row || row.expiresAt < Date.now()) return null;
+    return { response: row.response, hits: row.hits };
+  },
+});
+
+export const cacheStore = internalMutation({
+  args: { cacheKey: v.string(), response: v.string() },
+  handler: async (ctx, { cacheKey, response }) => {
+    const now = Date.now();
+    const row = await ctx.db.query('semanticCache').withIndex('cacheKey', (q) => q.eq('cacheKey', cacheKey)).first();
+    if (row) {
+      await ctx.db.patch(row._id, { response, hits: row.hits + 1, expiresAt: now + 24 * 3_600_000 });
+      return { ok: true, hits: row.hits + 1 };
+    }
+    await ctx.db.insert('semanticCache', { cacheKey, response, hits: 0, createdAt: now, expiresAt: now + 24 * 3_600_000 });
+    return { ok: true, hits: 0 };
+  },
+});
+
+/**
+ * Commit one authority's chosen act.
+ *
+ * The model picks from a menu; the Kernel decides whether the pick is allowed,
+ * exactly as it would for any citizen. Anything structural parks in the Mayor's
+ * inbox instead of happening.
+ */
+export const authorityCommit = internalMutation({
+  args: { agentId: v.string(), choice: v.string(), note: v.string(), model: v.string() },
+  handler: async (ctx, { agentId, choice, note, model }) => {
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    if (!citizen) return { ok: false, why: 'no such authority' };
+    const now = Date.now();
+    const clean = note.slice(0, 240);
+
+    await ctx.db.insert('authorityMemory', {
+      agentId, kind: 'event', body: `${choice}: ${clean}`, createdAt: now,
+    });
+
+    if (choice === 'speak') {
+      await ctx.db.patch(citizen._id, { activity: clean });
+      await ctx.db.insert('events', {
+        kind: 'authority', actorId: agentId, payload: { choice, model },
+        gloss: `${citizen.name} (${citizen.serviceRole}): ${clean}`,
+      });
+      return { ok: true, choice };
+    }
+    if (choice === 'care_ticket') {
+      const ticketDoc = await ctx.db.insert('careTickets', {
+        ticketId: 'pending', reporterId: agentId, category: 'venue',
+        x: Math.round(citizen.fx), y: Math.round(citizen.fy),
+        summary: clean, state: 'open', createdAt: now, updatedAt: now,
+      });
+      await ctx.db.patch(ticketDoc, { ticketId: `care:${ticketDoc}` });
+      await ctx.db.insert('events', {
+        kind: 'care_opened', actorId: agentId, payload: { choice, model },
+        gloss: `${citizen.name} raised a care ticket: ${clean}`,
+      });
+      return { ok: true, choice };
+    }
+    if (choice === 'propose_expansion') {
+      const config = await ensureGovernanceConfig(ctx);
+      const today = new Date().toISOString().slice(0, 10);
+      const ringsToday = config.dayStamp === today ? config.ringsToday : 0;
+      const world = await ensureWorldState(ctx);
+      if (ringsToday >= config.maxRingsPerDay) {
+        // Beyond the daily ring, growth is a structural decision and a human
+        // makes it. This is the escalation threshold, mechanically.
+        if (world.mayorAgentId) {
+          const approvalId = await insertApproval(ctx, world.mayorAgentId, 'world_expand',
+            'Boundary survey requests another ring today',
+            `${citizen.name} reports density beyond today's growth allowance. ${clean} Approving expands the living boundary again.`,
+            { requestedBy: agentId }, 'strict');
+          await notifyOwner(ctx, world.mayorAgentId, 'approval', 'The surveyors want to grow the world again',
+            clean, approvalId);
+        }
+        return { ok: true, choice, escalated: true };
+      }
+      await expandWorld(ctx, `${citizen.name} surveyed growing density`);
+      await ctx.db.patch(config._id, { dayStamp: today, ringsToday: ringsToday + 1 });
+      await ctx.db.insert('events', {
+        kind: 'world_expanded', actorId: agentId, payload: { choice, model },
+        gloss: `${citizen.name} surveyed the edge and the world grew: ${clean}`,
+      });
+      return { ok: true, choice, expanded: true };
+    }
+    // 'observe' costs nothing and still teaches the office something.
+    return { ok: true, choice: 'observe' };
+  },
+});
+
+/** Fold an authority's older memories into one line, once a day. */
+export const foldAuthorityMemory = internalMutation({
+  args: { agentId: v.string(), summary: v.string() },
+  handler: async (ctx, { agentId, summary }) => {
+    const rows = await ctx.db.query('authorityMemory')
+      .withIndex('agent_created', (q) => q.eq('agentId', agentId)).order('desc').collect();
+    const old = rows.slice(12);
+    for (const row of old) await ctx.db.delete(row._id);
+    if (old.length) {
+      await ctx.db.insert('authorityMemory', { agentId, kind: 'summary', body: summary.slice(0, 600), createdAt: Date.now() });
+    }
+    return { folded: old.length };
+  },
+});
+
+/** The Mayor's view of what the always-on minds cost and are doing. */
+export const mayorGovernance = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    await requireMayorSession(ctx, tokenHash);
+    const config = await ctx.db.query('governanceConfig').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    const today = new Date().toISOString().slice(0, 10);
+    const spend = await ctx.db.query('aiSpend').withIndex('dayStamp', (q) => q.eq('dayStamp', today)).collect();
+    const cache = await ctx.db.query('semanticCache').collect();
+    return {
+      ok: true,
+      authoritiesEnabled: config?.authoritiesEnabled ?? false,
+      dailyTokenBudget: config?.dailyTokenBudget ?? 0,
+      perAuthorityDailyTokens: config?.perAuthorityDailyTokens ?? 0,
+      ringsToday: config?.dayStamp === today ? config.ringsToday : 0,
+      maxRingsPerDay: config?.maxRingsPerDay ?? 1,
+      spentToday: spend.reduce((total, row) => total + row.promptTokens + row.completionTokens, 0),
+      cachedToday: spend.reduce((total, row) => total + row.cachedTokens, 0),
+      callsToday: spend.reduce((total, row) => total + row.calls, 0),
+      cacheEntries: cache.length,
+      cacheHits: cache.reduce((total, row) => total + row.hits, 0),
+      perAuthority: spend.map((row) => ({
+        agentId: row.agentId, model: row.model, calls: row.calls,
+        tokens: row.promptTokens + row.completionTokens, cached: row.cachedTokens,
+      })),
+    };
+  },
+});
+
+export const mayorGovernanceSet = internalMutation({
+  args: { tokenHash: v.string(), enabled: v.optional(v.boolean()), dailyTokenBudget: v.optional(v.number()) },
+  handler: async (ctx, { tokenHash, enabled, dailyTokenBudget }) => {
+    await requireMayorSession(ctx, tokenHash);
+    const config = await ensureGovernanceConfig(ctx);
+    const patch: Record<string, unknown> = {};
+    if (typeof enabled === 'boolean') patch.authoritiesEnabled = enabled;
+    if (typeof dailyTokenBudget === 'number') {
+      if (!Number.isInteger(dailyTokenBudget) || dailyTokenBudget < 0 || dailyTokenBudget > 5_000_000) {
+        throw new Error('daily token budget must be 0-5,000,000');
+      }
+      patch.dailyTokenBudget = dailyTokenBudget;
+    }
+    await ctx.db.patch(config._id, patch);
+    await ctx.db.insert('events', {
+      kind: 'governance', actorId: 'mayor', payload: patch,
+      gloss: typeof enabled === 'boolean'
+        ? `The Mayor turned the always-on authorities ${enabled ? 'on' : 'off'}.`
+        : 'The Mayor adjusted the daily thinking budget.',
+    });
+    return { ok: true, ...patch };
+  },
+});
+
+/** Operator switch, reachable only through the deployment CLI. */
+export const operatorAuthoritiesSet = internalMutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, { enabled }) => {
+    const config = await ensureGovernanceConfig(ctx);
+    await ctx.db.patch(config._id, { authoritiesEnabled: enabled });
+    return { ok: true, authoritiesEnabled: enabled };
+  },
+});
+
+/**
+ * Bug reports waiting for the committee to word and route.
+ *
+ * A fault seen once may be a fluke; a fault seen repeatedly is a defect. The
+ * threshold is deterministic so nobody has to ask a model whether something is
+ * real - the model only writes the summary a human will read.
+ */
+export const bugTriageQueue = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const open = (await ctx.db.query('careTickets').withIndex('state', (q) => q.eq('state', 'open')).collect())
+      .filter((row) => row.category === 'bug' && !row.triage);
+    if (!open.length) return { cases: [] };
+    return {
+      cases: open.slice(0, 3).map((row) => ({
+        ticketId: row.ticketId, summary: row.summary,
+        at: { x: row.x, y: row.y },
+        act: row.diagnostics?.act ?? 'unknown',
+        refusal: row.diagnostics?.refusal ?? '',
+        surface: row.diagnostics?.surface ?? 'kernel',
+        occurrences: row.diagnostics?.occurrences ?? 1,
+      })),
+    };
+  },
+});
+
+/** File the committee's reading of a fault, and route it if it matters. */
+export const fileBugTriage = internalMutation({
+  args: { ticketId: v.string(), triage: v.string(), material: v.boolean(), model: v.string() },
+  handler: async (ctx, { ticketId, triage, material, model }) => {
+    const ticket = (await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', ticketId)).first());
+    if (!ticket || ticket.triage) return { ok: true, alreadyTriaged: true };
+    const now = Date.now();
+    await ctx.db.patch(ticket._id, { triage: triage.slice(0, 500), updatedAt: now });
+    if (!material) return { ok: true, routed: false };
+
+    // Material faults reach the human. Cosmetic ones stay in the care queue,
+    // where any citizen can still pick them up.
+    const world = await ensureWorldState(ctx);
+    if (world.mayorAgentId) {
+      const approvalId = await insertApproval(ctx, world.mayorAgentId, 'bug_report',
+        `Fault at (${ticket.x}, ${ticket.y}): ${ticket.summary.slice(0, 60)}`,
+        `${triage.slice(0, 400)} Reported by ${ticket.reporterId} after ${ticket.diagnostics?.occurrences ?? 1} occurrence(s) `
+        + `during '${ticket.diagnostics?.act ?? 'unknown'}'. Committee reading by ${model}. `
+        + 'Approving marks it accepted for repair; declining closes it as working-as-intended.',
+        { ticketId, x: ticket.x, y: ticket.y }, 'review');
+      await notifyOwner(ctx, world.mayorAgentId, 'approval', 'A fault report needs your judgment',
+        ticket.summary.slice(0, 160), approvalId);
+    }
+    return { ok: true, routed: true };
   },
 });
 

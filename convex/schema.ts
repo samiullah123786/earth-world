@@ -164,7 +164,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'), v.literal('marriage'),
+      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'), v.literal('marriage'), v.literal('bug_report'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -545,7 +545,20 @@ export default defineSchema({
   careTickets: defineTable({
     ticketId: v.string(),
     reporterId: v.string(),
-    category: v.union(v.literal('path'), v.literal('garden'), v.literal('build'), v.literal('boundary'), v.literal('venue')),
+    category: v.union(
+      v.literal('path'), v.literal('garden'), v.literal('build'),
+      v.literal('boundary'), v.literal('venue'),
+      // A bug is care work too: something in the world is broken and a
+      // citizen noticed. It carries diagnostics rather than a vibe.
+      v.literal('bug'),
+    ),
+    diagnostics: v.optional(v.object({
+      act: v.string(),
+      refusal: v.string(),
+      occurrences: v.number(),
+      surface: v.string(),
+    })),
+    triage: v.optional(v.string()),
     x: v.number(),
     y: v.number(),
     summary: v.string(),
@@ -645,6 +658,19 @@ export default defineSchema({
   }).index('slug', ['slug']),
 
   // The manager's dials, readable by anyone, turnable only by the Mayor.
+  // Governance dials for the always-on minds. Budgets are per day and global,
+  // and the Mayor's pause stops every model call instantly.
+  governanceConfig: defineTable({
+    key: v.string(),
+    authoritiesEnabled: v.boolean(),
+    dailyTokenBudget: v.number(),        // across all authorities
+    perAuthorityDailyTokens: v.number(),
+    tickMinutes: v.number(),
+    maxRingsPerDay: v.number(),
+    dayStamp: v.string(),
+    ringsToday: v.number(),
+  }).index('key', ['key']),
+
   bankConfig: defineTable({
     key: v.string(),
     managerEnabled: v.boolean(),
@@ -654,6 +680,39 @@ export default defineSchema({
     freeGrantBudget: v.number(),
     freeGrantsToday: v.number(),
   }).index('key', ['key']),
+
+  // What an authority has seen lately, and the summary older memories fold
+  // into. Bounded on purpose: a sliding window plus one daily summary keeps
+  // context from ballooning, which is the single largest cost in a 24/7 mind.
+  authorityMemory: defineTable({
+    agentId: v.string(),
+    kind: v.union(v.literal('event'), v.literal('summary')),
+    body: v.string(),
+    createdAt: v.number(),
+  }).index('agent_created', ['agentId', 'createdAt']),
+
+  // Repeated situations answer from here instead of from the model. A greeting
+  // is a greeting; paying for the same sentence twice is waste, not judgment.
+  semanticCache: defineTable({
+    cacheKey: v.string(),       // role + situation template, not free text
+    response: v.string(),
+    hits: v.number(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  }).index('cacheKey', ['cacheKey']),
+
+  // Every model call this world makes, metered. The Mayor sees the real number
+  // daily rather than a promise that it is probably fine.
+  aiSpend: defineTable({
+    dayStamp: v.string(),
+    agentId: v.string(),
+    model: v.string(),
+    promptTokens: v.number(),
+    cachedTokens: v.number(),
+    completionTokens: v.number(),
+    calls: v.number(),
+  }).index('day_agent', ['dayStamp', 'agentId'])
+    .index('dayStamp', ['dayStamp']),
 
   // Announcements from the world to everyone living in it. When Earth changed
   // hosts, every connector kept calling a dead address and no agent could be

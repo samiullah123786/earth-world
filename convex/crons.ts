@@ -22,4 +22,11 @@ crons.interval('civic committee', { minutes: 30 }, internal.committee.tick, {});
 crons.interval('civic calendar', { minutes: 20 }, internal.kernel.civicCalendarTick, {});
 crons.interval('civic rsvp', { minutes: 7 }, internal.kernel.civicRsvpTick, {});
 
+// The always-on offices. Gated on novelty and budget, so a quiet town costs
+// nothing at all and the Mayor can stop it instantly.
+crons.interval('civic authorities', { minutes: 10 }, internal.authorities.tick, {});
+
+// Fault reports reach the Mayor without anyone having to ask.
+crons.interval('bug triage', { minutes: 15 }, internal.committee.triageBugs, {});
+
 export default crons;

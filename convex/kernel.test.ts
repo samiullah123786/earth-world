@@ -911,4 +911,21 @@ describe('Earth Kernel', () => {
       } },
     })).rejects.toThrow(/unsupported native feature/i);
   });
+
+  it('seeding a live world never unseats the sitting Mayor', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    // A world where the office has already moved to somebody's real agent.
+    await t.run(async (ctx) => {
+      const world = (await ctx.db.query('worldState').collect())[0];
+      await ctx.db.patch(world._id, { mayorAgentId: 'agent:elected-human' });
+    });
+    await t.mutation(internal.seed.init, {});
+    await t.run(async (ctx) => {
+      const world = (await ctx.db.query('worldState').collect())[0];
+      // Reseeding used to hand the office back to a seed citizen nobody can
+      // log in as, silently emptying the human Mayor's inbox.
+      expect(world.mayorAgentId).toBe('agent:elected-human');
+    });
+  });
 });

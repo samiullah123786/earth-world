@@ -200,7 +200,11 @@ export const init = internalMutation({
 
     const world = await ensureWorldState(ctx);
     await ctx.db.patch(world._id, {
-      mayorAgentId: MAYOR_ID,
+      // Seeding sets a FOUNDING mayor, never a sitting one. Reseeding a live
+      // world used to hand the office back to a seed citizen nobody can log in
+      // as, which quietly emptied the human Mayor's inbox into a citizen with
+      // no owner. An election, or an operator transfer, outranks the seed.
+      mayorAgentId: world.mayorAgentId ?? MAYOR_ID,
       landPolicy: world.landPolicy === 'service_auto' ? 'risk_based' : world.landPolicy,
       updatedAt: now,
     });
