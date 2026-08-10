@@ -72,6 +72,7 @@ class EarthScene extends Phaser.Scene {
   selectedAgentId?: string;
   conversationAgentId?: string;
   conversationMinimized = true;
+  conversationHistoryId?: string;
   conversationRefreshTimer?: number;
   mapPanning = false;
   uiInteractionUntil = 0;
@@ -856,6 +857,9 @@ class EarthScene extends Phaser.Scene {
       this.renderConversation(selected ?? null);
     }, Math.max(25, nextExpiry - Date.now() + 25));
     const selected = conversation && this.isConversationActive(conversation) ? conversation : null;
+    const replay = !selected && this.conversationHistoryId
+      ? this.conversations.find((row) => row.id === this.conversationHistoryId && !this.isConversationActive(row)) ?? null
+      : null;
     const head = element('div', 'p-head conversation-header');
     const title = element('div', 'conversation-title');
     const statusDot = element('span', `conversation-live-dot${active.length ? '' : ' quiet'}`);
@@ -864,12 +868,13 @@ class EarthScene extends Phaser.Scene {
     if (active.length) title.append(element('span', 'conversation-count', `${active.length} LIVE`));
     head.append(title);
     const controls = element('div', 'conversation-controls');
-    if (selected && !this.conversationMinimized) {
+    if ((selected || replay) && !this.conversationMinimized) {
       const browse = element('button', 'conversation-back', '← ALL');
       browse.type = 'button';
       browse.setAttribute('aria-label', 'Browse all live chats');
       browse.onclick = () => {
         this.conversationAgentId = undefined;
+        this.conversationHistoryId = undefined;
         this.conversationMinimized = false;
         this.renderConversation(null);
       };
@@ -886,23 +891,24 @@ class EarthScene extends Phaser.Scene {
     controls.append(minimize);
     head.append(controls);
     const body = element('div', 'conversation-body');
-    if (selected) {
+    const shown = selected ?? replay;
+    if (shown) {
       const context = element('div', 'conversation-context');
       context.append(
-        element('span', 'conversation-live-label', 'LIVE NOW'),
-        element('span', 'conversation-context-topic', selected.topic),
+        element('span', `conversation-live-label${selected ? '' : ' ended'}`, selected ? 'LIVE NOW' : 'ENDED · REPLAY'),
+        element('span', 'conversation-context-topic', shown.topic),
       );
-      const transcript = selected.lines.map((line) => {
+      const transcript = shown.lines.map((line) => {
         const row = element('div', 'conversation-line');
         row.append(
-          element('span', 'conversation-speaker', this.conversationSpeaker(selected, line.speaker)),
+          element('span', 'conversation-speaker', this.conversationSpeaker(shown, line.speaker)),
           element('span', 'conversation-message', line.gloss),
         );
         return row;
       });
       body.append(
         context,
-        element('div', 'conversation-people', this.conversationPeople(selected)),
+        element('div', 'conversation-people', this.conversationPeople(shown)),
         ...transcript,
       );
     } else if (active.length) {
@@ -933,6 +939,27 @@ class EarthScene extends Phaser.Scene {
         document.createTextNode('When a three-dot bubble appears above a citizen, tap that citizen to open the conversation here.'),
       );
       body.append(quiet);
+    }
+    if (!shown) {
+      const past = this.conversations.filter((row) => !this.isConversationActive(row) && row.lines.length > 1).slice(0, 6);
+      if (past.length) {
+        body.append(element('div', 'conversation-history-label', 'EARLIER ON EARTH'));
+        for (const row of past) {
+          const choice = element('button', 'conversation-choice ended');
+          choice.type = 'button';
+          const copy = element('span', 'conversation-choice-copy');
+          copy.append(element('strong', '', this.conversationPeople(row)), element('span', 'conversation-topic', row.topic));
+          choice.append(copy, element('span', 'conversation-listen', 'REPLAY'));
+          choice.setAttribute('aria-label', `Replay ${this.conversationPeople(row)} talking about ${row.topic}`);
+          choice.onclick = () => {
+            this.conversationAgentId = undefined;
+            this.conversationHistoryId = row.id;
+            this.conversationMinimized = false;
+            this.renderConversation(null);
+          };
+          body.append(choice);
+        }
+      }
     }
     panel.replaceChildren(head, body);
     panel.classList.toggle('minimized', this.conversationMinimized);
