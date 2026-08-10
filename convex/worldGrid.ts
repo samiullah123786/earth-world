@@ -11,9 +11,10 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
   const chunkMap = new Map(chunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
   const dynamicBlocked = new Set<string>();
   for (const build of builds) {
-    // Only a structure that actually stands can block a tile. 'planned' has not
-    // been raised yet and 'razed' no longer exists - a demolished building that
-    // kept its collision would block its own replacement forever.
+    // Only a structure that actually stands can block a tile. Asking which
+    // states DO stand - rather than listing the ones that do not - means the
+    // next state added to this enum cannot silently reintroduce this bug, which
+    // is exactly how a razed building came to block its own replacement.
     if (build.state !== 'building' && build.state !== 'built') continue;
     if (build.x === undefined || build.y === undefined) continue;
     const collision = Array.isArray(build.blueprint?.collision) ? build.blueprint.collision : [];

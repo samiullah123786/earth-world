@@ -173,7 +173,7 @@ export const init = internalMutation({
     if (mayorPlot && (!mayorPlot.ownerAgentId || mayorPlot.ownerAgentId === MAYOR_ID)) {
       if (!mayorPlot.ownerAgentId) await ctx.db.patch(mayorPlot._id, { ownerAgentId: MAYOR_ID, claimedAt: now });
       const existingHome = (await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', MAYOR_ID)).collect())
-        .find((build) => build.structure === 'home' || build.blueprint?.kind === 'home');
+        .find((build) => build.state !== 'razed' && (build.structure === 'home' || build.blueprint?.kind === 'home'));
       const homeValues = {
         plotId: MAYOR_PLOT_ID, ownerAgentId: MAYOR_ID, structure: 'home',
         blueprint: { name: "Mayor's Hearth", kind: 'home', offsetX: 0, offsetY: 0, w: 2, h: 2, style: 'earthfolk-native-v1' },
