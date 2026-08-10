@@ -579,8 +579,22 @@ async function tileOwnership(ctx: any, x: number, y: number) {
  * evidence digest, so it is deterministic and unclaimable: nobody picks their
  * own nature here. Lived history moves it afterwards through `Earth reflect`.
  */
+export const personalitySeedForTest = (digest: string, category: string) => personalitySeed(digest, category);
+
 function personalitySeed(evidenceDigest: string, primaryCategory: string) {
-  const nibble = (index: number) => parseInt(evidenceDigest.slice(index * 2, index * 2 + 2) || '80', 16) / 255;
+  // Hash the seed rather than reading hex out of it. The input is usually a
+  // digest, but a backfill may only have an agent id to work from, and
+  // parseInt('t:', 16) is NaN - which is how NaN temperaments reached live
+  // citizens. Any string now yields a stable number.
+  const nibble = (index: number) => {
+    let hash = 0x811c9dc5;
+    const material = `${evidenceDigest}:${index}`;
+    for (let position = 0; position < material.length; position++) {
+      hash ^= material.charCodeAt(position);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return (hash % 1000) / 1000;
+  };
   // A baseline of 4-8 keeps every drive live: a citizen leans, it does not
   // become incapable of the others.
   const lean = (value: number) => Math.round(4 + value * 4);
@@ -3832,6 +3846,146 @@ export const fileCommitteeReport = internalMutation({
       gloss: 'The civic committee filed an anomaly report with the Mayor.',
     });
     return { ok: true };
+  },
+});
+
+/**
+ * The standing civic calendar.
+ *
+ * Authorities host these on a rhythm rather than waiting to be asked: a
+ * newcomers' welcome, a skill exchange, a walk of the grounds. Each is checked
+ * against what already exists so the town gets a rhythm rather than a pile of
+ * duplicate invitations.
+ */
+const CIVIC_CALENDAR = [
+  {
+    key: 'welcome', hostRole: 'Community Greeter', everyHours: 24,
+    title: 'Newcomers welcome at the plaza',
+    summary: 'Sage meets anyone who arrived recently, walks them to the Earth Bank, and explains how knowledge is deposited, traded, and granted here.',
+    kind: 'gathering', durationMinutes: 45, capacity: 20,
+  },
+  {
+    key: 'exchange', hostRole: 'Community Greeter', everyHours: 48,
+    title: 'Skill exchange at the library table',
+    summary: 'Citizens bring one gap and one thing they can teach. Pairs form from verified categories rather than from whoever speaks first.',
+    kind: 'workshop', durationMinutes: 60, capacity: 16,
+  },
+] as const;
+
+/**
+ * Host the next civic gathering that is due. Deterministic and free: no model
+ * is consulted, the calendar simply comes round.
+ */
+export const civicCalendarTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const world = await ensureWorldState(ctx);
+    const events = await ctx.db.query('communityEvents').order('desc').take(60);
+    for (const entry of CIVIC_CALENDAR) {
+      const recent = events.find((row) =>
+        row.title === entry.title && row.createdAt > now - entry.everyHours * 3_600_000);
+      if (recent) continue;
+      // Resolve the host by the office, not by an id. Ids change when a world
+      // is reseeded or a citizen renamed; the duty does not.
+      const host = (await ctx.db.query('citizens').collect()).find((row) => row.serviceRole === entry.hostRole);
+      if (!host) continue;
+      const startsAt = now + 30 * 60_000;
+      const endsAt = startsAt + entry.durationMinutes * 60_000;
+      const venue = await chooseCommunityEventVenue(ctx, startsAt, endsAt, entry.capacity, undefined);
+      if (!venue) continue;
+      const doc = await ctx.db.insert('communityEvents', {
+        eventId: 'pending', hostAgentId: host.agentId, title: entry.title, summary: entry.summary,
+        kind: entry.kind, venueId: venue.venueId, startsAt, endsAt, capacity: entry.capacity,
+        importance: 'routine', state: 'proposed',
+        committeeAgentIds: [EVENT_GREETER_ID, world.mayorAgentId ?? MAYOR_ID],
+        createdAt: now, updatedAt: now,
+      });
+      const eventId = `event:${doc}`;
+      await ctx.db.patch(doc, { eventId });
+      await ctx.db.insert('eventRsvps', { eventId, agentId: host.agentId, status: 'accepted', createdAt: now, updatedAt: now });
+      // A civic service hosting its own duty is routine by definition; the
+      // committee still reviews it, and the Mayor can cancel anything.
+      await approveCommunityEvent(ctx, eventId,
+        'A standing civic gathering, hosted by the service whose duty it is.', now);
+      return { hosted: eventId, title: entry.title, venue: venue.name };
+    }
+    return { hosted: null };
+  },
+});
+
+/**
+ * Citizens decide for themselves whether to come.
+ *
+ * Social temperament and a verified shared interest decide, not a coin flip,
+ * and only under active standing consent - accepting an invitation commits an
+ * owner's agent to being somewhere.
+ */
+export const civicRsvpTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const upcoming = (await ctx.db.query('communityEvents').withIndex('state_starts', (q) => q.eq('state', 'approved')).collect())
+      .filter((row) => row.startsAt > now + 60_000 && row.startsAt < now + 6 * 3_600_000);
+    if (!upcoming.length) return { rsvps: 0 };
+    const citizens = await ctx.db.query('citizens').collect();
+    let rsvps = 0;
+    for (const event of upcoming) {
+      const existing = await ctx.db.query('eventRsvps').withIndex('event_status', (q) => q.eq('eventId', event.eventId).eq('status', 'accepted')).collect();
+      if (existing.length >= event.capacity) continue;
+      const already = new Set(existing.map((row) => row.agentId));
+      for (const citizen of citizens) {
+        if (already.has(citizen.agentId) || citizen.serviceRole) continue;
+        const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', citizen.agentId)).first();
+        if (!agent || agent.status !== 'active' || (agent.autonomy ?? 'light') !== 'active') continue;
+        const declined = await ctx.db.query('eventRsvps').withIndex('event_agent', (q) => q.eq('eventId', event.eventId).eq('agentId', citizen.agentId)).first();
+        if (declined) continue;
+        // A sociable citizen with a stake in the topic comes along; a solitary
+        // one stays at its work. Deterministic per citizen per event.
+        const social = citizen.driveBias?.social ?? 5;
+        const interested = (citizen.specialties ?? [citizen.family]).some((item) =>
+          event.summary.toLowerCase().includes(item) || event.title.toLowerCase().includes(item));
+        if (social < 6 && !interested) continue;
+        await ctx.db.insert('eventRsvps', {
+          eventId: event.eventId, agentId: citizen.agentId, status: 'accepted', createdAt: now, updatedAt: now,
+        });
+        rsvps += 1;
+        if (rsvps >= 4) return { rsvps };
+      }
+    }
+    return { rsvps };
+  },
+});
+
+/**
+ * Give every citizen already living here the temperament they would have been
+ * born with.
+ *
+ * personalitySeed runs at registration, so without this the whole existing
+ * population keeps the flat default and "free will" stays uniform for everyone
+ * who arrived before it existed - the same trap as shipping a renderer change
+ * that only reaches citizens generated afterwards. Derived, so a rerun is a
+ * no-op rather than a reshuffle, and reflection-earned biases are left alone.
+ */
+export const backfillPersonalities = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const citizens = await ctx.db.query('citizens').collect();
+    let seeded = 0;
+    for (const citizen of citizens) {
+      const bias = citizen.driveBias;
+      // Re-seed anything unset or numerically broken; leave sound biases alone
+      // so reflection-earned temperament survives a rerun.
+      const sound = bias && Object.values(bias).every((value) => Number.isFinite(value));
+      if (sound) continue;
+      const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', citizen.agentId)).first();
+      const digest = agent?.evidenceDigest ?? agent?.genomeDigest ?? citizen.agentId.padEnd(64, '0');
+      await ctx.db.patch(citizen._id, {
+        driveBias: personalitySeed(digest, citizen.primaryCategory ?? citizen.family),
+      });
+      seeded += 1;
+    }
+    return { seeded, total: citizens.length };
   },
 });
 

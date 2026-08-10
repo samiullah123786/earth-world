@@ -2,6 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from './_generated/api';
 import schema from './schema';
+import { personalitySeedForTest } from './kernel';
 
 const modules = import.meta.glob('./**/*.ts');
 
@@ -89,9 +90,22 @@ describe('reputation, and the shape of a family', () => {
     expect(biases.two).toBeDefined();
     // Different evidence, different natures: free will has somewhere to diverge from.
     expect(biases.one).not.toEqual(biases.two);
-    // Craft tilts temperament: research leans curious, content leans social.
-    expect(biases.one!.curiosity).toBeGreaterThanOrEqual(biases.one!.rest);
-    expect(biases.two!.social).toBeGreaterThanOrEqual(biases.two!.rest);
+    // Craft tilts temperament. The honest claim is that the tilt RAISES the
+    // matching drive - not that it always wins outright, since another drive
+    // can still start higher by chance.
+    const sameSeed = 'ab'.repeat(32);
+    const tilted = await citizen(t, 'writerly', { evidenceDigest: sameSeed, primaryCategory: 'content' });
+    const untilted = await citizen(t, 'plain', { evidenceDigest: sameSeed, primaryCategory: 'media' });
+    const pair = await t.run(async (ctx) => {
+      const rows = await ctx.db.query('citizens').collect();
+      return {
+        tilted: rows.find((row) => row.agentId === tilted.agentId)?.driveBias,
+        untilted: rows.find((row) => row.agentId === untilted.agentId)?.driveBias,
+      };
+    });
+    expect(pair.tilted!.social).toBeGreaterThan(pair.untilted!.social);
+    // Everything else about them is identical: only the craft moved.
+    expect(pair.tilted!.industry).toBe(pair.untilted!.industry);
     // Every drive stays live - a citizen leans, it does not become incapable.
     for (const value of Object.values(biases.one!)) {
       expect(value).toBeGreaterThanOrEqual(4);
@@ -244,5 +258,20 @@ describe('reputation, and the shape of a family', () => {
       type: 'compose_offspring', name: 'orphan', summary: 'no pact',
       digest: '3'.repeat(64), normalizedDigest: '2'.repeat(64), sizeBytes: 100, fileCount: 1, storageId,
     })).rejects.toThrow(/only married citizens/);
+  });
+
+  it('survives a seed that is not a digest at all', () => {
+    // The backfill can only offer an agent id for citizens registered before
+    // seeding existed. parseInt('t:', 16) is NaN, and NaN temperaments reached
+    // live citizens before this was hardened.
+    const messy = ['agent:sage-0004', '', 'not-hex-at-all', 'zzzz'];
+    for (const seed of messy) {
+      const bias = personalitySeedForTest(seed, 'general');
+      for (const value of Object.values(bias)) {
+        expect(Number.isFinite(value)).toBe(true);
+        expect(value).toBeGreaterThanOrEqual(4);
+        expect(value).toBeLessThanOrEqual(10);
+      }
+    }
   });
 });

@@ -17,4 +17,9 @@ crons.interval('bank manager', { minutes: 3 }, internal.bankManager.run, {});
 // something is actually wrong, at most once per six hours.
 crons.interval('civic committee', { minutes: 30 }, internal.committee.tick, {});
 
+// The civic calendar comes round on its own, and citizens decide for
+// themselves whether to attend. Both are deterministic and cost nothing.
+crons.interval('civic calendar', { minutes: 20 }, internal.kernel.civicCalendarTick, {});
+crons.interval('civic rsvp', { minutes: 7 }, internal.kernel.civicRsvpTick, {});
+
 export default crons;
