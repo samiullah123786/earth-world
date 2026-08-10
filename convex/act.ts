@@ -162,6 +162,7 @@ export const ambientTick = internalMutation({
       const isService = Boolean(citizen.serviceRole);
       if ((citizen.online && !isService) || talking.has(citizen.agentId) || (citizen.attendingUntil ?? 0) > now
         || (citizen.buildingUntil ?? 0) > now
+        || (citizen.workingUntil ?? 0) > now
         || now < citizen.t1 || Math.random() < (isService ? 0.3 : 0.45)) continue;
       // FREE WILL v1 (deterministic drives; research: generative-agents plan
       // loop + Humanoid Agents needs model, no LLM per BYOB law).

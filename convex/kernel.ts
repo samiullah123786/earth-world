@@ -1611,7 +1611,12 @@ export const act = internalMutation({
       if (Math.hypot(here.x - x, here.y - y) > 1.6) {
         const route = await routeCitizenNear(ctx, citizen, x, y, `walking to ${zone.name}`, now);
         if (!route.length) throw new Error('no safe route reaches that tile right now');
-        return { ok: true, routed: true, arrivesAt: route[route.length - 1].at, zone: zone.name, warning };
+        // Hold the errand. Construction and training already claim their trips;
+        // without this a citizen sent to the fields gets pulled away by an
+        // ambient drive halfway there and the work never happens.
+        const arrivesAt = route[route.length - 1].at;
+        await ctx.db.patch(citizen._id, { workingUntil: arrivesAt + WORK_ANIMATION_MS });
+        return { ok: true, routed: true, arrivesAt, zone: zone.name, warning };
       }
 
       if (kind === 'plant') {

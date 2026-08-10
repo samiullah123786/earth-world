@@ -169,4 +169,31 @@ describe('extracurricular activities', () => {
       expect(row!.workingUntil!).toBeGreaterThan(Date.now());
     });
   });
+
+  it('keeps a citizen on their errand instead of wandering off', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const worker = await citizen(t, 'errand', { x: 32, y: 24 });
+    await act(t, worker, { type: 'equip', tool: 'watering_can' });
+    const routed = await act(t, worker, { type: 'plant', ...FIELD });
+    expect(routed.routed).toBe(true);
+
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
+      // The claim has to outlast the walk, or an ambient drive reroutes them.
+      expect(row!.workingUntil!).toBeGreaterThanOrEqual(routed.arrivesAt);
+      // Going offline is exactly when ambient movement takes over.
+      await ctx.db.patch(row!._id, { online: false });
+    });
+
+    const target = await t.run(async (ctx) => {
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
+      return { tx: row!.tx, ty: row!.ty };
+    });
+    await t.mutation(internal.act.ambientTick, {});
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
+      expect({ tx: row!.tx, ty: row!.ty }).toEqual(target);
+    });
+  });
 });
