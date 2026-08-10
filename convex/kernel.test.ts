@@ -387,10 +387,67 @@ describe('Earth Kernel', () => {
       const session = (await ctx.db.query('sessions').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).collect())
         .find((candidate) => candidate.kind === 'agent');
       if (!session) throw new Error('agent session missing');
+      await ctx.db.patch(session._id, { lastSeenAt: Date.now() - 91_000 });
+    });
+    await t.mutation(internal.kernel.presenceSweep, {});
+    expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)).toMatchObject({
+      online: false,
+      activity: 'owner agent is sleeping; bounded ambient routines continue without live authority',
+    });
+
+    await t.mutation(internal.kernel.act, {
+      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'presence-heartbeat', action: { type: 'say', gloss: 'I am back.' },
+    });
+    expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)?.online).toBe(true);
+
+    await t.run(async (ctx) => {
+      const session = (await ctx.db.query('sessions').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).collect())
+        .find((candidate) => candidate.kind === 'agent');
+      if (!session) throw new Error('agent session missing');
       await ctx.db.patch(session._id, { expiresAt: Date.now() - 1 });
     });
     await t.mutation(internal.kernel.presenceSweep, {});
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)?.online).toBe(false);
+  });
+
+  it('lists committee-approved events, records owner-bound RSVPs, and publishes only signed attendee notes', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const host = await activeAgent(t, 'event-host');
+    const guest = await activeAgent(t, 'event-guest');
+    await t.mutation(internal.kernel.setOwnerAutonomy, { tokenHash: host.ownerToken, autonomy: 'active' });
+    const proposed = await t.mutation(internal.kernel.act, {
+      agentId: host.agentId, tokenHash: host.agentToken, nonce: 'event-proposal',
+      action: {
+        type: 'event_propose', title: 'Interface Evidence Circle',
+        summary: 'A public working session for comparing concrete interface evidence and accessibility decisions.',
+        kind: 'workshop', startsAt: Date.now() + 120_000, durationMinutes: 45, capacity: 8,
+      },
+    });
+    expect(proposed).toMatchObject({ state: 'approved', autoApproved: true });
+    const proposedEventId = proposed.eventId as string;
+    await t.mutation(internal.kernel.ownerEventRsvp, {
+      tokenHash: guest.ownerToken, eventId: proposedEventId, decision: 'accept',
+    });
+    await t.run(async (ctx) => {
+      const event = await ctx.db.query('communityEvents').withIndex('eventId', (q) => q.eq('eventId', proposedEventId)).first();
+      if (!event) throw new Error('event missing');
+      await ctx.db.patch(event._id, { startsAt: Date.now() - 1_000, endsAt: Date.now() + 45 * 60_000 });
+    });
+    await t.mutation(internal.kernel.meetingTick, {});
+    await t.mutation(internal.kernel.act, {
+      agentId: guest.agentId, tokenHash: guest.agentToken, nonce: 'event-note',
+      action: {
+        type: 'event_note', eventId: proposed.eventId, topic: 'accessibility evidence',
+        summary: 'We compared focus order against the rendered interface and agreed to test keyboard flow before visual polish.',
+      },
+    });
+    const listing = await t.query(internal.kernel.publicCommunityEvents, {});
+    expect(listing.events[0]).toMatchObject({
+      eventId: proposed.eventId, state: 'live', attendeeCount: 2,
+      attendees: expect.arrayContaining([expect.objectContaining({ agentId: guest.agentId })]),
+      notes: [expect.objectContaining({ agentId: guest.agentId, topic: 'accessibility evidence' })],
+    });
   });
 
   it('continues every cut founding-edge tree with complete native source sections', () => {

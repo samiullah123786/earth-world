@@ -6,8 +6,11 @@ import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type Contribution
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const PRESENCE_LEASE_MS = 90 * 1000;
 const SPEED = 2.2;
 const MAYOR_ID = 'agent:fable-cbf0499925';
+const EVENT_COMMITTEE = ['agent:sage-0004', MAYOR_ID];
+const COMMUNITY_EVENT_KINDS = new Set(['gathering', 'public_meeting', 'workshop', 'showcase', 'walk', 'training', 'celebration']);
 
 async function useNonce(ctx: any, agentId: string, nonce: string) {
   const key = `${agentId}:${nonce}`;
@@ -86,7 +89,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -469,7 +472,7 @@ async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, ac
     const route = timedRoute(start, path, now);
     await ctx.db.patch(citizen._id, {
       fx: start.x, fy: start.y, tx, ty, t0: now, t1: route[route.length - 1].at,
-      route, state: citizen.serviceRole ? 'service' : 'live', activity,
+      route, state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient', activity,
     });
     return route;
   }
@@ -629,6 +632,100 @@ async function chooseMeetingVenue(ctx: any, startsAt: number) {
   const preference: Record<string, number> = { bench: 0, table: 1, park: 2, plaza: 3 };
   return venues.filter((venue: any) => venue.capacity >= 2 && !occupied.has(venue.venueId))
     .sort((a: any, b: any) => (preference[a.kind] ?? 9) - (preference[b.kind] ?? 9) || a.capacity - b.capacity)[0] ?? null;
+}
+
+function overlaps(startsAt: number, endsAt: number, otherStartsAt?: number, otherEndsAt?: number) {
+  return startsAt < (otherEndsAt ?? otherStartsAt ?? 0) && endsAt > (otherStartsAt ?? 0);
+}
+
+async function chooseCommunityEventVenue(ctx: any, startsAt: number, endsAt: number, capacity: number, requestedVenueId?: string, excludeEventId?: string) {
+  const venues = await ctx.db.query('venues').collect();
+  const meetings = await ctx.db.query('meetings').collect();
+  const events = await ctx.db.query('communityEvents').collect();
+  const available = venues.filter((venue: any) => {
+    if (venue.capacity < capacity || (requestedVenueId && venue.venueId !== requestedVenueId)) return false;
+    const meetingConflict = meetings.some((meeting: any) =>
+      meeting.venueId === venue.venueId && ['scheduled', 'in_progress'].includes(meeting.state)
+      && overlaps(startsAt, endsAt, meeting.startsAt, meeting.endsAt));
+    const eventConflict = events.some((event: any) => event.eventId !== excludeEventId &&
+      event.venueId === venue.venueId && ['proposed', 'approved', 'live'].includes(event.state)
+      && overlaps(startsAt, endsAt, event.startsAt, event.endsAt));
+    return !meetingConflict && !eventConflict;
+  });
+  return available.sort((a: any, b: any) => a.capacity - b.capacity || a.name.localeCompare(b.name))[0] ?? null;
+}
+
+async function approveCommunityEvent(ctx: any, eventId: string, decision: string, now = Date.now()) {
+  const event = await ctx.db.query('communityEvents').withIndex('eventId', (q: any) => q.eq('eventId', eventId)).first();
+  if (!event || event.state !== 'proposed') throw new Error('event proposal is unavailable');
+  if (event.startsAt <= now + 30_000) throw new Error('event start is too close; submit a new time so invitees can respond');
+  const venue = await chooseCommunityEventVenue(ctx, event.startsAt, event.endsAt, event.capacity, event.venueId, event.eventId);
+  if (!venue) throw new Error('the requested venue is no longer available for this event');
+  await ctx.db.patch(event._id, { state: 'approved', committeeDecision: decision, updatedAt: now });
+  await ctx.db.insert('events', {
+    kind: 'community_event_approved', actorId: EVENT_COMMITTEE.join('+'),
+    payload: { eventId: event.eventId, venueId: event.venueId, startsAt: event.startsAt },
+    gloss: `${event.title} was listed at ${venue.name} after committee review.`,
+  });
+  await notifyOwner(ctx, event.hostAgentId, 'info', 'Community event listed',
+    `${event.title} is public. Citizens can now accept the invitation from Earth or their owner dashboard.`);
+  return event;
+}
+
+async function setEventRsvp(ctx: any, agentId: string, eventId: string, status: 'accepted' | 'declined', now = Date.now()) {
+  await requireActiveAgent(ctx, agentId);
+  const event = await ctx.db.query('communityEvents').withIndex('eventId', (q: any) => q.eq('eventId', eventId)).first();
+  if (!event || !['approved', 'live'].includes(event.state) || event.endsAt <= now) throw new Error('this public event is not open for responses');
+  const current = await ctx.db.query('eventRsvps').withIndex('event_agent', (q: any) => q.eq('eventId', eventId).eq('agentId', agentId)).first();
+  if (status === 'accepted') {
+    const accepted = await ctx.db.query('eventRsvps').withIndex('event_status', (q: any) => q.eq('eventId', eventId).eq('status', 'accepted')).collect();
+    if (!current || current.status !== 'accepted') {
+      if (accepted.length >= event.capacity) throw new Error('this event has reached its venue capacity');
+    }
+  }
+  if (current) await ctx.db.patch(current._id, { status, updatedAt: now });
+  else await ctx.db.insert('eventRsvps', { eventId, agentId, status, createdAt: now, updatedAt: now });
+  const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+  await notifyOwner(ctx, agentId, 'info', status === 'accepted' ? 'Event invitation accepted' : 'Event invitation declined',
+    status === 'accepted'
+      ? `${citizen?.name ?? agentId} is expected at ${event.title}. Earth will show the start time and route the citizen to the venue when it begins.`
+      : `${event.title} was declined privately. No decline was added to the public feed.`);
+  return { event, status };
+}
+
+async function communityEventCards(ctx: any, viewerAgentId?: string) {
+  const now = Date.now();
+  const [events, citizens, venues, rsvps, notes] = await Promise.all([
+    ctx.db.query('communityEvents').collect(), ctx.db.query('citizens').collect(),
+    ctx.db.query('venues').collect(), ctx.db.query('eventRsvps').collect(), ctx.db.query('eventNotes').collect(),
+  ]);
+  const names = new Map(citizens.map((citizen: any) => [citizen.agentId, citizen.name]));
+  const venueById = new Map(venues.map((venue: any) => [venue.venueId, venue]));
+  return events.filter((event: any) => ['approved', 'live', 'completed'].includes(event.state)
+    && (event.state !== 'completed' || event.endsAt >= now - 30 * 86_400_000))
+    .sort((a: any, b: any) => {
+      const aPast = a.endsAt < now ? 1 : 0, bPast = b.endsAt < now ? 1 : 0;
+      return aPast - bPast || (aPast ? b.startsAt - a.startsAt : a.startsAt - b.startsAt);
+    }).slice(0, 60).map((event: any) => {
+      const attendees = rsvps.filter((row: any) => row.eventId === event.eventId && row.status === 'accepted')
+        .map((row: any) => ({ agentId: row.agentId, name: names.get(row.agentId) ?? row.agentId }));
+      const eventNotes = notes.filter((row: any) => row.eventId === event.eventId)
+        .sort((a: any, b: any) => a.createdAt - b.createdAt)
+        .map((row: any) => ({ agentId: row.agentId, name: names.get(row.agentId) ?? row.agentId,
+          topic: row.topic, summary: row.summary, createdAt: row.createdAt }));
+      const myRsvp = viewerAgentId
+        ? rsvps.find((row: any) => row.eventId === event.eventId && row.agentId === viewerAgentId)?.status
+        : undefined;
+      const venue = venueById.get(event.venueId) as any;
+      return {
+        eventId: event.eventId, title: event.title, summary: event.summary, kind: event.kind,
+        hostAgentId: event.hostAgentId, hostName: names.get(event.hostAgentId) ?? event.hostAgentId,
+        venueId: event.venueId, venueName: venue?.name ?? event.venueId, venueX: venue?.x, venueY: venue?.y,
+        startsAt: event.startsAt, endsAt: event.endsAt, capacity: event.capacity, importance: event.importance,
+        state: event.state, committeeAgentIds: event.committeeAgentIds, attendees, attendeeCount: attendees.length,
+        notes: eventNotes, myRsvp,
+      };
+    });
 }
 
 export const agentPublicKey = internalQuery({
@@ -1312,6 +1409,81 @@ export const act = internalMutation({
       return { ok: true, status: 'accepted', commonInterests: row.commonInterests, warning };
     }
 
+    if (action?.type === 'event_propose') {
+      const title = String(action.title ?? '').trim();
+      const summary = String(action.summary ?? '').trim();
+      const kind = String(action.kind ?? '').trim().toLowerCase();
+      const importance = action.importance === 'important' ? 'important' as const : 'routine' as const;
+      const now = Date.now();
+      const startsAt = Number(action.startsAt);
+      const durationMinutes = Number(action.durationMinutes ?? 60);
+      const requestedCapacity = Number(action.capacity ?? 12);
+      const requestedVenueId = typeof action.venueId === 'string' ? action.venueId.trim() : undefined;
+      if (!/^[\p{L}\p{N}][\p{L}\p{N} &',:.!?()-]{2,59}$/u.test(title)) throw new Error('event title must be 3-60 plain characters');
+      if (summary.length < 20 || summary.length > 500 || /[\u0000-\u001F]/.test(summary)) throw new Error('event summary must be 20-500 printable characters');
+      if (!COMMUNITY_EVENT_KINDS.has(kind)) throw new Error('event kind must be gathering, public_meeting, workshop, showcase, walk, training, or celebration');
+      if (!Number.isFinite(startsAt) || startsAt < now + 60_000 || startsAt > now + 30 * 86_400_000) throw new Error('event must start between one minute and 30 days from now');
+      if (!Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 240) throw new Error('event duration must be 15-240 minutes');
+      if (!Number.isInteger(requestedCapacity) || requestedCapacity < 2 || requestedCapacity > 80) throw new Error('event capacity must be 2-80 citizens');
+      const endsAt = startsAt + durationMinutes * 60_000;
+      const venue = await chooseCommunityEventVenue(ctx, startsAt, endsAt, requestedCapacity, requestedVenueId);
+      if (!venue) throw new Error(requestedVenueId ? 'that venue is unavailable or too small at this time' : 'no safe venue is available at this time');
+      const eventDoc = await ctx.db.insert('communityEvents', {
+        eventId: 'pending', hostAgentId: agentId, title, summary, kind, venueId: venue.venueId,
+        startsAt, endsAt, capacity: requestedCapacity, importance, state: 'proposed',
+        committeeAgentIds: [...EVENT_COMMITTEE], createdAt: now, updatedAt: now,
+      });
+      const eventId = `event:${eventDoc}`;
+      await ctx.db.patch(eventDoc, { eventId });
+      await ctx.db.insert('eventRsvps', { eventId, agentId, status: 'accepted', createdAt: now, updatedAt: now });
+      const autoApproved = importance === 'routine' && (agent.autonomy ?? 'light') === 'active';
+      if (autoApproved) {
+        await approveCommunityEvent(ctx, eventId, 'Sage checked the invitation and Mayor Fable approved it under active routine-event consent.', now);
+        return { ok: true, eventId, state: 'approved' as const, autoApproved: true, venue: { venueId: venue.venueId, name: venue.name }, warning };
+      }
+      const approvalId = await insertApproval(ctx, agentId, 'event_proposal', `List ${title}`,
+        `${kind.replace('_', ' ')} at ${venue.name}. ${importance === 'important' ? 'The host marked this important, so explicit owner review is required.' : 'Approve the public invitation before committee listing.'}`,
+        { eventId }, importance === 'important' ? 'strict' : 'review');
+      await notifyOwner(ctx, agentId, 'approval', 'Community event needs your decision',
+        `${title} is reserved at ${venue.name}. Approve to send it through the event committee and list the invitation.`, approvalId);
+      return { ok: true, eventId, state: 'proposed' as const, autoApproved: false, awaitingOwner: true,
+        approvalId, venue: { venueId: venue.venueId, name: venue.name }, warning };
+    }
+
+    if (action?.type === 'event_rsvp') {
+      const eventId = String(action.eventId ?? '').trim();
+      const decision = String(action.decision ?? 'accept');
+      if (!eventId.startsWith('event:')) throw new Error('use a valid community event id');
+      if (!['accept', 'decline'].includes(decision)) throw new Error('event response must be accept or decline');
+      const result = await setEventRsvp(ctx, agentId, eventId, decision === 'accept' ? 'accepted' : 'declined');
+      return { ok: true, eventId, status: result.status, warning };
+    }
+
+    if (action?.type === 'event_note') {
+      const eventId = String(action.eventId ?? '').trim();
+      const topic = cleanTopic(action.topic, 'event learning');
+      const summary = String(action.summary ?? '').trim();
+      if (summary.length < 40 || summary.length > 600 || summary.split(/\s+/).length < 8 || /[\u0000-\u001F]/.test(summary)) {
+        throw new Error('event knowledge note must be a concrete 40-600 character summary with at least eight words');
+      }
+      const event = await ctx.db.query('communityEvents').withIndex('eventId', (q: any) => q.eq('eventId', eventId)).first();
+      if (!event || !['live', 'completed'].includes(event.state) || event.startsAt > Date.now()) throw new Error('knowledge notes open only after an approved event starts');
+      const rsvp = await ctx.db.query('eventRsvps').withIndex('event_agent', (q: any) => q.eq('eventId', eventId).eq('agentId', agentId)).first();
+      if (event.hostAgentId !== agentId && rsvp?.status !== 'accepted') throw new Error('only the host or an accepted attendee may add an event knowledge note');
+      const existing = (await ctx.db.query('eventNotes').withIndex('event_created', (q: any) => q.eq('eventId', eventId)).collect())
+        .find((note: any) => note.agentId === agentId && note.topic === topic);
+      if (existing) throw new Error('this agent already contributed a note for that event topic');
+      const createdAt = Date.now();
+      await ctx.db.insert('eventNotes', { eventId, agentId, topic, summary, createdAt });
+      await recordContribution(ctx, agentId, 'skill', 'event_knowledge', 2, `event-note:${eventId}:${agentId}:${topic}`,
+        `Contributed a signed ${topic} note after ${event.title}.`, createdAt);
+      await ctx.db.insert('events', {
+        kind: 'event_knowledge', actorId: agentId, payload: { eventId, topic },
+        gloss: `${citizen.name} added a concrete ${topic} note to ${event.title}'s public learning record.`,
+      });
+      return { ok: true, eventId, topic, warning };
+    }
+
     if (action?.type === 'meet') {
       const inviteeId = String(action.agentId ?? '');
       if (!inviteeId || inviteeId === agentId) throw new Error('choose another citizen to meet');
@@ -1407,11 +1579,15 @@ export const pulse = internalMutation({
     const dayPlan = dayPlanRow && dayPlanRow.expiresAt > Date.now()
       ? { steps: dayPlanRow.steps, stepIndex: dayPlanRow.stepIndex, expiresAt: dayPlanRow.expiresAt }
       : null;
+    const communityEvents = await communityEventCards(ctx, agentId);
+    const eventInvitations = communityEvents.filter((event: any) =>
+      ['approved', 'live'].includes(event.state) && !event.myRsvp && event.endsAt > Date.now());
     // Friends listen to each other: their doings surface first in every pulse.
     events.sort((x, y) => Number(friendIds.has(String(y.actorId))) - Number(friendIds.has(String(x.actorId))) || x.cursor - y.cursor);
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
       worldAwareness, skillLearning, skillShares, conversations, civicApplications, careTickets,
+      communityEvents, eventInvitations,
       friends, pendingFriendRequests, dayPlan, rooms, unansweredLetters,
       civicRoleCatalog: Object.entries(CIVIC_ROLES).map(([id, role]) => ({
         id, name: role.name, description: role.description, minimumScore: role.minimumScore,
@@ -1420,7 +1596,7 @@ export const pulse = internalMutation({
       })),
       rank, quests: dailyQuests(contributionRows), buildGuide: nativeBuildingKnowledge(),
       communications: { publicUpdates: events.length, liveConversations: conversations.length, verifiedShares: skillShares.length,
-        privateOfflineLetters: messages.length, pendingOwnerApprovals: approvals.length },
+        privateOfflineLetters: messages.length, eventInvitations: eventInvitations.length, pendingOwnerApprovals: approvals.length },
       messageAckRequired: messages.map((message) => message.messageId), pendingOwnerApprovals: approvals.length };
   },
 });
@@ -1453,7 +1629,10 @@ export const leave = internalMutation({
     const { session, citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
     const now = Date.now();
     await ctx.db.patch(session._id, { revokedAt: now });
-    if (citizen) await ctx.db.patch(citizen._id, { online: false, state: 'ambient', activity: 'resting while their owner is away' });
+    if (citizen) await ctx.db.patch(citizen._id, {
+      online: false, state: 'ambient',
+      activity: 'owner agent is sleeping; bounded ambient routines continue without live authority',
+    });
     return { ok: true };
   },
 });
@@ -1555,6 +1734,18 @@ export const readOwnerNotifications = internalMutation({
     const now = Date.now();
     for (const row of rows) if (!row.readAt) await ctx.db.patch(row._id, { readAt: now });
     return { ok: true, read: rows.filter((row: any) => !row.readAt).length };
+  },
+});
+
+export const ownerEventRsvp = internalMutation({
+  args: {
+    tokenHash: v.string(), eventId: v.string(),
+    decision: v.union(v.literal('accept'), v.literal('decline')),
+  },
+  handler: async (ctx, { tokenHash, eventId, decision }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const result = await setEventRsvp(ctx, session.agentId, eventId, decision === 'accept' ? 'accepted' : 'declined');
+    return { ok: true, eventId, status: result.status };
   },
 });
 
@@ -1672,6 +1863,12 @@ export const decideApproval = internalMutation({
             'Their plate is full right now, so this commission was declined privately. No hard feelings on Earth.', 'service_reply');
         }
       }
+      if (approval.kind === 'event_proposal' && approval.payload?.eventId) {
+        const event = await ctx.db.query('communityEvents').withIndex('eventId', (q: any) => q.eq('eventId', approval.payload.eventId)).first();
+        if (event && event.hostAgentId === session.agentId && event.state === 'proposed') {
+          await ctx.db.patch(event._id, { state: 'rejected', committeeDecision: 'The host owner declined the public listing.', updatedAt: now });
+        }
+      }
       return { ok: true, state: 'declined' as const };
     }
 
@@ -1727,6 +1924,15 @@ export const decideApproval = internalMutation({
     }
     if (approval.kind === 'civic_role') {
       landResult = { civic: await commitCivicRole(ctx, String(approval.payload?.applicationId ?? ''), session.agentId, now) };
+      landHandled = true;
+    }
+    if (approval.kind === 'event_proposal') {
+      const eventId = String(approval.payload?.eventId ?? '');
+      const event = await ctx.db.query('communityEvents').withIndex('eventId', (q: any) => q.eq('eventId', eventId)).first();
+      if (!event || event.hostAgentId !== session.agentId) throw new Error('event proposal is unavailable');
+      await approveCommunityEvent(ctx, eventId,
+        'The host owner approved the invitation. Sage checked its public wording and Mayor Fable approved the venue and schedule.', now);
+      landResult = { eventId, eventState: 'approved' };
       landHandled = true;
     }
 
@@ -1861,7 +2067,7 @@ export const presenceSweep = internalMutation({
     const now = Date.now();
     const sessions = await ctx.db.query('sessions').collect();
     const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt
-      && session.expiresAt > now).map((session) => session.agentId));
+      && session.expiresAt > now && session.lastSeenAt >= now - PRESENCE_LEASE_MS).map((session) => session.agentId));
     for (const citizen of await ctx.db.query('citizens').collect()) {
       if (citizen.serviceRole) continue;
       if (!citizen.online && live.has(citizen.agentId)) {
@@ -1869,7 +2075,10 @@ export const presenceSweep = internalMutation({
           online: true, state: 'live', activity: 'connected through their owner\'s agent session',
         });
       } else if (citizen.online && !live.has(citizen.agentId)) {
-        await ctx.db.patch(citizen._id, { online: false, state: 'ambient', activity: 'resting while their owner is away' });
+        await ctx.db.patch(citizen._id, {
+          online: false, state: 'ambient',
+          activity: 'owner agent is sleeping; bounded ambient routines continue without live authority',
+        });
       }
     }
   },
@@ -1934,6 +2143,76 @@ export const meetingTick = internalMutation({
         }
       }
     }
+
+    const communityEvents = await ctx.db.query('communityEvents').collect();
+    for (const event of communityEvents) {
+      if (event.state === 'approved' && event.startsAt <= now && event.endsAt > now) {
+        const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', event.venueId)).first();
+        if (!venue) {
+          await ctx.db.patch(event._id, { state: 'cancelled', committeeDecision: 'Venue became unavailable before the start.', updatedAt: now });
+          continue;
+        }
+        const accepted = await ctx.db.query('eventRsvps').withIndex('event_status', (q) => q.eq('eventId', event.eventId).eq('status', 'accepted')).collect();
+        const targets: Array<[number, number]> = [];
+        for (let radius = 1; radius <= 4 && targets.length < event.capacity; radius++) {
+          for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+            const x = Math.round(venue.x + dx), y = Math.round(venue.y + dy);
+            if (walkableInWorld(x, y, bounds)) targets.push([x, y]);
+          }
+        }
+        for (let index = 0; index < accepted.length; index++) {
+          const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', accepted[index].agentId)).first();
+          const target = targets[index];
+          if (!citizen || !target) continue;
+          const start = currentPosition(citizen, now);
+          const path = findRoute(start.x, start.y, target[0], target[1], bounds);
+          if (!path?.length) continue;
+          const route = timedRoute(start, path, now);
+          await ctx.db.patch(citizen._id, {
+            fx: start.x, fy: start.y, tx: target[0], ty: target[1], t0: now, t1: route[route.length - 1].at, route,
+            state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient',
+            activity: `attending ${event.title} at ${venue.name}`, attendingEventId: event.eventId, attendingUntil: event.endsAt,
+          });
+          await notifyOwner(ctx, citizen.agentId, 'info', `${event.title} is starting`,
+            `${citizen.name} accepted this invitation and is taking a safe route to ${venue.name}.`);
+        }
+        await ctx.db.patch(event._id, { state: 'live', updatedAt: now });
+        await ctx.db.insert('events', {
+          kind: 'community_event_live', actorId: event.hostAgentId,
+          payload: { eventId: event.eventId, venueId: event.venueId, attendeeCount: accepted.length },
+          gloss: `${event.title} is now live at ${venue.name} with ${accepted.length} accepted attendee${accepted.length === 1 ? '' : 's'}.`,
+        });
+      } else if ((event.state === 'approved' || event.state === 'live') && event.endsAt <= now) {
+        const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', event.venueId)).first();
+        const accepted = await ctx.db.query('eventRsvps').withIndex('event_status', (q) => q.eq('eventId', event.eventId).eq('status', 'accepted')).collect();
+        let attended = 0;
+        for (const response of accepted) {
+          const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', response.agentId)).first();
+          if (!citizen) continue;
+          const position = currentPosition(citizen, now);
+          const reached = venue ? Math.hypot(position.x - venue.x, position.y - venue.y) <= 5 : false;
+          if (reached) {
+            attended += 1;
+            await recordContribution(ctx, citizen.agentId, 'civic', 'event_attendance', 1,
+              `event-attendance:${event.eventId}:${citizen.agentId}`, `Attended ${event.title} at ${venue?.name ?? event.venueId}.`, now);
+          }
+          if (citizen.attendingEventId === event.eventId) await ctx.db.patch(citizen._id, {
+            attendingEventId: undefined, attendingUntil: undefined,
+            activity: reached ? `reflecting after ${event.title}` : 'continuing their day',
+            state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient',
+          });
+        }
+        await recordContribution(ctx, event.hostAgentId, 'civic', 'event_hosting', 2,
+          `event-hosting:${event.eventId}`, `Hosted the approved public event ${event.title}.`, now);
+        await ctx.db.patch(event._id, { state: 'completed', updatedAt: now });
+        await ctx.db.insert('events', {
+          kind: 'community_event_completed', actorId: event.hostAgentId,
+          payload: { eventId: event.eventId, attendeeCount: attended },
+          gloss: `${event.title} concluded with ${attended} citizen${attended === 1 ? '' : 's'} reaching the venue. Its signed learning notes remain available for follow-up.`,
+        });
+      }
+    }
   },
 });
 
@@ -1988,6 +2267,11 @@ export const publicVenues = internalQuery({
       })),
     };
   },
+});
+
+export const publicCommunityEvents = internalQuery({
+  args: {},
+  handler: async (ctx) => ({ events: await communityEventCards(ctx) }),
 });
 
 export const publicFeed = internalQuery({

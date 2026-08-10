@@ -30,7 +30,8 @@ type Citizen = {
   route?: RoutePoint[]; state: string; activity: string; online: boolean;
   specialties?: string[]; primaryCategory?: string; skillCount?: number;
   experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
-  trainingActivity?: string; trainingTeam?: string; trainingStartsAt?: number; trainingUntil?: number; rank?: Rank;
+  trainingActivity?: string; trainingTeam?: string; trainingStartsAt?: number; trainingUntil?: number;
+  attendingEventId?: string; attendingUntil?: number; rank?: Rank;
 };
 type Plot = { plotId: string; x: number; y: number; w: number; h: number; district: string; ownerAgentId?: string };
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
@@ -168,9 +169,14 @@ class EarthScene extends Phaser.Scene {
       }
     });
     convex.onUpdate(api.world.citizens, {}, (rows: Citizen[]) => {
+      const firstLoad = this.citizens.length === 0;
       this.citizens = rows;
       const liveIds = new Set(rows.map((row) => row.agentId));
-      for (const citizen of rows) if (!this.sprites.has(citizen.agentId)) this.spawnCitizen(citizen);
+      for (const citizen of rows) if (!this.sprites.has(citizen.agentId)) {
+        this.spawnCitizen(citizen);
+        // E6: a brand-new citizen arriving while you watch earns pixel confetti.
+        if (!firstLoad) this.arrivalConfetti(citizen);
+      }
       for (const [agentId, sprite] of this.sprites) {
         if (!liveIds.has(agentId)) { sprite.destroy(true); this.sprites.delete(agentId); }
       }
@@ -707,10 +713,15 @@ class EarthScene extends Phaser.Scene {
     bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -50, 24, 12, 3);
     const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -44, 1.6, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
+    const sleepMarks = [0, 1, 2].map((index) => this.add.text(9 + index * 7, -38 - index * 7, 'Z', {
+      fontFamily: 'Consolas, monospace', fontSize: `${8 + index * 2}px`, color: '#FDF6EC',
+      stroke: '#1E1E1E', strokeThickness: 3,
+    }).setOrigin(0.5).setName(`sleep-z-${index}`));
+    const sleepBubble = this.add.container(0, 0, sleepMarks).setName('sleep-bubble').setVisible(false);
     const shield = this.add.graphics().setName('training-shield').setVisible(false);
     shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
-    const container = this.add.container(0, 0, [sprite, label, bubble, shield]).setSize(20, 28).setInteractive({ useHandCursor: true });
+    const container = this.add.container(0, 0, [sprite, label, bubble, sleepBubble, shield]).setSize(20, 28).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
@@ -772,7 +783,7 @@ class EarthScene extends Phaser.Scene {
       citizen.serviceRole ?? `${citizen.experienceTier ?? 'emerging'} | ${citizen.skillCount ?? 0} locally evidenced skills`,
       `${citizen.rank?.rank.name ?? 'Sprout'} rank | ${citizen.rank?.score ?? 0} weighted contribution points`,
       `${citizen.family} | ${(citizen.specialties ?? [citizen.family]).join(' / ')}`,
-      citizen.serviceRole ? `civic service active | ${citizen.activity}` : `${citizen.online ? 'live through owner session' : 'ambient'} | ${citizen.activity}`,
+      citizen.serviceRole ? `civic service active | ${citizen.activity}` : `${citizen.online ? 'live through a recent signed owner-agent heartbeat' : 'sleeping owner link; bounded ambient life may continue'} | ${citizen.activity}`,
       `Current tile ${position.x.toFixed(2)}, ${position.y.toFixed(2)} | destination ${citizen.tx}, ${citizen.ty}`,
       plot ? `${plot.plotId} at ${plot.x}, ${plot.y} | ${buildCount} structure${buildCount === 1 ? '' : 's'}` : 'No home plot yet',
       (citizen.trainingStartsAt ?? Infinity) <= Date.now() && (citizen.trainingUntil ?? 0) > Date.now()
@@ -966,6 +977,29 @@ class EarthScene extends Phaser.Scene {
     panel.style.display = 'block';
   }
 
+  arrivalConfetti(citizen: Citizen) {
+    // Earthfolk confetti: hard-edged 3px squares in the citizen's capability
+    // color plus cream and ink - stepped motion, no gradients, gone in 1.1s.
+    const { x, y } = this.positionFor(citizen);
+    const accent = FAMILY_COLORS[citizen.family] ?? 0x64748b;
+    const palette = [accent, 0xfdf6ec, 0x1e1e1e, accent];
+    for (let i = 0; i < 14; i++) {
+      const px = this.add.rectangle(
+        x * TILE + TILE / 2, y * TILE + TILE / 3,
+        3, 3, palette[i % palette.length]).setDepth(10_000);
+      const angle = (i / 14) * Math.PI * 2;
+      this.tweens.add({
+        targets: px,
+        x: px.x + Math.cos(angle) * (10 + (i % 5) * 7),
+        y: px.y + Math.sin(angle) * (8 + (i % 4) * 6) - 14,
+        alpha: 0,
+        duration: 1100,
+        ease: 'Stepped.easeOut',
+        onComplete: () => px.destroy(),
+      });
+    }
+  }
+
   positionFor(citizen: Citizen, now = Date.now()) {
     let x = citizen.tx, y = citizen.ty;
     const route = citizen.route;
@@ -1021,6 +1055,18 @@ class EarthScene extends Phaser.Scene {
       }
       const shield = sprite.getByName('training-shield') as Phaser.GameObjects.Graphics | null;
       if (shield) shield.setVisible(Boolean(citizen.trainingActivity && (citizen.trainingStartsAt ?? Infinity) <= now && (citizen.trainingUntil ?? 0) > now));
+      const sleepBubble = sprite.getByName('sleep-bubble') as Phaser.GameObjects.Container | null;
+      if (sleepBubble) {
+        const sleeping = !citizen.online && !citizen.serviceRole;
+        sleepBubble.setVisible(sleeping);
+        if (sleeping) for (let i = 0; i < 3; i++) {
+          const mark = sleepBubble.getByName(`sleep-z-${i}`) as Phaser.GameObjects.Text | null;
+          if (mark) {
+            mark.y = -38 - i * 7 - ((now / 500 + i * 0.8) % 3);
+            mark.alpha = 0.48 + 0.45 * ((Math.sin(now / 420 + i * 1.6) + 1) / 2);
+          }
+        }
+      }
     }
   }
 }
