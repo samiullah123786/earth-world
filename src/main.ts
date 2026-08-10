@@ -805,23 +805,28 @@ class EarthScene extends Phaser.Scene {
     }
 
     // 5. Capability Badge Chest Chip
-    graphics.fillStyle(accent).fillRect(6, 10, 4, 3);
+    graphics.fillStyle(accent).fillRect(8, 12, 6, 4);
 
     const textureKey = `cit-${citizen.agentId}`;
-    graphics.generateTexture(textureKey, 18, 25);
+    graphics.generateTexture(textureKey, 24, 30);
     graphics.destroy();
     
-    const sprite = this.add.image(0, -12, textureKey).setName('cit-image');
-    const label = this.add.text(0, -30, citizen.name, {
+    // Capability Rank Aura Ring under feet on the live map
+    const rankAura = this.add.graphics().setName('rank-aura');
+    rankAura.fillStyle(color, 0.35).fillEllipse(0, 2, 22, 10);
+    rankAura.lineStyle(1.5, INK, 0.6).strokeEllipse(0, 2, 22, 10);
+
+    const sprite = this.add.image(0, -14, textureKey).setName('cit-image');
+    const label = this.add.text(0, -34, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
       backgroundColor: '#1E1E1E', padding: { x: 4, y: 1 },
     }).setOrigin(0.5);
     const bubbleShape = this.add.graphics().setName('talk-bubble-shape');
-    bubbleShape.fillStyle(INK).fillRoundedRect(-14, -52, 28, 16, 5).fillTriangle(-6, -37, 0, -37, -4, -32);
-    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -50, 24, 12, 3);
-    const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -44, 1.6, INK).setName(`talk-dot-${index}`));
+    bubbleShape.fillStyle(INK).fillRoundedRect(-14, -54, 28, 16, 5).fillTriangle(-6, -39, 0, -39, -4, -34);
+    bubbleShape.fillStyle(0xfdf6ec).fillRoundedRect(-12, -52, 24, 12, 3);
+    const dots = [0, 1, 2].map((index) => this.add.circle(-6 + index * 6, -46, 1.6, INK).setName(`talk-dot-${index}`));
     const bubble = this.add.container(0, 0, [bubbleShape, ...dots]).setName('talk-bubble').setVisible(false);
-    const sleepMarks = [0, 1, 2].map((index) => this.add.text(9 + index * 7, -38 - index * 7, 'Z', {
+    const sleepMarks = [0, 1, 2].map((index) => this.add.text(9 + index * 7, -40 - index * 7, 'Z', {
       fontFamily: 'Consolas, monospace', fontSize: `${8 + index * 2}px`, color: '#FDF6EC',
       stroke: '#1E1E1E', strokeThickness: 3,
     }).setOrigin(0.5).setName(`sleep-z-${index}`));
@@ -829,7 +834,7 @@ class EarthScene extends Phaser.Scene {
     const shield = this.add.graphics().setName('training-shield').setVisible(false);
     shield.fillStyle(INK).fillTriangle(8, -10, 17, -7, 14, 2).fillTriangle(8, 6, 2, -7, 14, 2);
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
-    const container = this.add.container(0, 0, [sprite, label, bubble, sleepBubble, shield]).setSize(20, 28).setInteractive({ useHandCursor: true });
+    const container = this.add.container(0, 0, [rankAura, sprite, label, bubble, sleepBubble, shield]).setSize(24, 30).setInteractive({ useHandCursor: true });
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.sprites.set(citizen.agentId, container);
   }
