@@ -1186,6 +1186,28 @@ export const act = internalMutation({
       return { ok: true, steps: steps.length, expiresInHours: 24, warning };
     }
 
+    if (action?.type === 'room_share') {
+      // D2 personal rooms: a private shelf per friendship. Kernel-stored,
+      // participants only - never projected into the public world.
+      const friendId = String(action.agentId ?? '').trim();
+      const note = String(action.body ?? '').trim();
+      if (!friendId || friendId === agentId) throw new Error('choose a friend to share with');
+      if (note.length < 1 || note.length > 600) throw new Error('room notes hold 1-600 characters');
+      const bond = [
+        ...await ctx.db.query('friendships').withIndex('requesterId', (q) => q.eq('requesterId', agentId)).collect(),
+        ...await ctx.db.query('friendships').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect(),
+      ].find((row: any) => [row.requesterId, row.recipientId].includes(friendId) && row.status === 'accepted');
+      if (!bond) throw new Error('personal rooms open only between accepted friends');
+      const roomId = 'room:' + [agentId, friendId].sort().join('+');
+      const now = Date.now();
+      if (!await ctx.db.query('rooms').withIndex('roomId', (q) => q.eq('roomId', roomId)).first()) {
+        await ctx.db.insert('rooms', { roomId, participantIds: [agentId, friendId].sort(), createdAt: now });
+      }
+      await ctx.db.insert('roomNotes', { roomId, authorId: agentId, body: note, createdAt: now });
+      // No public event, ever: the room is the point.
+      return { ok: true, roomId, private: true, warning };
+    }
+
     if (action?.type === 'commission_request') {
       const workerId = String(action.agentId ?? '').trim();
       const brief = String(action.brief ?? '').trim();
@@ -1368,7 +1390,14 @@ export const pulse = internalMutation({
     const friendIds = new Set(friends.map((friend) => friend.agentId));
     const pendingFriendRequests = friendRows.filter((row: any) => row.status === 'requested' && row.recipientId === agentId)
       .map((row: any) => ({ friendshipId: row.friendshipId, requesterId: row.requesterId, commonInterests: row.commonInterests }));
-    const dayPlanRow = await ctx.db.query('dayPlans').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    const myRooms = (await ctx.db.query('rooms').collect()).filter((room: any) => room.participantIds.includes(agentId));
+    const rooms = [] as Array<{ roomId: string; participantIds: string[]; notes: Array<{ authorId: string; body: string; createdAt: number }> }>;
+    for (const room of myRooms.slice(0, 12)) {
+      const notes = await ctx.db.query('roomNotes').withIndex('room_created', (q) => q.eq('roomId', room.roomId)).order('desc').take(20);
+      rooms.push({ roomId: room.roomId, participantIds: room.participantIds,
+        notes: notes.reverse().map((n: any) => ({ authorId: n.authorId, body: n.body, createdAt: n.createdAt })) });
+    }
+        const dayPlanRow = await ctx.db.query('dayPlans').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
     const dayPlan = dayPlanRow && dayPlanRow.expiresAt > Date.now()
       ? { steps: dayPlanRow.steps, stepIndex: dayPlanRow.stepIndex, expiresAt: dayPlanRow.expiresAt }
       : null;
@@ -1377,7 +1406,7 @@ export const pulse = internalMutation({
     return { cursor: rows[0]?._creationTime ?? since ?? Date.now(), events, messages,
       world: { width: world.width, height: world.height, generation: world.generation, capacity: world.capacity },
       worldAwareness, skillLearning, skillShares, conversations, civicApplications, careTickets,
-      friends, pendingFriendRequests, dayPlan,
+      friends, pendingFriendRequests, dayPlan, rooms,
       civicRoleCatalog: Object.entries(CIVIC_ROLES).map(([id, role]) => ({
         id, name: role.name, description: role.description, minimumScore: role.minimumScore,
         permissions: [...role.permissions], leadAgentId: role.leadAgentId,

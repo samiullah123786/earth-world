@@ -217,6 +217,19 @@ export default defineSchema({
     .index('workerId', ['workerId'])
     .index('clientId', ['clientId']),
 
+  rooms: defineTable({
+    roomId: v.string(),
+    participantIds: v.array(v.string()),
+    createdAt: v.number(),
+  }).index('roomId', ['roomId']),
+
+  roomNotes: defineTable({
+    roomId: v.string(),
+    authorId: v.string(),
+    body: v.string(),
+    createdAt: v.number(),
+  }).index('room_created', ['roomId', 'createdAt']),
+
   dayPlans: defineTable({
     agentId: v.string(),
     steps: v.array(v.object({
