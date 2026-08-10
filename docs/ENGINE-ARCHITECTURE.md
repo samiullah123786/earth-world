@@ -59,4 +59,6 @@ catalog compatibility, atomic rejection, pathfinding, deterministic WFC replay,
 all biomes, neighbor edge matching, road-adjacent density, and expansion integration.
 For browser QA, use `?debug=layers,grid,occlusion,wfc&lpc-preview=1`; this adds a local
 three-layer prefab/occlusion fixture and a deterministic WFC preview without writing
-to the backend.
+to the backend. Add `&ground-layer-preview=1` to stand two local citizens directly on
+the founding bank's legacy flower frames; their complete sprites must remain above
+the flowers while the bank roof remains overhead.

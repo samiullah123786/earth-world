@@ -7,6 +7,12 @@ import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_a
 import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSpec } from './avatar_identity';
 import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, tileCenter, tileOrigin } from './world/grid';
 import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
+import {
+  FOUNDING_GROUND_ACCENT_FRAMES,
+  FOUNDING_GROUND_FLOWER_FRAMES,
+  FOUNDING_GROUND_TUFT_FRAMES,
+  foundingDecorationLayer,
+} from './world/foundingLayers';
 import { LPC_PREFABS, type LpcPrefab } from '../shared/lpc-prefabs';
 import { generateWfcChunk, wfcRule, type DistrictBiome } from '../shared/wfc';
 
@@ -27,6 +33,7 @@ const OWNER_DASHBOARD_ORIGINS = new Set([
 ]);
 const embed = new URLSearchParams(location.search).has('embed');
 const lpcRenderPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('lpc-preview');
+const groundLayerPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('ground-layer-preview');
 if (embed) document.body.classList.add('embed');
 // Speech-bubble geometry, shared by creation AND animation so the two can
 // never disagree again. Derived from the citizen composition: a 64px LPC frame
@@ -214,6 +221,10 @@ class EarthScene extends Phaser.Scene {
       for (let y = 0; y < map.height; y++) {
         const tile = map.bgtiles[0][x][y];
         if (tile !== -1 && tile !== undefined) ground.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
+        const decoration = map.bgtiles[1][x][y];
+        if (decoration !== -1 && decoration !== undefined && foundingDecorationLayer(decoration) === 'ground') {
+          ground.drawFrame('tiles', decoration, tileOrigin(x), tileOrigin(y));
+        }
       }
     }
     ground.setData('persistent-world', true);
@@ -236,14 +247,16 @@ class EarthScene extends Phaser.Scene {
       }
     }
 
-    // The legacy decoration plane contains the founding roofs, canopy, and
-    // upper cliff silhouettes. It is isolated above the sortable plane so its
-    // transparent bounds never clip citizens walking underneath.
+    // The legacy decoration plane mixes roofs/canopy with low grass and
+    // flowers. Ground details were extracted into `ground` above; only true
+    // visual occluders remain isolated above citizens here.
     const overhead = this.add.renderTexture(0, 0, map.width * TILE, map.height * TILE).setOrigin(0);
     for (let x = 0; x < map.width; x++) {
       for (let y = 0; y < map.height; y++) {
         const tile = map.bgtiles[1][x][y];
-        if (tile !== -1 && tile !== undefined) overhead.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
+        if (tile !== -1 && tile !== undefined && foundingDecorationLayer(tile) === 'overhead') {
+          overhead.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
+        }
       }
     }
     overhead.setData('persistent-world', true);
@@ -489,15 +502,15 @@ class EarthScene extends Phaser.Scene {
             const nearGrove = treeAnchor(x + 2, y) || treeAnchor(x - 2, y) || treeAnchor(x, y + 2) || treeAnchor(x, y - 2)
               || treeAnchor(x + 2, y + 2) || treeAnchor(x - 2, y - 2);
             if (nearGrove && hash(x, y, 61) % 9 === 0) {
-              const flowers = [934, 935, 935, 936, 937];
+              const flowers = FOUNDING_GROUND_FLOWER_FRAMES;
               this.expansionRT.drawFrame('tiles', flowers[hash(x, y, 67) % flowers.length], tileOrigin(x), tileOrigin(y));
             } else if (hash(x, y, 71) % 97 === 0) {
-              const tufts = [889, 890, 891];
+              const tufts = FOUNDING_GROUND_TUFT_FRAMES;
               this.expansionRT.drawFrame('tiles', tufts[hash(x, y, 73) % tufts.length], tileOrigin(x), tileOrigin(y));
             } else if (hash(x, y, 79) % 499 === 0) {
-              this.expansionRT.drawFrame('tiles', 938, tileOrigin(x), tileOrigin(y));
+              this.expansionRT.drawFrame('tiles', FOUNDING_GROUND_ACCENT_FRAMES[1], tileOrigin(x), tileOrigin(y));
             } else if (hash(x, y, 83) % 613 === 0) {
-              this.expansionRT.drawFrame('tiles', 896, tileOrigin(x), tileOrigin(y));
+              this.expansionRT.drawFrame('tiles', FOUNDING_GROUND_ACCENT_FRAMES[0], tileOrigin(x), tileOrigin(y));
             }
           }
           if (treeAnchor(x, y)) {
@@ -1051,6 +1064,30 @@ class EarthScene extends Phaser.Scene {
       previewBuilder.setDepth(citizenDepth(tileCenter(21)));
       previewBehind.setDepth(citizenDepth(tileCenter(18)));
       this.objectLayer.add([previewLabel, previewBehind, previewBuilder]);
+    }
+    if (groundLayerPreview) {
+      // Permanent local regression fixture for the mixed founding decoration
+      // plane. Both sprites stand directly on the bank flower tiles that used
+      // to be flattened above citizens.
+      const checks = [
+        { x: 26, y: 22, key: 'lpc-agent-engineer', animation: 'lpc-engineer-idle' },
+        { x: 32, y: 22, key: 'lpc-agent-designer', animation: 'lpc-designer-idle' },
+      ];
+      for (const check of checks) {
+        const sprite = this.add.sprite(tileCenter(check.x), tileCenter(check.y), check.key, 0)
+          .setOrigin(0.5, 0.75)
+          .play(check.animation)
+          // One pixel above an equal-Y venue marker keeps the debug citizen
+          // inspectable without changing its whole-pixel world position.
+          .setDepth(citizenDepth(tileCenter(check.y) + 1));
+        sprite.setData('ground-layer-preview', true);
+        this.objectLayer.add(sprite);
+      }
+      const label = this.add.text(tileOrigin(26), tileOrigin(21), 'GROUND OCCLUSION CHECK', {
+        fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
+        backgroundColor: '#3A2A1E', padding: { x: 4, y: 2 },
+      }).setDepth(structureSortAnchor(21));
+      this.objectLayer.add(label);
     }
     for (const venue of this.objects.venues) this.renderVenue(venue);
     for (const ticket of this.objects.careTickets ?? []) {
