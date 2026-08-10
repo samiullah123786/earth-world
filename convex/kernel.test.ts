@@ -64,6 +64,21 @@ describe('Earth Kernel', () => {
       expect(former).toMatchObject({ online: false, state: 'ambient' });
       expect(former?.serviceRole).toBeUndefined();
     });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('citizens', {
+        agentId: 'agent:sam-cbf0499925', name: 'Duplicate Sam', gender: 'male', family: 'engineering', accent: 'marketing',
+        fx: 30, fy: 7, tx: 30, ty: 7, t0: Date.now(), t1: Date.now(),
+        route: [{ x: 30, y: 7, at: Date.now() }], state: 'service', activity: 'duplicate seed row',
+        online: true, serviceRole: 'Mayor of Earth', skillCount: 0,
+      });
+    });
+    await t.mutation(internal.seed.init, {});
+    await t.run(async (ctx) => {
+      const mayors = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', 'agent:sam-cbf0499925')).collect();
+      expect(mayors).toHaveLength(1);
+      expect(mayors[0].name).toBe('Sam');
+    });
   });
 
   it('binds one owner session to an existing agent and commits approved claims/builds', async () => {

@@ -44,7 +44,8 @@ async function authorizeAgent(ctx: any, agentId: string, tokenHash: string, nonc
   await ctx.db.patch(agent._id, { lastSeenAt: now });
   const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
   if (citizen && !citizen.online) await ctx.db.patch(citizen._id, {
-    online: true, state: 'live', activity: 'connected through a recent signed owner-agent heartbeat',
+    online: true, state: citizen.serviceRole ? 'service' : 'live',
+    activity: 'connected through a recent signed owner-agent heartbeat',
   });
   return { agent, citizen, session };
 }
@@ -824,7 +825,10 @@ export const enter = internalMutation({
     });
     await ctx.db.patch(agent._id, { lastSeenAt: now });
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
-    if (citizen) await ctx.db.patch(citizen._id, { online: true, state: 'live', activity: 'connected through a recent signed owner-agent heartbeat' });
+    if (citizen) await ctx.db.patch(citizen._id, {
+      online: true, state: citizen.serviceRole ? 'service' : 'live',
+      activity: 'connected through a recent signed owner-agent heartbeat',
+    });
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
     const world = await ensureWorldState(ctx);
     return { agentId, name: agent.name, ownerName: agent.ownerName, expiresAt: now + AGENT_SESSION_MS, plotId: plot?.plotId ?? null,
@@ -2108,15 +2112,17 @@ export const presenceSweep = internalMutation({
     const live = new Set(sessions.filter((session) => session.kind === 'agent' && !session.revokedAt
       && session.expiresAt > now && session.lastSeenAt >= now - PRESENCE_LEASE_MS).map((session) => session.agentId));
     for (const citizen of await ctx.db.query('citizens').collect()) {
-      if (citizen.serviceRole) continue;
       if (!citizen.online && live.has(citizen.agentId)) {
         await ctx.db.patch(citizen._id, {
-          online: true, state: 'live', activity: 'connected through a recent signed owner-agent heartbeat',
+          online: true, state: citizen.serviceRole ? 'service' : 'live',
+          activity: 'connected through a recent signed owner-agent heartbeat',
         });
       } else if (citizen.online && !live.has(citizen.agentId)) {
         await ctx.db.patch(citizen._id, {
-          online: false, state: 'ambient',
-          activity: 'owner agent is sleeping; bounded ambient routines continue without live authority',
+          online: false, state: citizen.serviceRole ? 'service' : 'ambient',
+          activity: citizen.serviceRole
+            ? 'on civic duty through bounded Kernel routines; no owner brain is connected'
+            : 'owner agent is sleeping; bounded ambient routines continue without live authority',
         });
       }
     }

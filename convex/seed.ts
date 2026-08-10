@@ -70,14 +70,23 @@ export const init = internalMutation({
     }
 
     for (const service of SERVICES) {
-      let citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).first();
+      const citizenRows = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).collect();
+      const citizenWeight = (row: any) => Number(Boolean(row.ownerName)) * 100_000
+        + Number(Boolean(row.bio)) * 10_000 + (row.skillCount ?? 0) * 10
+        + Object.keys(row.categoryScores ?? {}).length;
+      citizenRows.sort((a, b) => citizenWeight(b) - citizenWeight(a) || a._creationTime - b._creationTime);
+      let citizen: any = citizenRows[0] ?? null;
+      for (const duplicate of citizenRows.slice(1)) await ctx.db.delete(duplicate._id);
+      const serviceSessions = await ctx.db.query('sessions').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).collect();
+      const connected = serviceSessions.some((session) => session.kind === 'agent' && !session.revokedAt
+        && session.expiresAt > now && session.lastSeenAt >= now - 90_000);
       if (!citizen) {
         const [x, y] = service.spawn;
         const id = await ctx.db.insert('citizens', {
           agentId: service.agentId, name: service.name, gender: service.gender,
           family: service.family, accent: service.accent, fx: x, fy: y, tx: x, ty: y,
           t0: now, t1: now, route: [{ x, y, at: now }], state: 'service',
-          activity: service.description, online: true, categoryScores: {},
+          activity: service.description, online: connected, categoryScores: {},
           specialties: [...service.specialties], primaryCategory: service.specialties[0], skillCount: 0,
           experienceTier: 'seasoned', serviceRole: service.role,
         });
@@ -86,13 +95,38 @@ export const init = internalMutation({
         await ctx.db.patch(citizen._id, {
           serviceRole: service.role, specialties: [...service.specialties],
           primaryCategory: service.specialties[0], experienceTier: 'seasoned',
-          online: true, state: 'service', activity: service.description,
+          online: connected, state: 'service', activity: connected
+            ? 'connected through a recent signed owner-agent heartbeat'
+            : `${service.description} Bounded Kernel routines are active; no owner brain is connected.`,
         });
       }
-      const authority = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).first();
+      const authorityRows = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).collect();
+      const authority = authorityRows[0];
+      for (const duplicate of authorityRows.slice(1)) await ctx.db.delete(duplicate._id);
       if (authority) await ctx.db.patch(authority._id, { role: service.role, description: service.description, permissions: [...service.permissions], active: true });
       else await ctx.db.insert('services', { agentId: service.agentId, role: service.role, description: service.description, permissions: [...service.permissions], active: true });
     }
+    // Migrate any legacy Fable citizen or service rows directly to Sam
+    const fableCitizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', 'agent:fable-cbf0499925')).first();
+    if (fableCitizen) {
+      await ctx.db.patch(fableCitizen._id, {
+        agentId: MAYOR_ID,
+        name: 'Sam',
+        serviceRole: 'Mayor of Earth',
+        online: true,
+        state: 'service',
+        activity: 'Coordinates routine civic decisions, welcomes residents, and escalates exceptional requests to the founder owner.',
+      });
+    }
+    const fableService = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', 'agent:fable-cbf0499925')).first();
+    if (fableService) {
+      await ctx.db.patch(fableService._id, { agentId: MAYOR_ID, role: 'Mayor of Earth', active: true });
+    }
+    const fablePlots = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', 'agent:fable-cbf0499925')).collect();
+    for (const p of fablePlots) await ctx.db.patch(p._id, { ownerAgentId: MAYOR_ID });
+    const fableBuilds = await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', 'agent:fable-cbf0499925')).collect();
+    for (const b of fableBuilds) await ctx.db.patch(b._id, { ownerAgentId: MAYOR_ID });
+
     // Mayor succession must leave one public authority. Older seeds used a
     // different founding mayor, so retire any stale Mayor service during every
     // idempotent seed without deleting that citizen or their history.
