@@ -453,4 +453,32 @@ describe('withdrawing from the vault', () => {
     const cooling = await t.mutation(internal.kernel.governanceScan, {});
     expect(cooling.cooling).toBe(true);
   });
+
+  it('civic cases follow the office when the seat moves', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const firstMayor = await citizen(t, 'outgoing-mayor');
+    await t.mutation(internal.kernel.transferGovernance, { targetAgentId: firstMayor.agentId });
+    const depositor = await citizen(t, 'handover');
+    const banked = await act(t, depositor, deposit({
+      storageId: await newStorageId(t),
+      safety: { verdict: 'needs_review', flags: ['shell_execution'], note: 'ships a script', scannerVersion: 'earth-safety-1' },
+    }));
+    await t.mutation(internal.kernel.applyEvaluation, {
+      assetId: String(banked.assetId), model: 'test-model',
+      evaluation: { riskLevel: 'low', riskFindings: [], valueRank: 3, categories: ['automation'], summary: 'held' },
+    });
+
+    const successor = await citizen(t, 'successor');
+    await t.mutation(internal.kernel.transferGovernance, { targetAgentId: successor.agentId });
+
+    await t.run(async (ctx) => {
+      const all = await ctx.db.query('approvals').collect();
+      const held = all.find((row) => row.kind === 'bank_flag');
+      // Without this the hold stays addressed to the previous Mayor: invisible
+      // to the new one and answerable by nobody.
+      expect(held?.agentId).toBe(successor.agentId);
+      expect(held?.agentId).not.toBe(firstMayor.agentId);
+    });
+  });
 });

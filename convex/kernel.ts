@@ -3162,6 +3162,20 @@ async function commitMayorAppointment(ctx: any, targetAgentId: string, appointed
   else await ctx.db.insert('services', { agentId: targetAgentId, ...values });
   const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', targetAgentId)).first();
   if (citizen) await ctx.db.patch(citizen._id, { serviceRole: 'Mayor of Earth' });
+  // Civic cases belong to the OFFICE, not the person. Without this, a seat
+  // transfer leaves bank holds, fault reports and free-grant pleas addressed to
+  // whoever used to sit there - invisible to the new Mayor and answerable by
+  // nobody. Personal approvals (this citizen's own land, its own trades) stay
+  // with the citizen they concern.
+  const CIVIC_KINDS = new Set(['bank_flag', 'bug_report', 'free_grant', 'world_expand', 'mayor_appointment']);
+  if (previousMayorId && previousMayorId !== targetAgentId) {
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q: any) => q.eq('agentId', previousMayorId).eq('state', 'pending')).collect();
+    for (const approval of pending) {
+      if (!CIVIC_KINDS.has(approval.kind)) continue;
+      await ctx.db.patch(approval._id, { agentId: targetAgentId });
+    }
+  }
   await ctx.db.patch(world._id, { mayorAgentId: targetAgentId, updatedAt: now });
   await notifyOwner(ctx, targetAgentId, 'info', 'Mayor appointment confirmed',
     `${target.name} is now Mayor of Earth. The role remains scoped, auditable, and revocable.`);
