@@ -2,6 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api, internal } from './_generated/api';
 import schema from './schema';
+import { assertSupplyInvariant, balanceOf } from './economy';
 
 const modules = import.meta.glob('./**/*.ts');
 
@@ -287,5 +288,169 @@ describe('the Bank Manager and the Mayor', () => {
       expect(asset?.state).toBe('evaluated');
       expect(asset?.valueNote).toContain('Mayor reviewed the hold');
     });
+  });
+});
+
+describe('withdrawing from the vault', () => {
+  async function placeAt(t: ReturnType<typeof convexTest>, agentId: string, x: number, y: number, online = true) {
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === agentId);
+      const now = Date.now();
+      await ctx.db.patch(row!._id, { fx: x, fy: y, tx: x, ty: y, t0: now, t1: now, online, route: [{ x, y, at: now }] });
+    });
+  }
+
+  it('sells at the counter while the author sleeps, and pays them in full', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const author = await citizen(t, 'sleeper');
+    const buyer = await citizen(t, 'nightowl');
+    const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
+    await placeAt(t, author.agentId, 10, 10, false);
+    await placeAt(t, buyer.agentId, 32, 22, true);
+
+    const sale = await act(t, buyer, { type: 'request_asset', assetId: banked.assetId });
+    expect(sale.mode).toBe('counter_sale');
+    await t.run(async (ctx) => {
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(3);
+      expect(await balanceOf(ctx, author.agentId)).toBe(7);
+      const events = await ctx.db.query('events').collect();
+      expect(events.some((event) => event.kind === 'bank_sale')).toBe(true);
+      await assertSupplyInvariant(ctx);
+    });
+    // The copy serves from the Bank's own storage with the master digest.
+    const fetched = await act(t, buyer, { type: 'fetch_package', tradeId: sale.tradeId });
+    expect(fetched.digest).toBe('c'.repeat(64));
+    expect(fetched.downloadUrl).toBeTruthy();
+    // A confirmed install pays the author the larger reward, once.
+    await act(t, buyer, { type: 'confirm_install', tradeId: sale.tradeId, outcome: 'installed' });
+    await t.run(async (ctx) => {
+      expect(await balanceOf(ctx, author.agentId)).toBe(7 + 3);
+    });
+  });
+
+  it('routes a distant buyer to the counter first', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const author = await citizen(t, 'faraway-author');
+    const buyer = await citizen(t, 'faraway-buyer');
+    const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
+    await placeAt(t, author.agentId, 10, 10, false);
+    await placeAt(t, buyer.agentId, 20, 26, true);
+    const routed = await act(t, buyer, { type: 'request_asset', assetId: banked.assetId });
+    expect(routed.mode).toBe('counter_routed');
+    await t.run(async (ctx) => {
+      const trades = await ctx.db.query('skillTrades').collect();
+      expect(trades).toHaveLength(0); // nothing sold until the buyer stands at the counter
+    });
+  });
+
+  it('trades in person when the author is awake: walk, talk, then pay together', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const author = await citizen(t, 'awake-author');
+    const buyer = await citizen(t, 'walker');
+    const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
+    await placeAt(t, author.agentId, 40, 30, true);
+    await placeAt(t, buyer.agentId, 20, 26, true);
+
+    const opened = await act(t, buyer, { type: 'request_asset', assetId: banked.assetId, need: 'my genome lacks content craft' });
+    expect(opened.mode).toBe('live_trade');
+    await t.run(async (ctx) => {
+      const conversations = await ctx.db.query('conversations').collect();
+      expect(conversations.some((row) => row.topic === 'content')).toBe(true);
+    });
+    // Accepting while apart is refused: the trade is in person by law.
+    await expect(act(t, author, { type: 'respond_package', tradeId: opened.tradeId, decision: 'accept' }))
+      .rejects.toThrow(/standing together/);
+    await placeAt(t, buyer.agentId, 40, 31, true);
+    const done = await act(t, author, { type: 'respond_package', tradeId: opened.tradeId, decision: 'accept' });
+    expect(done.state).toBe('delivered');
+    await t.run(async (ctx) => {
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(3);
+      expect(await balanceOf(ctx, author.agentId)).toBe(7);
+      await assertSupplyInvariant(ctx);
+    });
+  });
+
+  it('refuses withdrawal of held knowledge and of what you already hold', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const author = await citizen(t, 'holder');
+    const buyer = await citizen(t, 'refused-buyer');
+    const flagged = await act(t, author, deposit({
+      storageId: await newStorageId(t),
+      safety: { verdict: 'needs_review', flags: ['shell_execution'], note: 'ships a script', scannerVersion: 'earth-safety-1' },
+    }));
+    await expect(act(t, buyer, { type: 'request_asset', assetId: flagged.assetId }))
+      .rejects.toThrow(/held by the Bank/);
+    const clean = await act(t, author, deposit({
+      storageId: await newStorageId(t), digest: '5'.repeat(64), normalizedDigest: '4'.repeat(64), name: 'own-goods',
+    }));
+    await expect(act(t, author, { type: 'request_asset', assetId: clean.assetId }))
+      .rejects.toThrow(/already holds/);
+  });
+
+  it('judges free pleas: grant delivers, deny stays private, price escalates to the Mayor', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const mayor = await citizen(t, 'grant-mayor');
+    await t.mutation(internal.kernel.transferGovernance, { targetAgentId: mayor.agentId });
+    const author = await citizen(t, 'giver');
+    const pleader = await citizen(t, 'pleader');
+    const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
+    const pricey = await act(t, author, deposit({
+      storageId: await newStorageId(t), digest: '3'.repeat(64), normalizedDigest: '2'.repeat(64),
+      name: 'rare-craft', priceTokens: 25,
+    }));
+
+    const plea = await act(t, pleader, { type: 'request_asset', assetId: banked.assetId, free: true, need: 'I have no tokens and a real gap.' });
+    expect(plea.mode).toBe('free_pending');
+    await t.mutation(internal.kernel.operatorManagerSet, { enabled: true });
+    const gate = await t.mutation(internal.kernel.grantGate, { batch: 3 });
+    expect(gate.allowed).toBe(true);
+    expect(gate.cases![0].requester.name).toBe('Test pleader');
+
+    // The manager grants the modest one.
+    const granted = await t.mutation(internal.kernel.applyGrantDecision, {
+      grantId: String(plea.grantId), decision: 'grant', reason: 'A specific need and a modest price.', model: 'test-model',
+    });
+    expect(granted.state).toBe('granted');
+    await t.run(async (ctx) => {
+      const trade = (await ctx.db.query('skillTrades').collect()).find((row) => row.requesterId === pleader.agentId);
+      expect(trade?.priceTokens).toBe(0);
+      expect(trade?.state).toBe('delivered');
+      const credit = (await ctx.db.query('contributions').collect()).filter((row) => row.kind === 'free_grant');
+      expect(credit).toHaveLength(1);
+      expect(credit[0].agentId).toBe(author.agentId);
+      const letters = (await ctx.db.query('messages').collect()).filter((row) => row.recipientId === pleader.agentId);
+      expect(letters.some((row) => row.body.includes('granted'))).toBe(true);
+      await assertSupplyInvariant(ctx); // free means free: nothing moved, nothing minted
+    });
+
+    // Even a model that says grant cannot give away expensive knowledge alone.
+    const plea2 = await act(t, pleader, { type: 'request_asset', assetId: pricey.assetId, free: true, need: 'I would like the rare one too.' });
+    const escalated = await t.mutation(internal.kernel.applyGrantDecision, {
+      grantId: String(plea2.grantId), decision: 'grant', reason: 'Seems fine.', model: 'test-model',
+    });
+    expect(escalated.state).toBe('escalated');
+    const approvalId = await t.run(async (ctx) =>
+      (await ctx.db.query('approvals').collect()).find((row) => row.kind === 'free_grant')!._id);
+    await t.mutation(internal.kernel.decideApproval, { tokenHash: mayor.ownerToken, approvalId, decision: 'approve' });
+    await t.run(async (ctx) => {
+      const grant = (await ctx.db.query('freeGrants').collect()).find((row) => row.assetId === pricey.assetId);
+      expect(grant?.state).toBe('granted');
+      expect(grant?.reason).toContain('Mayor');
+    });
+  });
+
+  it('scans for anomalies deterministically and cools down after a report', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const quiet = await t.mutation(internal.kernel.governanceScan, {});
+    expect(quiet.anomalies).toHaveLength(0);
+    await t.mutation(internal.kernel.fileCommitteeReport, { report: 'test', anomalies: ['x'], model: 'test' });
+    const cooling = await t.mutation(internal.kernel.governanceScan, {});
+    expect(cooling.cooling).toBe(true);
   });
 });

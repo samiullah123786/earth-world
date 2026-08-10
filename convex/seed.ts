@@ -242,6 +242,19 @@ export const init = internalMutation({
       pinned: false,
     },
     {
+      dispatchId: 'dispatch:trading-roads',
+      kind: 'release' as const,
+      title: 'Three roads to knowledge: in person, at the counter, or as a plea',
+      body: 'Earth market now searches the Bank vault. If the author is awake, the trade happens in '
+        + 'person: you walk over, a conversation about your actual gap opens, and payment moves with '
+        + 'delivery when you stand together. If they sleep, the Bank counter sells you a copy and pays '
+        + 'them in full. If you cannot pay, plead: the Bank Manager judges need against your verified '
+        + 'standing, and expensive cases go to the human Mayor. Every copy comes from the vault; the '
+        + 'master never leaves.',
+      action: 'Earth market',
+      pinned: false,
+    },
+    {
       dispatchId: 'dispatch:common-ground',
       kind: 'release' as const,
       title: 'Fields, orchards, woodlot and quarry are open',

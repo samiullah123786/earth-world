@@ -300,7 +300,7 @@ class EarthScene extends Phaser.Scene {
     convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string; kind?: string; actorId?: string; payload?: { targetId?: string; requesterId?: string } }>) => {
       const feed = document.getElementById('feedLines') || document.getElementById('feed');
       for (const row of rows) {
-        const money = row.kind === 'token_reward' || row.kind === 'token_transfer' || row.kind === 'package_delivered';
+        const money = row.kind === 'token_reward' || row.kind === 'token_transfer' || row.kind === 'package_delivered' || row.kind === 'bank_sale';
         if (!money || this.seenMoneyEvents.has(row.id)) continue;
         this.seenMoneyEvents.add(row.id);
         if (!this.tokenFeedReady) continue; // history primes silently on load
@@ -309,6 +309,7 @@ class EarthScene extends Phaser.Scene {
         // package flies the price requester -> provider.
         if (row.kind === 'token_transfer' && row.actorId && payload.targetId) this.coinArc(row.actorId, payload.targetId);
         else if (row.kind === 'package_delivered' && payload.requesterId && row.actorId) this.coinArc(payload.requesterId, row.actorId);
+        else if (row.kind === 'bank_sale' && row.actorId) this.coinArcToBank(row.actorId);
         else if (row.actorId) this.tokenReward(row.actorId);
       }
       this.tokenFeedReady = true;
@@ -1282,6 +1283,19 @@ class EarthScene extends Phaser.Scene {
     this.ensureCoinAnim();
     const lift = { x: from.x, y: from.y - 24 };
     const land = { x: to.x, y: to.y - 24 };
+    const sprite = this.add.sprite(lift.x, lift.y, 'earth-token').setScale(0.62).setDepth(10_000);
+    sprite.play('earth-token-spin');
+    this.coinArcs.push({ sprite, from: lift, to: land, start: Date.now(), duration: 900 });
+    this.arcsFlown += 1;
+  }
+
+  /** A counter sale: the coin flies from the buyer to the Bank's own door. */
+  coinArcToBank(fromAgentId: string) {
+    const from = this.sprites.get(fromAgentId);
+    if (!from) return;
+    this.ensureCoinAnim();
+    const lift = { x: from.x, y: from.y - 24 };
+    const land = { x: 32 * TILE + TILE / 2, y: 21 * TILE };
     const sprite = this.add.sprite(lift.x, lift.y, 'earth-token').setScale(0.62).setDepth(10_000);
     sprite.play('earth-token-spin');
     this.coinArcs.push({ sprite, from: lift, to: land, start: Date.now(), duration: 900 });

@@ -41,6 +41,16 @@ function currentPosition(citizen: any, now: number) {
 
 // Ambient life only chooses intentions. The same server-side A* routing and
 // walkability rules used by signed agents determine the actual journey.
+/**
+ * The first thing B verifiably knows that A verifiably lacks. Deterministic:
+ * same genomes, same gap. Falls back to B's family when their sets overlap
+ * entirely - even then the topic is a verified capability, never small talk.
+ */
+export function knowledgeGapTopic(aSpecialties: string[], bSpecialties: string[]): string {
+  const known = new Set(aSpecialties);
+  return bSpecialties.find((specialty) => !known.has(specialty)) ?? bSpecialties[0] ?? 'general';
+}
+
 export const ambientTick = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -276,13 +286,15 @@ export const ambientTick = internalMutation({
             && !talking.has(candidate.agentId)
             && Math.hypot(candidate.tx - a.tx, candidate.ty - a.ty) < 3.5
             && Math.hypot(candidate.tx - b.tx, candidate.ty - b.ty) < 3.5) : undefined;
-          // Bounded ambient social life can notice verified public interests, but
-          // only a signed owner-brain exchange can claim or store real knowledge.
-          const topic = (b.specialties ?? [b.family])[Math.floor(Math.random() * (b.specialties?.length || 1))] ?? b.family;
+          // Knowledge-gap pairing: the conversation opens on something B
+          // verifiably knows that A verifiably lacks, so ambient talk is about
+          // closing real gaps rather than exchanging pleasantries. Still
+          // bounded: only a signed owner-brain exchange can claim real learning.
+          const topic = knowledgeGapTopic(a.specialties ?? [a.family], b.specialties ?? [b.family]);
           const lines = [
-            { speaker: a.agentId, es: `greet + notice(${topic})`, gloss: `${a.name}: "I noticed ${topic} in your verified public specialties. I would like to compare concrete notes when our owner-provided brains are live."` },
-            { speaker: b.agentId, es: `ack + defer(real-note)`, gloss: `${b.name}: "Good connection. I will share a specific, signed note when my owner-provided brain returns, rather than inventing an answer now."` },
-            { speaker: a.agentId, es: `remember(interest: ${topic})`, gloss: `${a.name}: "I will remember the shared interest and follow up live."` },
+            { speaker: a.agentId, es: `greet + gap(${topic})`, gloss: `${a.name}: "Your verified specialties include ${topic}, which my genome lacks. What would closing that gap cost me - a trade, or the Earth Bank?"` },
+            { speaker: b.agentId, es: `ack + point(bank | trade)`, gloss: `${b.name}: "My ${topic} work is evidenced. When our owner-provided brains are live we can trade in person, or the Bank will sell you a vault copy while I sleep."` },
+            { speaker: a.agentId, es: `remember(gap: ${topic})`, gloss: `${a.name}: "I will remember the gap and come back for a real, signed exchange."` },
           ];
           if (c) lines.push({
             speaker: c.agentId,

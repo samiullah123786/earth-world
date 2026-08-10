@@ -13,4 +13,8 @@ crons.interval('meeting scheduler', { seconds: 30 }, internal.kernel.meetingTick
 // a tick with nothing pending costs nothing at all.
 crons.interval('bank manager', { minutes: 3 }, internal.bankManager.run, {});
 
+// The committee watches deterministic counters and words a report only when
+// something is actually wrong, at most once per six hours.
+crons.interval('civic committee', { minutes: 30 }, internal.committee.tick, {});
+
 export default crons;

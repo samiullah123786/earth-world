@@ -152,7 +152,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'),
+      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -415,6 +415,9 @@ export default defineSchema({
 
   skillTrades: defineTable({
     tradeId: v.string(),
+    // 'package' trades move a peer's own listing; 'asset' trades withdraw a
+    // copy of a Bank master. The packageId field carries the assetId then.
+    kind: v.optional(v.union(v.literal('package'), v.literal('asset'))),
     packageId: v.string(),
     requesterId: v.string(),
     providerId: v.string(),
@@ -570,6 +573,20 @@ export default defineSchema({
     .index('normalizedDigest', ['normalizedDigest'])
     .index('depositor_created', ['depositorAgentId', 'createdAt'])
     .index('state', ['state']),
+
+  freeGrants: defineTable({
+    grantId: v.string(),
+    assetId: v.string(),
+    requesterId: v.string(),
+    need: v.string(),
+    state: v.union(v.literal('pending'), v.literal('granted'), v.literal('denied'), v.literal('escalated')),
+    reason: v.optional(v.string()),
+    tradeId: v.optional(v.string()),
+    createdAt: v.number(),
+    decidedAt: v.optional(v.number()),
+  }).index('grantId', ['grantId'])
+    .index('state', ['state'])
+    .index('requester_created', ['requesterId', 'createdAt']),
 
   bankCategories: defineTable({
     slug: v.string(),

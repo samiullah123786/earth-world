@@ -125,6 +125,53 @@ export const run = internalAction({
         console.error(`manager: ${asset.assetId} failed: ${String(error).slice(0, 200)}`);
       }
     }
-    return { ran };
+    // Free-grant pleas: the manager judges need against verified standing.
+    // Granting mints nothing, expensive cases go to the human Mayor, and the
+    // budget gate reserved this batch before any tokens of thought were spent.
+    let granted = 0;
+    const grantGate: any = await ctx.runMutation(internal.kernel.grantGate, { batch: 3 });
+    if (grantGate.allowed) {
+      for (const plea of grantGate.cases) {
+        try {
+          const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: ROUTINE_MODEL,
+              reasoning_effort: 'low',
+              response_format: { type: 'json_object' },
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You are the Earth Bank Manager judging a plea for a free copy of a knowledge asset. '
+                    + 'Reply with strict JSON: {"decision":"grant|deny|escalate","reason":"one plain sentence, addressed to the requester"}. '
+                    + 'Grant when the stated need is specific and plausible and the requester shows real verified standing '
+                    + '(contributions, skills) or the asset is modestly priced. Deny vague, greedy, or needless pleas. '
+                    + 'Escalate anything unusual, high-value, or where judgment feels uncertain - a human Mayor decides those.',
+                },
+                { role: 'user', content: JSON.stringify(plea) },
+              ],
+            }),
+          });
+          if (!response.ok) {
+            console.error(`manager: grant ${plea.grantId} failed: ${response.status}`);
+            continue;
+          }
+          const body = await response.json();
+          const parsed = JSON.parse(body.choices?.[0]?.message?.content ?? '{}');
+          const decided: any = await ctx.runMutation(internal.kernel.applyGrantDecision, {
+            grantId: plea.grantId,
+            decision: String(parsed.decision ?? 'escalate'),
+            reason: String(parsed.reason ?? 'The manager offered no reason, so a human will look.').slice(0, 300),
+            model: String(body.model ?? ROUTINE_MODEL),
+          });
+          if (decided.state === 'granted') granted += 1;
+        } catch (error) {
+          console.error(`manager: grant ${plea.grantId} failed: ${String(error).slice(0, 200)}`);
+        }
+      }
+    }
+    return { ran, granted };
   },
 });

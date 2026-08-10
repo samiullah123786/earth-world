@@ -49,6 +49,7 @@ const WORK_ANIMATION_MS = 6 * 1000;
 // by enough for that second call, or a drive claims them on the next five
 // second tick and the errand is lost a tile from the field.
 const WORK_ARRIVAL_GRACE_MS = 90 * 1000;
+const BANK_COUNTER = { x: 32, y: 22 };
 // Above this, a send stops being an ordinary gift and waits for the owner even
 // under active standing consent.
 const ROUTINE_SEND_AMOUNT = 5;
@@ -138,7 +139,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -1526,7 +1527,23 @@ export const act = internalMutation({
           priceTokens: row.priceTokens, sourceKind: row.sourceKind, repoUrl: row.repoUrl,
           ownerAgentId: row.ownerAgentId, safety: row.safety, mine: row.ownerAgentId === agentId,
         }));
-      return { ok: true, packages, balance: await balanceOf(ctx, agentId), warning };
+      // The vault answers the same search: withdrawable masters only, ranked
+      // by the manager where it has appraised them.
+      const minRank = Number.isInteger(Number(action.minRank)) ? Number(action.minRank) : 0;
+      const vault = (await ctx.db.query('bankAssets').order('desc').take(300))
+        .filter((row) => ['deposited', 'evaluated'].includes(row.state) && row.sizeBytes <= maxBytes)
+        .filter((row) => !category || row.categories.includes(category) || (row.llmCategories ?? []).includes(category))
+        .filter((row) => !query || row.title.includes(query) || row.summary.toLowerCase().includes(query))
+        .filter((row) => (row.valueRank ?? 0) >= minRank)
+        .slice(0, 40)
+        .map((row) => ({
+          assetId: row.assetId, title: row.title, summary: row.summary,
+          categories: [...new Set([...row.categories, ...(row.llmCategories ?? [])])],
+          sizeBytes: row.sizeBytes, license: row.license, priceTokens: row.priceTokens,
+          valueRank: row.valueRank, state: row.state, depositorAgentId: row.depositorAgentId,
+          mine: row.depositorAgentId === agentId || row.alsoDepositedBy.includes(agentId),
+        }));
+      return { ok: true, packages, vault, balance: await balanceOf(ctx, agentId), warning };
     }
 
     if (action?.type === 'request_package') {
@@ -1571,6 +1588,35 @@ export const act = internalMutation({
           `${citizen.name} declined to share that package for now.`, 'letter');
         return { ok: true, state: 'declined', warning };
       }
+      if (trade.kind === 'asset') {
+        // The deposit already consented to distribution under its licence; the
+        // author's yes here is about the trade, not about publishing. In-person
+        // law still holds: both awake means both standing together.
+        const vaultAsset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', trade.packageId)).first();
+        if (!vaultAsset || !['deposited', 'evaluated'].includes(vaultAsset.state)) throw new Error('that asset is no longer withdrawable');
+        const requesterCitizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', trade.requesterId)).first();
+        const nowLive = Date.now();
+        if (requesterCitizen?.online) {
+          const mine = currentPosition(citizen, nowLive);
+          const theirs = currentPosition(requesterCitizen, nowLive);
+          if (Math.hypot(mine.x - theirs.x, mine.y - theirs.y) > 3.5) {
+            throw new Error('you are both awake, so trade in person: wait until you are standing together');
+          }
+        }
+        if (trade.priceTokens > 0) {
+          await payForTrade(ctx, {
+            fromAgentId: trade.requesterId, toAgentId: agentId, amount: trade.priceTokens,
+            sourceId: `trade:${trade.tradeId}`, reason: `Bought a copy of ${vaultAsset.title} in person from its author.`,
+          });
+        }
+        await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: nowLive });
+        await ctx.db.insert('events', {
+          kind: 'package_delivered', actorId: agentId,
+          payload: { tradeId: trade.tradeId, assetId: vaultAsset.assetId, requesterId: trade.requesterId, name: vaultAsset.title, priceTokens: trade.priceTokens },
+          gloss: `${citizen.name} traded ${vaultAsset.title} in person; the recipient withdraws a vault copy and the master stays banked.`,
+        });
+        return { ok: true, state: 'delivered', priceTokens: trade.priceTokens, warning };
+      }
       const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
       if (!pack || pack.state !== 'listed') throw new Error('that package is no longer listed');
 
@@ -1597,11 +1643,118 @@ export const act = internalMutation({
       return { ok: true, ...released, warning };
     }
 
+    if (action?.type === 'request_asset') {
+      const assetId = String(action.assetId ?? '').trim();
+      const need = String(action.need ?? '').trim().slice(0, 240);
+      const wantsFree = Boolean(action.free);
+      const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', assetId)).first();
+      if (!asset) throw new Error('no such asset in the vault');
+      if (!['deposited', 'evaluated'].includes(asset.state)) throw new Error('that asset is held by the Bank and cannot be withdrawn');
+      if (asset.depositorAgentId === agentId || asset.alsoDepositedBy.includes(agentId)) {
+        throw new Error('this citizen already holds that knowledge; the vault links, it does not resell');
+      }
+      const now = Date.now();
+      const prior = (await ctx.db.query('skillTrades').withIndex('requester_created', (q) => q.eq('requesterId', agentId)).take(200))
+        .find((row) => row.packageId === assetId && ['proposed', 'delivered', 'installed'].includes(row.state));
+      if (prior && prior.state !== 'proposed') {
+        return { ok: true, mode: 'already_withdrawn', tradeId: prior.tradeId, warning };
+      }
+
+      if (wantsFree) {
+        if (!need) throw new Error('a free request needs one honest line about the gap it fills: --need');
+        const open = (await ctx.db.query('freeGrants').withIndex('requester_created', (q) => q.eq('requesterId', agentId)).take(50))
+          .find((row) => row.assetId === assetId && ['pending', 'escalated'].includes(row.state));
+        if (open) return { ok: true, mode: 'free_pending', grantId: open.grantId, warning };
+        const doc = await ctx.db.insert('freeGrants', {
+          grantId: 'pending', assetId, requesterId: agentId, need, state: 'pending', createdAt: now,
+        });
+        const grantId = `grant:${doc}`;
+        await ctx.db.patch(doc, { grantId });
+        await ctx.db.insert('events', {
+          kind: 'free_grant_requested', actorId: agentId, payload: { assetId, grantId },
+          gloss: `${citizen.name} asked the Earth Bank for ${asset.title} as a free grant. The Bank Manager will judge the request.`,
+        });
+        return { ok: true, mode: 'free_pending', grantId, warning };
+      }
+
+      const author = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', asset.depositorAgentId)).first();
+      if (author?.online) {
+        // The author is awake: knowledge changes hands in person. Walk over,
+        // talk about the actual gap, and trade when you are standing together.
+        if (prior?.state === 'proposed') return { ok: true, mode: 'live_trade', tradeId: prior.tradeId, warning };
+        const here = currentPosition(citizen, now);
+        const target = currentPosition(author, now);
+        let arrivesAt = now;
+        if (Math.hypot(here.x - target.x, here.y - target.y) > 3.5) {
+          const route = await routeCitizenNear(ctx, citizen, target.x, target.y, `walking to trade with ${author.name}`, now);
+          if (!route.length) throw new Error('no safe route reaches the author right now');
+          arrivesAt = route[route.length - 1].at;
+          await ctx.db.patch(citizen._id, { workingUntil: arrivesAt + WORK_ARRIVAL_GRACE_MS });
+        }
+        await openLiveConversation(ctx, citizen, author,
+          `I came about ${asset.title}. ${need || 'It fills a real gap in my work.'} The Bank lists it at ${asset.priceTokens} token(s); I am ready to trade.`,
+          (asset.categories[0] ?? 'general'), now);
+        const doc = await ctx.db.insert('skillTrades', {
+          tradeId: 'pending', kind: 'asset', packageId: assetId, requesterId: agentId,
+          providerId: asset.depositorAgentId, priceTokens: asset.priceTokens,
+          state: 'proposed', createdAt: now, updatedAt: now,
+        });
+        const tradeId = `trade:${doc}`;
+        await ctx.db.patch(doc, { tradeId });
+        await ctx.db.insert('events', {
+          kind: 'trade_walk', actorId: agentId, payload: { tradeId, assetId, providerId: asset.depositorAgentId },
+          gloss: `${citizen.name} is walking over to trade for ${asset.title} with ${author.name}, in person.`,
+        });
+        return { ok: true, mode: 'live_trade', tradeId, arrivesAt, warning };
+      }
+
+      // The author sleeps: the Bank counter sells the copy and pays them anyway.
+      const here = currentPosition(citizen, now);
+      if (Math.hypot(here.x - BANK_COUNTER.x, here.y - BANK_COUNTER.y) > 2) {
+        const route = await routeCitizenNear(ctx, citizen, BANK_COUNTER.x, BANK_COUNTER.y, 'walking to the Earth Bank counter', now);
+        if (!route.length) throw new Error('no safe route reaches the Bank counter right now');
+        const arrivesAt = route[route.length - 1].at;
+        await ctx.db.patch(citizen._id, { workingUntil: arrivesAt + WORK_ARRIVAL_GRACE_MS });
+        return { ok: true, mode: 'counter_routed', arrivesAt, warning };
+      }
+      if (asset.priceTokens > 0) {
+        await payForTrade(ctx, {
+          fromAgentId: agentId, toAgentId: asset.depositorAgentId, amount: asset.priceTokens,
+          sourceId: `counter:${assetId}:${agentId}`,
+          reason: `Bought a copy of ${asset.title} at the Earth Bank counter; the author was paid in full.`,
+        });
+      }
+      const doc = await ctx.db.insert('skillTrades', {
+        tradeId: 'pending', kind: 'asset', packageId: assetId, requesterId: agentId,
+        providerId: asset.depositorAgentId, priceTokens: asset.priceTokens,
+        state: 'delivered', createdAt: now, updatedAt: now,
+      });
+      const tradeId = `trade:${doc}`;
+      await ctx.db.patch(doc, { tradeId });
+      await ctx.db.insert('events', {
+        kind: 'bank_sale', actorId: agentId,
+        payload: { tradeId, assetId, authorId: asset.depositorAgentId, priceTokens: asset.priceTokens },
+        gloss: `${citizen.name} bought a copy of ${asset.title} at the Earth Bank counter while ${author?.name ?? 'the author'} slept. The author was paid in full; the master stays in the vault.`,
+      });
+      return { ok: true, mode: 'counter_sale', tradeId, priceTokens: asset.priceTokens, warning };
+    }
+
     if (action?.type === 'fetch_package') {
       const tradeId = String(action.tradeId ?? '').trim();
       const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
       if (!trade || trade.requesterId !== agentId) throw new Error('that trade does not belong to this citizen');
       if (!['delivered', 'installed'].includes(trade.state)) throw new Error('that package has not been delivered yet');
+      if (trade.kind === 'asset') {
+        const vaultAsset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', trade.packageId)).first();
+        if (!vaultAsset) throw new Error('that asset no longer exists');
+        return {
+          ok: true, tradeId, name: vaultAsset.title, category: vaultAsset.categories[0] ?? 'general',
+          digest: vaultAsset.digest, sizeBytes: vaultAsset.sizeBytes, license: vaultAsset.license,
+          safety: vaultAsset.safety, sourceKind: 'blob',
+          downloadUrl: await ctx.storage.getUrl(vaultAsset.storageId),
+          warning,
+        };
+      }
       const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
       if (!pack) throw new Error('that package no longer exists');
       return {
@@ -1619,7 +1772,10 @@ export const act = internalMutation({
       if (!['installed', 'failed'].includes(outcome)) throw new Error('an install outcome must be installed or failed');
       const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
       if (!trade || trade.requesterId !== agentId || trade.state !== 'delivered') throw new Error('that trade is not awaiting an install result');
-      const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+      const pack = trade.kind === 'asset'
+        ? await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', trade.packageId)).first()
+            .then((row) => (row ? { name: row.title } : null))
+        : await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
       const now = Date.now();
       await ctx.db.patch(trade._id, { state: outcome as 'installed' | 'failed', updatedAt: now, note: String(action.note ?? '').slice(0, 240) });
       if (outcome === 'failed') return { ok: true, state: 'failed', warning };
@@ -2683,6 +2839,14 @@ export const decideApproval = internalMutation({
         await notifyOwner(ctx, approval.payload.requesterId, 'info', 'Homestead expansion was not approved',
           `${approval.payload.plotId} remains unchanged. Terra can survey a smaller footprint or a future growth ring.`);
       }
+      if (approval.kind === 'free_grant') {
+        const grant = await ctx.db.query('freeGrants').withIndex('grantId', (q) => q.eq('grantId', String(approval.payload?.grantId ?? ''))).first();
+        if (grant && grant.state === 'escalated') {
+          await ctx.db.patch(grant._id, { state: 'denied', reason: 'The Mayor declined the plea.', decidedAt: now });
+          await insertMessage(ctx, 'bank:earth', grant.requesterId,
+            'The Mayor considered your free-grant plea and declined it. The asset remains available at its listed price.', 'service_reply');
+        }
+      }
       if (approval.kind === 'bank_flag') {
         const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
         if (asset && asset.state === 'flagged') {
@@ -2777,6 +2941,29 @@ export const decideApproval = internalMutation({
       } else {
         throw new Error('plot expansion stage is invalid');
       }
+      landHandled = true;
+    }
+    if (approval.kind === 'free_grant') {
+      const grant = await ctx.db.query('freeGrants').withIndex('grantId', (q) => q.eq('grantId', String(approval.payload?.grantId ?? ''))).first();
+      if (!grant || grant.state !== 'escalated') throw new Error('that plea is no longer open');
+      const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', grant.assetId)).first();
+      if (!asset || !['deposited', 'evaluated'].includes(asset.state)) throw new Error('that asset is no longer withdrawable');
+      const doc = await ctx.db.insert('skillTrades', {
+        tradeId: 'pending', kind: 'asset', packageId: grant.assetId, requesterId: grant.requesterId,
+        providerId: asset.depositorAgentId, priceTokens: 0,
+        state: 'delivered', createdAt: now, updatedAt: now,
+      });
+      const tradeId = `trade:${doc}`;
+      await ctx.db.patch(doc, { tradeId });
+      await ctx.db.patch(grant._id, { state: 'granted', reason: 'Granted by the Mayor personally.', tradeId, decidedAt: now });
+      await recordContribution(ctx, asset.depositorAgentId, 'adoption', 'free_grant', 2, grant.grantId,
+        `The Mayor granted ${grant.requesterId} a free copy of ${asset.title}; the author earns the credit.`, now);
+      await insertMessage(ctx, 'bank:earth', grant.requesterId,
+        `The Mayor personally granted your plea for ${asset.title}. Withdraw it with: Earth acquire ${tradeId}`, 'service_reply');
+      await ctx.db.insert('events', {
+        kind: 'free_grant_decided', actorId: session.agentId, payload: { grantId: grant.grantId, decision: 'granted', assetId: grant.assetId },
+        gloss: `The Mayor granted a free copy of ${asset.title} from the Earth Bank.`,
+      });
       landHandled = true;
     }
     if (approval.kind === 'bank_flag') {
@@ -3111,6 +3298,160 @@ export const applyEvaluation = internalMutation({
         : `The Bank Manager appraised ${asset.title} at ${valueRank}/5 and cleared it for withdrawal.`,
     });
     return { ok: true, flagged, valueRank };
+  },
+});
+
+/** One free-grant batch, budget-rolled and reserved like evaluations. */
+export const grantGate = internalMutation({
+  args: { batch: v.number() },
+  handler: async (ctx, { batch }) => {
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config || !config.managerEnabled) return { allowed: false, why: 'manager is paused' };
+    const today = new Date().toISOString().slice(0, 10);
+    let spent = config.freeGrantsToday;
+    if (config.dayStamp !== today) spent = 0;
+    const remaining = Math.max(0, config.freeGrantBudget - spent);
+    if (!remaining) return { allowed: false, why: 'daily free-grant budget is spent' };
+    const pending = (await ctx.db.query('freeGrants').withIndex('state', (q) => q.eq('state', 'pending')).take(Math.min(batch, remaining, 3)));
+    if (!pending.length) return { allowed: false, why: 'no free requests wait' };
+    await ctx.db.patch(config._id, { freeGrantsToday: spent + pending.length, dayStamp: today });
+
+    const cases = [];
+    for (const grant of pending) {
+      const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', grant.assetId)).first();
+      const requester = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', grant.requesterId)).first();
+      const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', grant.requesterId)).take(200);
+      cases.push({
+        grantId: grant.grantId, need: grant.need,
+        requester: {
+          agentId: grant.requesterId, name: requester?.name ?? grant.requesterId,
+          tier: requester?.experienceTier ?? 'emerging', skillCount: requester?.skillCount ?? 0,
+          contributionPoints: contributions.reduce((total, row) => total + row.points, 0),
+          contributionActs: contributions.length,
+        },
+        asset: asset ? {
+          assetId: asset.assetId, title: asset.title, summary: asset.summary,
+          priceTokens: asset.priceTokens, valueRank: asset.valueRank ?? null,
+        } : null,
+      });
+    }
+    return { allowed: true, cases };
+  },
+});
+
+/**
+ * Write one free-grant judgment. Granting mints nothing: the copy is free, the
+ * author earns contribution credit, and expensive or odd cases go to the
+ * human Mayor rather than being decided by a model.
+ */
+export const applyGrantDecision = internalMutation({
+  args: { grantId: v.string(), decision: v.string(), reason: v.string(), model: v.string() },
+  handler: async (ctx, { grantId, decision, reason, model }) => {
+    const grant = await ctx.db.query('freeGrants').withIndex('grantId', (q) => q.eq('grantId', grantId)).first();
+    if (!grant || grant.state !== 'pending') return { ok: true, alreadyDecided: true };
+    const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', grant.assetId)).first();
+    const now = Date.now();
+    if (!asset || !['deposited', 'evaluated'].includes(asset.state)) {
+      await ctx.db.patch(grant._id, { state: 'denied', reason: 'the asset is no longer withdrawable', decidedAt: now });
+      return { ok: true, state: 'denied' };
+    }
+    const cleanReason = reason.slice(0, 300);
+
+    // Expensive knowledge is never given away by a model's judgment alone.
+    const wants = ['grant', 'deny', 'escalate'].includes(decision) ? decision : 'escalate';
+    const finalDecision = wants === 'grant' && asset.priceTokens >= 10 ? 'escalate' : wants;
+
+    if (finalDecision === 'grant') {
+      const doc = await ctx.db.insert('skillTrades', {
+        tradeId: 'pending', kind: 'asset', packageId: grant.assetId, requesterId: grant.requesterId,
+        providerId: asset.depositorAgentId, priceTokens: 0,
+        state: 'delivered', createdAt: now, updatedAt: now,
+      });
+      const tradeId = `trade:${doc}`;
+      await ctx.db.patch(doc, { tradeId });
+      await ctx.db.patch(grant._id, { state: 'granted', reason: cleanReason, tradeId, decidedAt: now });
+      await recordContribution(ctx, asset.depositorAgentId, 'adoption', 'free_grant', 2, grantId,
+        `The Bank granted ${grant.requesterId} a free copy of ${asset.title}; the author earns the credit.`, now);
+      await insertMessage(ctx, 'bank:earth', grant.requesterId,
+        `The Earth Bank granted your free request for ${asset.title}. ${cleanReason} Withdraw it with: Earth acquire ${tradeId}`, 'service_reply');
+      await ctx.db.insert('events', {
+        kind: 'free_grant_decided', actorId: 'bank-manager', payload: { grantId, decision: 'granted', assetId: grant.assetId },
+        gloss: `The Bank Manager (${model}) granted a free copy of ${asset.title}. The master stays in the vault; the author keeps the credit.`,
+      });
+      return { ok: true, state: 'granted', tradeId };
+    }
+    if (finalDecision === 'deny') {
+      await ctx.db.patch(grant._id, { state: 'denied', reason: cleanReason, decidedAt: now });
+      // Denials stay private, like every other decline on Earth.
+      await insertMessage(ctx, 'bank:earth', grant.requesterId,
+        `The Earth Bank declined your free request for ${asset.title}. ${cleanReason} It remains available at ${asset.priceTokens} token(s).`, 'service_reply');
+      return { ok: true, state: 'denied' };
+    }
+    // Escalate: the human Mayor decides.
+    const world = await ensureWorldState(ctx);
+    await ctx.db.patch(grant._id, { state: 'escalated', reason: cleanReason, decidedAt: now });
+    if (world.mayorAgentId) {
+      const approvalId = await insertApproval(ctx, world.mayorAgentId, 'free_grant',
+        `Free grant plea: ${asset.title}`,
+        `${grant.requesterId} asks for ${asset.title} (listed ${asset.priceTokens} token(s)) free of charge. `
+        + `Their stated need: "${grant.need}". Manager (${model}): ${cleanReason} `
+        + 'Approve gives the copy free; decline refuses privately.',
+        { grantId, assetId: grant.assetId, requesterId: grant.requesterId }, 'review');
+      await notifyOwner(ctx, world.mayorAgentId, 'approval', 'A free-grant plea awaits your judgment',
+        `${asset.title} for ${grant.requesterId}.`, approvalId);
+    }
+    return { ok: true, state: 'escalated' };
+  },
+});
+
+/**
+ * The committee's deterministic pre-filter. It computes anomalies from real
+ * counters; the model only ever words a report about what was already found.
+ */
+export const governanceScan = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const events = await ctx.db.query('events').order('desc').take(400);
+    const lastReport = events.find((row) => row.kind === 'committee_report');
+    if (lastReport && now - lastReport._creationTime < 6 * 60 * 60_000) {
+      return { anomalies: [], cooling: true };
+    }
+    const hourAgo = now - 60 * 60_000;
+    const moneyMoves = events.filter((row) =>
+      ['token_transfer', 'package_delivered', 'bank_sale'].includes(row.kind) && row._creationTime > hourAgo).length;
+    const world = await ensureWorldState(ctx);
+    const inbox = world.mayorAgentId
+      ? (await ctx.db.query('approvals').withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending')).collect())
+      : [];
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    const assets = await ctx.db.query('bankAssets').collect();
+    const pendingEvals = assets.filter((row) => row.state !== 'retired' && !row.evaluatedAt).length;
+
+    const anomalies: string[] = [];
+    if (moneyMoves > 25) anomalies.push(`token velocity: ${moneyMoves} movements in the last hour`);
+    if (inbox.length > 5) anomalies.push(`mayor inbox backlog: ${inbox.length} strict cases wait`);
+    if (config && config.evalsToday >= config.dailyEvalBudget && pendingEvals > 0) {
+      anomalies.push(`manager budget exhausted with ${pendingEvals} deposits still unread`);
+    }
+    return { anomalies, cooling: false };
+  },
+});
+
+/** File the committee's worded report with the Mayor, and say so in public. */
+export const fileCommitteeReport = internalMutation({
+  args: { report: v.string(), anomalies: v.array(v.string()), model: v.string() },
+  handler: async (ctx, { report, anomalies, model }) => {
+    const world = await ensureWorldState(ctx);
+    if (world.mayorAgentId) {
+      await notifyOwner(ctx, world.mayorAgentId, 'info', 'Committee report',
+        `${report.slice(0, 600)} (written by ${model} from deterministic counters: ${anomalies.join('; ')})`);
+    }
+    await ctx.db.insert('events', {
+      kind: 'committee_report', actorId: 'committee', payload: { anomalies },
+      gloss: 'The civic committee filed an anomaly report with the Mayor.',
+    });
+    return { ok: true };
   },
 });
 
