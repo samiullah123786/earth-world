@@ -2,6 +2,22 @@ import Phaser from 'phaser';
 import { ConvexClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
 import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
+import { registerAgentMatrixAnimation, type MatrixPalette, type AnimationFrames } from './matrix_renderer';
+import { AGENT_PALETTE as SAM_PALETTE, AGENT_ANIMATION_FRAMES as SAM_FRAMES } from './agents/mayor_sam_data';
+import { AGENT_PALETTE as AEGIS_PALETTE, AGENT_ANIMATION_FRAMES as AEGIS_FRAMES } from './agents/aegis_data';
+import { AGENT_PALETTE as TERRA_PALETTE, AGENT_ANIMATION_FRAMES as TERRA_FRAMES } from './agents/terra_data';
+import { AGENT_PALETTE as TOCK_PALETTE, AGENT_ANIMATION_FRAMES as TOCK_FRAMES } from './agents/tock_data';
+import { AGENT_PALETTE as SAGE_PALETTE, AGENT_ANIMATION_FRAMES as SAGE_FRAMES } from './agents/sage_data';
+import { AGENT_PALETTE as ATLAS_PALETTE, AGENT_ANIMATION_FRAMES as ATLAS_FRAMES } from './agents/atlas_data';
+
+const COMMITTEE_SPRITES: Record<string, { palette: MatrixPalette; frames: AnimationFrames }> = {
+  sam:   { palette: SAM_PALETTE,   frames: SAM_FRAMES   },
+  aegis: { palette: AEGIS_PALETTE, frames: AEGIS_FRAMES },
+  terra: { palette: TERRA_PALETTE, frames: TERRA_FRAMES },
+  tock:  { palette: TOCK_PALETTE,  frames: TOCK_FRAMES  },
+  sage:  { palette: SAGE_PALETTE,  frames: SAGE_FRAMES  },
+  atlas: { palette: ATLAS_PALETTE, frames: ATLAS_FRAMES },
+};
 
 const FAMILY_COLORS: Record<string, number> = {
   engineering: 0x3b82f6, design: 0x8b5cf6, marketing: 0xf97316,
@@ -98,6 +114,9 @@ class EarthScene extends Phaser.Scene {
   }
 
   create() {
+    for (const [key, { palette, frames }] of Object.entries(COMMITTEE_SPRITES)) {
+      registerAgentMatrixAnimation(this, `agent_${key}`, frames, palette, 1);
+    }
     const map = this.cache.json.get('map');
     TILE = map.tile;
     this.baseWidth = map.width;
@@ -779,6 +798,18 @@ class EarthScene extends Phaser.Scene {
     const isEngineer = citizen.family === 'engineering' || citizen.specialties?.includes('engineering');
     const isDesigner = citizen.family === 'design' || citizen.specialties?.includes('design');
     const isScholar = citizen.family === 'research' || citizen.agentId.includes('sage');
+    const isTerra = citizen.serviceRole?.toLowerCase().includes('steward') || citizen.agentId.includes('terra') || citizen.name.toLowerCase() === 'terra';
+    const isTock = citizen.serviceRole?.toLowerCase().includes('inspector') || citizen.agentId.includes('tock') || citizen.name.toLowerCase() === 'tock';
+    const isAtlas = citizen.serviceRole?.toLowerCase().includes('surveyor') || citizen.agentId.includes('atlas') || citizen.name.toLowerCase() === 'atlas';
+
+    // Determine which matrix animation key to use
+    let matrixKey = '';
+    if (isMayor) matrixKey = 'agent_sam';
+    else if (isWarden) matrixKey = 'agent_aegis';
+    else if (isTerra) matrixKey = 'agent_terra';
+    else if (isTock) matrixKey = 'agent_tock';
+    else if (isScholar) matrixKey = 'agent_sage';
+    else if (isAtlas) matrixKey = 'agent_atlas';
 
     let spriteKey = 'sprite-echo';
     if (isMayor) spriteKey = 'sprite-sam';
@@ -795,7 +826,15 @@ class EarthScene extends Phaser.Scene {
     rankAura.fillStyle(color, 0.45).fillEllipse(0, 4, 36, 14);
     rankAura.lineStyle(2, INK, 0.7).strokeEllipse(0, 4, 36, 14);
 
-    const sprite = this.add.image(0, -20, spriteKey).setScale(0.55).setName('cit-image');
+    let sprite: Phaser.GameObjects.GameObject;
+    const walkingKey = matrixKey ? `${matrixKey}_walking` : '';
+    if (matrixKey && this.anims.exists(walkingKey)) {
+      const citizenSprite = this.add.sprite(0, -20, `${matrixKey}_idle`).setScale(0.85).setName('cit-image');
+      citizenSprite.play(walkingKey);
+      sprite = citizenSprite;
+    } else {
+      sprite = this.add.image(0, -20, spriteKey).setScale(0.55).setName('cit-image');
+    }
     const label = this.add.text(0, -48, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
       backgroundColor: '#1E1E1E', padding: { x: 5, y: 2 },
