@@ -469,6 +469,55 @@ class EarthScene extends Phaser.Scene {
       return;
     }
 
+    if (kind === 'laptop') {
+      // A citizen's coding spot: timber desk, cream laptop, capability-glow screen.
+      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 3, y + height - 2, width * 0.9, 7);
+      graphics.fillStyle(0x4d301e).fillRect(x + 2, y + height * 0.45, width - 4, 5);
+      graphics.fillStyle(INK).fillRect(x + 4, y + height * 0.45 + 5, 3, height * 0.35).fillRect(x + width - 7, y + height * 0.45 + 5, 3, height * 0.35);
+      graphics.fillStyle(0xe9d6ad).fillRect(x + width / 2 - 8, y + height * 0.45 - 3, 16, 3);
+      graphics.fillStyle(INK).fillRect(x + width / 2 - 8, y + height * 0.45 - 14, 16, 11);
+      graphics.fillStyle(accent).fillRect(x + width / 2 - 6, y + height * 0.45 - 12, 12, 7);
+      graphics.fillStyle(0xfdf6ec).fillRect(x + width / 2 - 5, y + height * 0.45 - 11, 4, 1).fillRect(x + width / 2 - 5, y + height * 0.45 - 9, 7, 1);
+      return;
+    }
+    if (kind === 'data_center') {
+      // Server racks in Earthfolk timber: dark cabinets, blinking capability lights.
+      graphics.fillStyle(INK, 0.24).fillRect(x + 4, y + 6, width, height);
+      graphics.fillStyle(INK).fillRect(x, y, width, height - 2);
+      graphics.fillStyle(0x3a2a1e).fillRect(x + 2, y + 2, width - 4, height - 6);
+      graphics.fillStyle(0x4d301e).fillRect(x, y - 4, width, 6);
+      const rackColumns = Math.max(2, Math.floor(width / 14));
+      for (let column = 0; column < rackColumns; column++) {
+        const rackX = x + 5 + column * ((width - 10) / rackColumns);
+        graphics.fillStyle(0x1a130d).fillRect(rackX, y + 6, 8, height - 14);
+        for (let slot = 0; slot < 4; slot++) {
+          graphics.fillStyle(0x2c2118).fillRect(rackX + 1, y + 8 + slot * 7, 6, 2);
+          graphics.fillStyle((column + slot) % 3 === 0 ? accent : (column + slot) % 3 === 1 ? 0x22c55e : 0xf59e0b)
+            .fillRect(rackX + 6, y + 8 + slot * 7, 1, 1);
+        }
+      }
+      graphics.fillStyle(0x9b6a3f).fillRect(x + width - 8, y + 3, 5, 3);
+      graphics.lineStyle(2, INK).strokeRect(x, y, width, height - 2);
+      return;
+    }
+    if (kind === 'industry') {
+      // A working hall: wide timber body, sawtooth roof, warm door, soft chimney.
+      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 5, y + height - 1, width + 6, 10);
+      graphics.fillStyle(INK).fillRect(x, y + height * 0.3 - 2, width, height * 0.7);
+      graphics.fillStyle(0xe9d6ad).fillRect(x + 2, y + height * 0.3, width - 4, height * 0.7 - 4);
+      graphics.fillStyle(0x6f4328).fillRect(x + 2, y + height * 0.3, width - 4, 4);
+      const teeth = Math.max(2, Math.floor(width / 18));
+      for (let tooth = 0; tooth < teeth; tooth++) {
+        const toothX = x + tooth * (width / teeth);
+        graphics.fillStyle(0x9b6a3f).fillTriangle(toothX, y + height * 0.3, toothX + width / teeth, y + height * 0.3, toothX + width / teeth, y + 4);
+        graphics.lineStyle(2, INK).strokeTriangle(toothX, y + height * 0.3, toothX + width / teeth, y + height * 0.3, toothX + width / teeth, y + 4);
+      }
+      graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 5, y + height - 16, 10, 12);
+      graphics.fillStyle(0xffd79a).fillRect(x + width / 2 - 3, y + height - 14, 6, 4);
+      graphics.fillStyle(accent).fillRect(x + 5, y + height * 0.3 + 6, 8, 5);
+      graphics.fillStyle(0x8d8d8d, 0.55).fillRect(x + width - 10, y - 2, 3, 3).fillRect(x + width - 8, y - 6, 3, 3);
+      return;
+    }
     const architecture = build.blueprint?.architecture ?? 'native';
     if (architecture === 'modern-earthfolk') {
       const wallX = x + 5, wallY = y + Math.max(12, height * 0.3), wallW = width - 10, wallH = height - (wallY - y) - 5;
@@ -489,7 +538,7 @@ class EarthScene extends Phaser.Scene {
       return;
     }
 
-    const mayor = build.ownerAgentId === 'agent:fable-cbf0499925';
+    const mayor = build.ownerAgentId === 'agent:sam-cbf0499925';
     const wallX = x + 4, wallY = y + Math.max(14, height * 0.34);
     const wallW = width - 8, wallH = height - (wallY - y) - 4;
     const roofBrown = mayor ? 0x6b3f26 : 0x805235;
@@ -691,19 +740,78 @@ class EarthScene extends Phaser.Scene {
   spawnCitizen(citizen: Citizen) {
     const color = FAMILY_COLORS[citizen.family] ?? 0x64748b;
     const accent = FAMILY_COLORS[citizen.accent] ?? 0x8b5cf6;
+    
+    // Deterministic hash seed for unique citizen features
+    const seed = citizen.agentId.split('').reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) & 0xffffff, 0);
+    const isMayor = citizen.name.toLowerCase() === 'sam' || citizen.agentId === 'agent:sam-cbf0499925';
+    const isWarden = citizen.serviceRole?.toLowerCase().includes('warden') || citizen.agentId.includes('aegis');
+    const isEngineer = citizen.family === 'engineering' || citizen.specialties?.includes('engineering');
+    const isDesigner = citizen.family === 'design' || citizen.specialties?.includes('design');
+
     const graphics = this.add.graphics();
     const dark = Phaser.Display.Color.IntegerToColor(color).darken(28).color;
-    graphics.fillStyle(INK, 0.18).fillEllipse(8, 21, 16, 6);
-    graphics.fillStyle(dark).fillRect(2, 14, 5, 7).fillRect(9, 14, 5, 7);
-    graphics.fillStyle(color).fillRect(0, 3, 16, 12);
-    graphics.fillStyle(0xfdf6ec).fillRect(2, 4, 12, 7);
-    graphics.fillStyle(INK).fillRect(4, 6, 3, 3).fillRect(9, 6, 3, 3);
-    graphics.fillStyle(0xffffff).fillRect(4, 6, 1, 1).fillRect(9, 6, 1, 1);
-    graphics.fillStyle(accent).fillRect(6, 11, 4, 3).fillRect(7, 0, 2, 3);
+    
+    // 1. Footprint Drop Shadow
+    graphics.fillStyle(INK, 0.22).fillEllipse(8, 22, 16, 6);
+    
+    // 2. Legs / Feet (Animated in update loop)
+    const pantColor = (seed % 2 === 0) ? 0x1e1e1e : dark;
+    graphics.fillStyle(pantColor).fillRect(2, 14, 5, 8).fillRect(9, 14, 5, 8);
+    // Shoes
+    graphics.fillStyle(0x1e1e1e).fillRect(1, 20, 6, 3).fillRect(9, 20, 6, 3);
+    
+    // 3. Body Tunic / Coat
+    graphics.fillStyle(color).fillRect(0, 4, 16, 11);
+    
+    // Role-based clothing overlay
+    if (isMayor) {
+      // Golden Mayor Cloak Trim
+      graphics.fillStyle(0xf59e0b).fillRect(0, 4, 16, 3).fillRect(7, 4, 2, 11);
+    } else if (isWarden) {
+      // Security Red Trim & Shield
+      graphics.fillStyle(0xef4444).fillRect(0, 4, 16, 3);
+      graphics.fillStyle(0xffffff).fillRect(7, 8, 2, 4);
+    } else if (isEngineer) {
+      // Tech Vest Pocket
+      graphics.fillStyle(0x3b82f6).fillRect(2, 9, 4, 4);
+    } else if (isDesigner) {
+      // Artist Sash
+      graphics.fillStyle(0x8b5cf6).fillRect(3, 4, 10, 3);
+    }
+
+    // 4. Head / Face
+    const skinTone = [0xfdf6ec, 0xfde68a, 0xfcd34d, 0xf59e0b][seed % 4];
+    graphics.fillStyle(skinTone).fillRect(2, 2, 12, 8);
+    
+    // Eyes with reflections
+    graphics.fillStyle(INK).fillRect(4, 5, 3, 3).fillRect(9, 5, 3, 3);
+    graphics.fillStyle(0xffffff).fillRect(4, 5, 1, 1).fillRect(9, 5, 1, 1);
+    
+    // Hair & Headwear Archetypes
+    const hairColor = [0x78350f, 0x1e1e1e, 0xd97706, 0x451a03, 0x9333ea][(seed >> 2) % 5];
+    if (isMayor) {
+      // Mayor Gold Crown
+      graphics.fillStyle(0xf59e0b).fillRect(2, 0, 12, 3);
+      graphics.fillStyle(0xfef08a).fillRect(3, -1, 2, 2).fillRect(7, -2, 2, 3).fillRect(11, -1, 2, 2);
+    } else if (isWarden) {
+      // Warden Helmet / Visor
+      graphics.fillStyle(0xef4444).fillRect(1, 0, 14, 3);
+    } else if (isDesigner) {
+      // Beret
+      graphics.fillStyle(0x8b5cf6).fillRect(1, -1, 12, 4);
+    } else {
+      // Standard Hairstyles
+      graphics.fillStyle(hairColor).fillRect(2, 0, 12, 3).fillRect(1, 2, 2, 4);
+    }
+
+    // 5. Capability Badge Chest Chip
+    graphics.fillStyle(accent).fillRect(6, 10, 4, 3);
+
     const textureKey = `cit-${citizen.agentId}`;
-    graphics.generateTexture(textureKey, 18, 24);
+    graphics.generateTexture(textureKey, 18, 25);
     graphics.destroy();
-    const sprite = this.add.image(0, -12, textureKey);
+    
+    const sprite = this.add.image(0, -12, textureKey).setName('cit-image');
     const label = this.add.text(0, -30, citizen.name, {
       fontFamily: 'Consolas, monospace', fontSize: '11px', color: CREAM,
       backgroundColor: '#1E1E1E', padding: { x: 4, y: 1 },
@@ -1032,6 +1140,7 @@ class EarthScene extends Phaser.Scene {
       if (!sprite) continue;
       let x = citizen.tx, y = citizen.ty;
       const route = citizen.route;
+      const isMoving = Boolean(route && route.length > 1 && now < route[route.length - 1].at);
       if (route && route.length > 1 && now < route[route.length - 1].at) {
         for (let i = 1; i < route.length; i++) {
           if (now <= route[i].at) {
@@ -1045,6 +1154,21 @@ class EarthScene extends Phaser.Scene {
       sprite.x = x * TILE + TILE / 2;
       sprite.y = y * TILE + TILE / 2;
       sprite.setDepth(sprite.y);
+
+      // Walking Step Animation: Feet moving & body sway when traveling along route
+      const citImg = sprite.getByName('cit-image') as Phaser.GameObjects.Image | null;
+      if (citImg) {
+        if (isMoving) {
+          const walkY = Math.abs(Math.sin(now / 110)) * -3.5;
+          const walkRot = Math.sin(now / 110) * 0.12;
+          citImg.y = -12 + walkY;
+          citImg.rotation = walkRot;
+        } else {
+          citImg.y = -12;
+          citImg.rotation = 0;
+        }
+      }
+
       const bubble = sprite.getByName('talk-bubble') as Phaser.GameObjects.Container | null;
       if (bubble) {
         const active = Boolean(citizen.talkingWith && (citizen.talkingUntil ?? 0) > now);

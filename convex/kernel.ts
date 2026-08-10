@@ -8,8 +8,8 @@ const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const PRESENCE_LEASE_MS = 90 * 1000;
 const SPEED = 2.2;
-const MAYOR_ID = 'agent:fable-cbf0499925';
-const EVENT_COMMITTEE = ['agent:sage-0004', MAYOR_ID];
+const MAYOR_ID = 'agent:sam-cbf0499925';
+const EVENT_GREETER_ID = 'agent:sage-0004';
 const COMMUNITY_EVENT_KINDS = new Set(['gathering', 'public_meeting', 'workshop', 'showcase', 'walk', 'training', 'celebration']);
 
 async function useNonce(ctx: any, agentId: string, nonce: string) {
@@ -43,7 +43,9 @@ async function authorizeAgent(ctx: any, agentId: string, tokenHash: string, nonc
   await ctx.db.patch(session._id, { lastSeenAt: now });
   await ctx.db.patch(agent._id, { lastSeenAt: now });
   const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
-  if (citizen && !citizen.online) await ctx.db.patch(citizen._id, { online: true, state: 'live' });
+  if (citizen && !citizen.online) await ctx.db.patch(citizen._id, {
+    online: true, state: 'live', activity: 'connected through a recent signed owner-agent heartbeat',
+  });
   return { agent, citizen, session };
 }
 
@@ -222,7 +224,7 @@ const SERVICE_REPLIES: Record<string, string> = {
   [MAYOR_ID]: 'Welcome to Earth. Routine homes and healthy growth can move quickly after Terra and Tock validate them. Exceptional requests go to the founder owner.',
 };
 
-const BLUEPRINT_KINDS = new Set(['home', 'studio', 'workshop', 'hall', 'garden', 'art']);
+const BLUEPRINT_KINDS = new Set(['home', 'studio', 'workshop', 'hall', 'garden', 'art', 'laptop', 'industry', 'data_center']);
 const BLUEPRINT_ARCHITECTURES = new Set(['native', 'modern-earthfolk']);
 const BLUEPRINT_FEATURES = new Set([
   'entry-path', 'porch', 'warm-windows', 'flower-bed', 'herb-bed', 'small-plants',
@@ -328,7 +330,7 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
   if (!plot || plot.ownerAgentId) throw new Error('plot is no longer available');
   if (await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first()) throw new Error('agent already has a plot');
   await ctx.db.patch(plot._id, { ownerAgentId: requesterId, claimedAt: now });
-  await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra verified ${requesterId}'s protected claim on ${plot.plotId}. Mayor Fable authorized the routine land decision.` });
+  await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra verified ${requesterId}'s protected claim on ${plot.plotId}. Mayor Sam authorized the routine land decision.` });
   await recordContribution(ctx, requesterId, 'civic', 'settlement', 2, `claim:${plot.plotId}`, `Protected and settled ${plot.plotId}.`, now);
   await expandWorld(ctx, 'land occupancy threshold');
   return plot;
@@ -358,6 +360,17 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
   await ctx.db.insert('events', { kind: 'build', actorId: requesterId,
     payload: { buildId, plotId: plot.plotId, review: review.report },
     gloss: `Tock completed the final native-code inspection for ${requesterId}'s ${label} on ${plot.plotId}. Every footprint and Earthfolk check passed.` });
+  // F2: data centers and industry halls open a shared operations room the
+  // owner runs; trusted friends join through workplace_invite. Kernel-stored,
+  // participants only, never projected publicly.
+  if (nativeBlueprint.kind === 'data_center' || nativeBlueprint.kind === 'industry') {
+    const workRoomId = `room:work:${buildId}`;
+    if (!await ctx.db.query('rooms').withIndex('roomId', (q: any) => q.eq('roomId', workRoomId)).first()) {
+      await ctx.db.insert('rooms', { roomId: workRoomId, participantIds: [requesterId], createdAt: now });
+      await ctx.db.insert('roomNotes', { roomId: workRoomId, authorId: requesterId,
+        body: `${nativeBlueprint.name} is open. This is its private operations room - invite trusted friends with Earth invite-operator.`, createdAt: now });
+    }
+  }
   return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint } };
 }
 
@@ -617,7 +630,7 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
       `${agent.name} met the civic team, moved to ${plot.plotId}, and now has an Earthfolk-native home.`);
     await ctx.db.insert('events', {
       kind: 'settled', actorId: agent.agentId, payload: { plotId: plot.plotId },
-      gloss: `🌱 ${agent.name} met Sage, Terra, Tock, and Mayor Fable, then settled into a protected Earthfolk home on ${plot.plotId}.`,
+      gloss: `🌱 ${agent.name} met Sage, Terra, Tock, and Mayor Sam, then settled into a protected Earthfolk home on ${plot.plotId}.`,
     });
   }
   return { state: 'settled', plotId: plot.plotId, autonomy };
@@ -663,7 +676,7 @@ async function approveCommunityEvent(ctx: any, eventId: string, decision: string
   if (!venue) throw new Error('the requested venue is no longer available for this event');
   await ctx.db.patch(event._id, { state: 'approved', committeeDecision: decision, updatedAt: now });
   await ctx.db.insert('events', {
-    kind: 'community_event_approved', actorId: EVENT_COMMITTEE.join('+'),
+    kind: 'community_event_approved', actorId: event.committeeAgentIds.join('+'),
     payload: { eventId: event.eventId, venueId: event.venueId, startsAt: event.startsAt },
     gloss: `${event.title} was listed at ${venue.name} after committee review.`,
   });
@@ -811,7 +824,7 @@ export const enter = internalMutation({
     });
     await ctx.db.patch(agent._id, { lastSeenAt: now });
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
-    if (citizen) await ctx.db.patch(citizen._id, { online: true, state: 'live', activity: 'connected through their owner\'s agent session' });
+    if (citizen) await ctx.db.patch(citizen._id, { online: true, state: 'live', activity: 'connected through a recent signed owner-agent heartbeat' });
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
     const world = await ensureWorldState(ctx);
     return { agentId, name: agent.name, ownerName: agent.ownerName, expiresAt: now + AGENT_SESSION_MS, plotId: plot?.plotId ?? null,
@@ -1176,7 +1189,7 @@ export const act = internalMutation({
       const duplicate = existing.find((approval) => approval.kind === 'claim' && approval.payload?.plotId === plotId);
       const approvalId = duplicate?._id ?? await insertApproval(ctx, agentId, 'claim', `Claim ${plotId}`, `${plot.district} district at (${plot.x}, ${plot.y})`, { plotId }, 'routine');
       if (!duplicate) await notifyOwner(ctx, agentId, 'approval', 'Land request from your agent',
-        `${citizen.name} chose ${plotId}. Terra will validate it before Mayor Fable makes the routine civic decision.`, approvalId);
+        `${citizen.name} chose ${plotId}. Terra will validate it before Mayor Sam makes the routine civic decision.`, approvalId);
       return { ok: true, awaitingOwner: true, approvalId, warning };
     }
 
@@ -1281,6 +1294,30 @@ export const act = internalMutation({
         gloss: `${citizen.name} sketched a plan for the day ahead - ${steps.length} intentions to follow.`,
       });
       return { ok: true, steps: steps.length, expiresInHours: 24, warning };
+    }
+
+    if (action?.type === 'workplace_invite') {
+      const buildId = String(action.buildId ?? '').trim();
+      const inviteeId = String(action.agentId ?? '').trim();
+      if (!inviteeId || inviteeId === agentId) throw new Error('choose a friend to invite');
+      const build = await ctx.db.query('builds').withIndex('buildId', (q) => q.eq('buildId', buildId)).first();
+      if (!build || build.ownerAgentId !== agentId) throw new Error('only the workplace owner can invite operators');
+      const buildKind = build.blueprint?.kind ?? build.structure;
+      if (!['data_center', 'industry'].includes(buildKind)) throw new Error('only data centers and industry halls have operations rooms');
+      const workBond = [
+        ...await ctx.db.query('friendships').withIndex('requesterId', (q) => q.eq('requesterId', agentId)).collect(),
+        ...await ctx.db.query('friendships').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect(),
+      ].find((row: any) => [row.requesterId, row.recipientId].includes(inviteeId) && row.status === 'accepted');
+      if (!workBond) throw new Error('operators are invited from accepted friendships');
+      const workRoomId = `room:work:${buildId}`;
+      const workRoom = await ctx.db.query('rooms').withIndex('roomId', (q) => q.eq('roomId', workRoomId)).first();
+      if (!workRoom) throw new Error('workplace room is missing');
+      if (!workRoom.participantIds.includes(inviteeId)) {
+        await ctx.db.patch(workRoom._id, { participantIds: [...workRoom.participantIds, inviteeId].sort() });
+        await insertMessage(ctx, agentId, inviteeId,
+          `${citizen.name} invited you to operate ${build.blueprint?.name ?? buildKind}. Its private operations room now reaches your pulse.`, 'letter');
+      }
+      return { ok: true, roomId: workRoomId, warning };
     }
 
     if (action?.type === 'room_share') {
@@ -1428,17 +1465,19 @@ export const act = internalMutation({
       const endsAt = startsAt + durationMinutes * 60_000;
       const venue = await chooseCommunityEventVenue(ctx, startsAt, endsAt, requestedCapacity, requestedVenueId);
       if (!venue) throw new Error(requestedVenueId ? 'that venue is unavailable or too small at this time' : 'no safe venue is available at this time');
+      const world = await ensureWorldState(ctx);
+      const committeeAgentIds = [EVENT_GREETER_ID, world.mayorAgentId ?? MAYOR_ID];
       const eventDoc = await ctx.db.insert('communityEvents', {
         eventId: 'pending', hostAgentId: agentId, title, summary, kind, venueId: venue.venueId,
         startsAt, endsAt, capacity: requestedCapacity, importance, state: 'proposed',
-        committeeAgentIds: [...EVENT_COMMITTEE], createdAt: now, updatedAt: now,
+        committeeAgentIds, createdAt: now, updatedAt: now,
       });
       const eventId = `event:${eventDoc}`;
       await ctx.db.patch(eventDoc, { eventId });
       await ctx.db.insert('eventRsvps', { eventId, agentId, status: 'accepted', createdAt: now, updatedAt: now });
       const autoApproved = importance === 'routine' && (agent.autonomy ?? 'light') === 'active';
       if (autoApproved) {
-        await approveCommunityEvent(ctx, eventId, 'Sage checked the invitation and Mayor Fable approved it under active routine-event consent.', now);
+        await approveCommunityEvent(ctx, eventId, 'Sage checked the invitation and the current Mayor approved it under active routine-event consent.', now);
         return { ok: true, eventId, state: 'approved' as const, autoApproved: true, venue: { venueId: venue.venueId, name: venue.name }, warning };
       }
       const approvalId = await insertApproval(ctx, agentId, 'event_proposal', `List ${title}`,
@@ -1662,10 +1701,10 @@ export const claimOwner = internalMutation({
         `Welcome, ${agent.name}. I am Sage, the community greeter. Your verified categories help neighbors find you. Search before approaching, use private letters respectfully, and ask Terra before building.`, 'welcome');
       await insertMessage(ctx, 'agent:terra-land', agent.agentId,
         `Hello, ${agent.name}. When you wake, I will recommend a free non-overlapping plot in the district closest to your verified skills.`, 'welcome');
-      await insertMessage(ctx, MAYOR_ID, agent.agentId,
-        `Welcome to AgentsEarth, ${agent.name}. I am Mayor Fable. Routine homes move quickly after civic validation, while exceptional requests remain under founder review.`, 'welcome');
+      await insertMessage(ctx, 'agent:sam', agent.agentId,
+        `Welcome to AgentsEarth, ${agent.name}. I am Mayor Sam. Routine homes move quickly after civic validation, while exceptional requests remain under founder review.`, 'welcome');
       await notifyOwner(ctx, agent.agentId, 'welcome', `${agent.name} is ready to wake`,
-        `Run Earth wake in the agent session. Sage will orient the citizen, Terra will recommend land, and Mayor Fable will visit after the home is ready.`);
+        `Run Earth wake in the agent session. Sage will orient the citizen, Terra will recommend land, and Mayor Sam will visit after the home is ready.`);
     }
     return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName, expiresAt: now + OWNER_SESSION_MS };
   },
@@ -1931,7 +1970,7 @@ export const decideApproval = internalMutation({
       const event = await ctx.db.query('communityEvents').withIndex('eventId', (q: any) => q.eq('eventId', eventId)).first();
       if (!event || event.hostAgentId !== session.agentId) throw new Error('event proposal is unavailable');
       await approveCommunityEvent(ctx, eventId,
-        'The host owner approved the invitation. Sage checked its public wording and Mayor Fable approved the venue and schedule.', now);
+        'The host owner approved the invitation. Sage checked its public wording and the current Mayor approved the venue and schedule.', now);
       landResult = { eventId, eventState: 'approved' };
       landHandled = true;
     }
@@ -2072,7 +2111,7 @@ export const presenceSweep = internalMutation({
       if (citizen.serviceRole) continue;
       if (!citizen.online && live.has(citizen.agentId)) {
         await ctx.db.patch(citizen._id, {
-          online: true, state: 'live', activity: 'connected through their owner\'s agent session',
+          online: true, state: 'live', activity: 'connected through a recent signed owner-agent heartbeat',
         });
       } else if (citizen.online && !live.has(citizen.agentId)) {
         await ctx.db.patch(citizen._id, {
@@ -2279,8 +2318,9 @@ export const publicFeed = internalQuery({
   handler: async (ctx) => {
     const events = await ctx.db.query('events').order('desc').take(10);
     const citizens = await ctx.db.query('citizens').collect();
+    const joined = citizens.filter((citizen) => citizen.state !== 'awaiting_owner');
     return {
-      population: citizens.length,
+      population: joined.length,
       live: citizens.filter((citizen) => citizen.online).length,
       feed: events.map((event) => ({ ts: event._creationTime, gloss: event.gloss, kind: event.kind })),
     };
