@@ -7,6 +7,8 @@ import {
   GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury, payForTrade, sendTokens, supplyAudit,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
+import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
+import { loadWorldWalkability } from './worldGrid';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
 const OWNER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -349,6 +351,31 @@ type LpcPlacement = {
   yOffset: number;
 };
 
+function canonicalPrefabBlueprint(prefab: LpcPrefab, offsetX: number, offsetY: number) {
+  return {
+    prefabId: prefab.id,
+    name: prefab.name,
+    kind: prefab.structureType,
+    architecture: 'native',
+    features: [],
+    offsetX,
+    offsetY,
+    w: prefab.width,
+    h: prefab.height,
+    style: LPC_ASSET_STANDARD,
+    assetFramework: LPC_ASSET_STANDARD,
+    entry: prefab.entry,
+    collision: prefab.collision,
+    placements: prefab.placements.map((placement) => ({
+      assetId: placement.assetId,
+      kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
+      layer: placement.layer,
+      xOffset: placement.xOffset,
+      yOffset: placement.yOffset,
+    })),
+  };
+}
+
 function validateLpcPlacements(rawPlacements: unknown, footprint?: { w: number; h: number }) {
   if (!Array.isArray(rawPlacements) || rawPlacements.length < 1 || rawPlacements.length > 64) {
     throw new Error('LPC blueprint must contain 1 to 64 manifest placements');
@@ -412,9 +439,15 @@ function buildFootprint(plot: any, payload: any) {
     if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
     const assetFramework = raw.assetFramework === undefined ? undefined : String(raw.assetFramework);
     let placements: LpcPlacement[] | undefined;
+    let canonicalPrefab: LpcPrefab | undefined;
     if (assetFramework !== undefined) {
       if (assetFramework !== LPC_ASSET_STANDARD) throw new Error('unsupported asset framework');
-      placements = validateLpcPlacements(raw.placements, { w, h }).placements;
+      canonicalPrefab = requireLpcPrefab(String(raw.prefabId ?? ''));
+      if (name !== canonicalPrefab.name || kind !== canonicalPrefab.structureType
+        || w !== canonicalPrefab.width || h !== canonicalPrefab.height) {
+        throw new Error('LPC prefab fields must match the canonical blueprint');
+      }
+      placements = canonicalPrefabBlueprint(canonicalPrefab, offsetX, offsetY).placements;
     } else if (raw.placements !== undefined) {
       throw new Error('manifest placements require the LPC asset framework');
     }
@@ -422,6 +455,9 @@ function buildFootprint(plot: any, payload: any) {
     blueprint = {
       name, kind, architecture, features, offsetX, offsetY, w, h,
       style: assetFramework ?? 'earthfolk-native-v1', assetFramework, placements,
+      prefabId: assetFramework ? String(raw.prefabId) : undefined,
+      entry: canonicalPrefab?.entry,
+      collision: canonicalPrefab?.collision,
     };
   }
   if (!spec) throw new Error('unsupported structure');
@@ -440,30 +476,18 @@ async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
   if (![x, y].every(Number.isInteger) || x < 0 || y < 0) throw new Error('construction coordinates must be non-negative integer tiles');
   const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first();
   if (!plot) throw new Error('claim a plot before constructing a structure');
-  const normalized = validateLpcPlacements(action.blueprint);
+  const prefab = action.prefabId
+    ? requireLpcPrefab(String(action.prefabId))
+    : matchLegacyPlacements(action.blueprint);
+  if (!prefab) throw new Error('construction must use a registered atomic LPC prefab');
+  if (prefab.structureType !== structureType) throw new Error('prefab does not match the requested structure type');
   const offsetX = x - plot.x, offsetY = y - plot.y;
-  const title = structureType.split('_').map((part) => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ');
   return {
     plot,
     payload: {
       plotId: plot.plotId,
       structure: 'blueprint',
-      blueprint: {
-        name: title,
-        kind: structureType,
-        architecture: 'native',
-        features: [],
-        offsetX,
-        offsetY,
-        w: normalized.width,
-        h: normalized.height,
-        assetFramework: LPC_ASSET_STANDARD,
-        placements: normalized.placements.map((placement) => ({
-          [placement.kind]: placement.assetId,
-          xOffset: placement.xOffset,
-          yOffset: placement.yOffset,
-        })),
-      },
+      blueprint: canonicalPrefabBlueprint(prefab, offsetX, offsetY),
     },
   };
 }
@@ -472,11 +496,25 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
   const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
   if (!plot || plot.ownerAgentId !== requesterId) throw new Error('agent does not own this plot');
   const footprint = buildFootprint(plot, payload);
-  const builds = await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect();
+  const [builds, world] = await Promise.all([
+    ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect(),
+    ensureWorldState(ctx),
+  ]);
+  const targetCells = footprintCells({ width: footprint.w, height: footprint.h })
+    .map((cell) => ({ x: footprint.x + cell.x, y: footprint.y + cell.y }));
+  const isWalkable = await loadWorldWalkability(ctx, { width: world.width, height: world.height });
+  for (const cell of targetCells) {
+    if (cell.x < plot.x || cell.y < plot.y || cell.x >= plot.x + plot.w || cell.y >= plot.y + plot.h) {
+      throw new Error('every prefab tile must remain on land owned by the builder');
+    }
+    if (!isWalkable(cell.x, cell.y)) {
+      throw new Error(`prefab tile (${cell.x},${cell.y}) is blocked by terrain or collision geometry`);
+    }
+  }
   const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
   if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) throw new Error('a home already stands on this plot');
   if (builds.some((build: any) => build.x !== undefined && overlapsRect(footprint, build))) throw new Error('build footprint overlaps an existing structure');
-  return { plot, footprint };
+  return { plot, footprint, targetCells };
 }
 
 function buildReview(footprint: any) {
@@ -679,14 +717,15 @@ function districtForCategory(category: string) {
 async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, activity: string, now: number) {
   const world = await ensureWorldState(ctx);
   const bounds = { width: world.width, height: world.height };
+  const isWalkable = await loadWorldWalkability(ctx, bounds);
   const baseX = Math.floor(x), baseY = Math.floor(y);
   const candidates = [
     [baseX - 1, baseY], [baseX + 1, baseY], [baseX, baseY - 1], [baseX, baseY + 1],
     [baseX - 1, baseY + 1], [baseX + 1, baseY + 1], [baseX - 1, baseY - 1], [baseX + 1, baseY - 1], [baseX, baseY],
-  ].filter(([tx, ty]) => walkableInWorld(tx, ty, bounds));
+  ].filter(([tx, ty]) => isWalkable(tx, ty));
   const start = currentPosition(citizen, now);
   for (const [tx, ty] of candidates) {
-    const path = findRoute(start.x, start.y, tx, ty, bounds);
+    const path = findRoute(start.x, start.y, tx, ty, bounds, isWalkable);
     if (!path?.length) continue;
     const route = timedRoute(start, path, now);
     await ctx.db.patch(citizen._id, {
@@ -699,14 +738,14 @@ async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, ac
 }
 
 function safePathNear(start: { x: number; y: number }, target: { x: number; y: number },
-  bounds: { width: number; height: number }) {
+  bounds: { width: number; height: number }, isWalkable: (x: number, y: number) => boolean) {
   const tx = Math.floor(target.x), ty = Math.floor(target.y);
   const candidates = [
     [tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty + 1],
     [tx - 1, ty + 1], [tx + 1, ty + 1], [tx - 1, ty - 1], [tx + 1, ty - 1], [tx, ty],
-  ].filter(([x, y]) => walkableInWorld(x, y, bounds));
+  ].filter(([x, y]) => isWalkable(x, y));
   for (const [x, y] of candidates) {
-    const path = findRoute(start.x, start.y, x, y, bounds);
+    const path = findRoute(start.x, start.y, x, y, bounds, isWalkable);
     if (path?.length) return path;
   }
   return null;
@@ -726,6 +765,7 @@ async function directorySnapshot(ctx: any, viewerId: string) {
     ctx.db.query('services').collect(),
     ctx.db.query('contributions').collect(),
   ]);
+  const isWalkable = await loadWorldWalkability(ctx, bounds);
   const positions = new Map(citizens.map((citizen: any) => [citizen.agentId, currentPosition(citizen, now)]));
   const homes = new Map(plots.filter((plot: any) => plot.ownerAgentId).map((plot: any) => [plot.ownerAgentId, plot]));
   const roles = new Map(services.filter((service: any) => service.active).map((service: any) => [service.agentId, service]));
@@ -737,7 +777,7 @@ async function directorySnapshot(ctx: any, viewerId: string) {
     const service: any = roles.get(citizen.agentId);
     const rank = rankSnapshot(contributions.filter((row: any) => row.agentId === citizen.agentId));
     const path = viewerPosition
-      ? (citizen.agentId === viewerId ? [{ x: Math.floor(position.x), y: Math.floor(position.y) }] : safePathNear(viewerPosition as any, position, bounds))
+      ? (citizen.agentId === viewerId ? [{ x: Math.floor(position.x), y: Math.floor(position.y) }] : safePathNear(viewerPosition as any, position, bounds, isWalkable))
       : null;
     return {
       agentId: citizen.agentId, name: citizen.name, family: citizen.family, accent: citizen.accent,
@@ -1158,12 +1198,13 @@ export const act = internalMutation({
       if (!Number.isInteger(x) || !Number.isInteger(y)) throw new Error('movement coordinates must be integer tiles');
       const world = await ensureWorldState(ctx);
       const bounds = { width: world.width, height: world.height };
-      if (!walkableInWorld(x, y, bounds)) throw new Error(`(${x},${y}) is blocked or beyond the living boundary`);
+      const isWalkable = await loadWorldWalkability(ctx, bounds);
+      if (!isWalkable(x, y)) throw new Error(`(${x},${y}) is blocked or beyond the living boundary`);
       const occupied = (await ctx.db.query('citizens').collect()).find((other) => other.agentId !== agentId && Math.hypot(other.tx - x, other.ty - y) < 0.75);
       if (occupied) throw new Error(`destination is occupied by ${occupied.agentId}`);
       const now = Date.now();
       const start = currentPosition(citizen, now);
-      const path = findRoute(start.x, start.y, x, y, bounds);
+      const path = findRoute(start.x, start.y, x, y, bounds, isWalkable);
       if (!path || path.length === 0) throw new Error('no safe route reaches that tile');
       const route = timedRoute(start, path, now);
       const end = route[route.length - 1];
@@ -3717,6 +3758,7 @@ export const meetingTick = internalMutation({
     const now = Date.now();
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
+    const isWalkable = await loadWorldWalkability(ctx, bounds);
     const meetings = await ctx.db.query('meetings').collect();
     for (const meeting of meetings) {
       if (meeting.state === 'scheduled' && (meeting.startsAt ?? 0) <= now) {
@@ -3729,12 +3771,12 @@ export const meetingTick = internalMutation({
           const candidates = i === 0
             ? [[venue.x, venue.y], [venue.x - 1, venue.y], [venue.x, venue.y - 1]]
             : [[venue.x + 1, venue.y], [venue.x, venue.y + 1], [venue.x - 1, venue.y]];
-          const target = candidates.find(([x, y]) => walkableInWorld(x, y, bounds));
+          const target = candidates.find(([x, y]) => isWalkable(x, y));
           if (!target) continue;
           const start = currentPosition(citizen, now);
           const path = Math.floor(start.x) === target[0] && Math.floor(start.y) === target[1]
             ? [{ x: target[0], y: target[1] }]
-            : findRoute(start.x, start.y, target[0], target[1], bounds);
+            : findRoute(start.x, start.y, target[0], target[1], bounds, isWalkable);
           if (!path?.length) continue;
           const route = timedRoute(start, path, now);
           await ctx.db.patch(citizen._id, {
@@ -3785,7 +3827,7 @@ export const meetingTick = internalMutation({
           for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) {
             if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
             const x = Math.round(venue.x + dx), y = Math.round(venue.y + dy);
-            if (walkableInWorld(x, y, bounds)) targets.push([x, y]);
+            if (isWalkable(x, y)) targets.push([x, y]);
           }
         }
         for (let index = 0; index < accepted.length; index++) {
@@ -3793,7 +3835,7 @@ export const meetingTick = internalMutation({
           const target = targets[index];
           if (!citizen || !target) continue;
           const start = currentPosition(citizen, now);
-          const path = findRoute(start.x, start.y, target[0], target[1], bounds);
+          const path = findRoute(start.x, start.y, target[0], target[1], bounds, isWalkable);
           if (!path?.length) continue;
           const route = timedRoute(start, path, now);
           await ctx.db.patch(citizen._id, {
