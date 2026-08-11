@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from './_generated/api';
 import schema from './schema';
-import { assertSupplyInvariant, balanceOf, issue } from './economy';
+import { DAILY_STIPEND, GENESIS_GRANT, INSTALL_REWARD, assertSupplyInvariant, balanceOf, issue } from './economy';
 
 const modules = import.meta.glob('./**/*.ts');
 
@@ -85,15 +85,15 @@ describe('knowledge packages and trades', () => {
 
     // Nothing has moved while the provider is still deciding.
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(5);
-      expect(await balanceOf(ctx, seller.agentId)).toBe(5);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND);
+      expect(await balanceOf(ctx, seller.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND);
     });
 
     const delivered = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
     expect(delivered.state).toBe('delivered');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(2);
-      expect(await balanceOf(ctx, seller.agentId)).toBe(8);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND - 3);
+      expect(await balanceOf(ctx, seller.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + 3);
       await assertSupplyInvariant(ctx);
     });
   });
@@ -103,9 +103,9 @@ describe('knowledge packages and trades', () => {
     await t.mutation(internal.seed.init, {});
     const seller = await citizen(t, 'dear');
     const buyer = await citizen(t, 'broke');
-    const listed = await act(t, seller, publish({ priceTokens: 400 }));
+    const listed = await act(t, seller, publish({ priceTokens: 40_000 }));
     await expect(act(t, buyer, { type: 'request_package', packageId: listed.packageId }))
-      .rejects.toThrow(/costs 400 Earth Tokens and this citizen holds 5/);
+      .rejects.toThrow(/costs 40000 Earth Tokens and this citizen holds/);
     await t.run(async (ctx) => {
       expect(await ctx.db.query('skillTrades').collect()).toHaveLength(0);
     });
@@ -121,7 +121,7 @@ describe('knowledge packages and trades', () => {
     const declined = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'decline' });
     expect(declined.state).toBe('declined');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(5);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND);
       const events = await ctx.db.query('events').collect();
       expect(events.filter((event) => event.kind === 'package_delivered')).toHaveLength(0);
       expect(events.some((event) => String(event.gloss).toLowerCase().includes('declin'))).toBe(false);
@@ -167,11 +167,11 @@ describe('knowledge packages and trades', () => {
     await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
 
     const installed = await act(t, buyer, { type: 'confirm_install', tradeId: requested.tradeId, outcome: 'installed' });
-    expect(installed.providerBalance).toBe(8);
+    expect(installed.providerBalance).toBe(GENESIS_GRANT + DAILY_STIPEND + INSTALL_REWARD);
     await expect(act(t, buyer, { type: 'confirm_install', tradeId: requested.tradeId, outcome: 'installed' }))
       .rejects.toThrow(/not awaiting an install result/);
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, seller.agentId)).toBe(8);
+      expect(await balanceOf(ctx, seller.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + INSTALL_REWARD);
       await assertSupplyInvariant(ctx);
     });
   });
@@ -187,7 +187,7 @@ describe('knowledge packages and trades', () => {
     const failed = await act(t, buyer, { type: 'confirm_install', tradeId: requested.tradeId, outcome: 'failed' });
     expect(failed.state).toBe('failed');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, seller.agentId)).toBe(5);
+      expect(await balanceOf(ctx, seller.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND);
     });
   });
 
@@ -236,7 +236,7 @@ describe('knowledge packages and trades', () => {
     await t.run(async (ctx) => {
       const trade = await ctx.db.query('skillTrades').first();
       expect(trade!.state).toBe('proposed');
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(5);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND);
     });
     // Asking twice reuses the same request rather than stacking approvals.
     const again = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
@@ -248,8 +248,8 @@ describe('knowledge packages and trades', () => {
     await t.run(async (ctx) => {
       const trade = await ctx.db.query('skillTrades').first();
       expect(trade!.state).toBe('delivered');
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(3);
-      expect(await balanceOf(ctx, seller.agentId)).toBe(7);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND - 2);
+      expect(await balanceOf(ctx, seller.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + 2);
       await assertSupplyInvariant(ctx);
     });
   });
@@ -268,7 +268,7 @@ describe('knowledge packages and trades', () => {
     await t.run(async (ctx) => {
       const trade = await ctx.db.query('skillTrades').first();
       expect(trade!.state).toBe('declined');
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(5);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND);
       const events = await ctx.db.query('events').collect();
       expect(events.filter((event) => event.kind === 'package_delivered')).toHaveLength(0);
     });
@@ -280,9 +280,9 @@ describe('knowledge packages and trades', () => {
     const seller = await citizen(t, 'pricey');
     const buyer = await citizen(t, 'rich');
     await t.run(async (ctx) => {
-      await issue(ctx, { toAgentId: buyer.agentId, amount: 100, kind: 'gift_reward', sourceId: 'gift:test:rich', reason: 'seeded for the test' });
+      await issue(ctx, { toAgentId: buyer.agentId, amount: 10_000, kind: 'gift_reward', sourceId: 'gift:test:rich', reason: 'seeded for the test' });
     });
-    const listed = await act(t, seller, publish({ priceTokens: 60 }));
+    const listed = await act(t, seller, publish({ priceTokens: 6_000 }));
     const requested = await act(t, buyer, { type: 'request_package', packageId: listed.packageId });
     const held = await act(t, seller, { type: 'respond_package', tradeId: requested.tradeId, decision: 'accept' });
     expect(held.state).toBe('pending_owner');

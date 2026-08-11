@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { internal } from './_generated/api';
 import schema from './schema';
 import {
-  GENESIS_GRANT, assertSupplyInvariant, balanceOf, grantFromTreasury, issue, mintToTreasury, payForTrade, supplyAudit,
+  DAILY_STIPEND, GENESIS_GRANT, MAX_MINT_PER_CALL, assertSupplyInvariant, balanceOf, grantFromTreasury, issue,
+  mintToTreasury, payForTrade, supplyAudit,
 } from './economy';
 
 const modules = import.meta.glob('./**/*.ts');
@@ -143,7 +144,7 @@ describe('Earth Token economy', () => {
       await expect(bad(2.5)).rejects.toThrow(/whole numbers above zero/);
       await expect(bad(0)).rejects.toThrow(/whole numbers above zero/);
       await expect(bad(-4)).rejects.toThrow(/whole numbers above zero/);
-      await expect(bad(1_000_000)).rejects.toThrow(/are refused/);
+      await expect(bad(MAX_MINT_PER_CALL + 1)).rejects.toThrow(/are refused/);
       await expect(bad(4, 'x')).rejects.toThrow(/4-240 character reason/);
     });
   });
@@ -243,12 +244,13 @@ describe('citizens sending tokens to each other', () => {
     const sent = await act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 3, note: 'for the help yesterday' });
     expect(sent.state).toBe('sent');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, giver.agentId)).toBe(2);
-      expect(await balanceOf(ctx, taker.agentId)).toBe(8);
+      expect(await balanceOf(ctx, giver.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND - 3);
+      expect(await balanceOf(ctx, taker.agentId)).toBe(GENESIS_GRANT + 3);
       const after = await supplyAudit(ctx);
-      // A transfer is a move, not a mint.
-      expect(after.minted).toBe(before.minted);
-      expect(after.circulating).toBe(before.circulating);
+      // A transfer is a move, not a mint. The only new tokens are the sender's
+      // stipend for the day, because sending is itself a signed act.
+      expect(after.minted).toBe(before.minted + DAILY_STIPEND);
+      expect(after.circulating).toBe(before.circulating + DAILY_STIPEND);
       await assertSupplyInvariant(ctx);
     });
   });
@@ -258,8 +260,8 @@ describe('citizens sending tokens to each other', () => {
     await t.mutation(internal.seed.init, {});
     const giver = await citizen(t, 'broke', { autonomy: 'active' });
     const taker = await citizen(t, 'hopeful');
-    await expect(act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 99 }))
-      .rejects.toThrow(/holds 5 Earth Token/);
+    await expect(act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: GENESIS_GRANT * 10 }))
+      .rejects.toThrow(/Earth Token/);
     await t.run(async (ctx) => assertSupplyInvariant(ctx));
   });
 
@@ -277,18 +279,18 @@ describe('citizens sending tokens to each other', () => {
     const giver = await citizen(t, 'generous', { autonomy: 'active' });
     const taker = await citizen(t, 'lucky');
     await t.run(async (ctx) => {
-      await issue(ctx, { toAgentId: giver.agentId, amount: 50, kind: 'gift_reward', sourceId: 'gift:test:generous', reason: 'seeded for the test' });
+      await issue(ctx, { toAgentId: giver.agentId, amount: 5_000, kind: 'gift_reward', sourceId: 'gift:test:generous', reason: 'seeded for the test' });
     });
-    const held = await act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 40 });
+    const held = await act(t, giver, { type: 'send_tokens', agentId: taker.agentId, amount: 4_000 });
     expect(held.state).toBe('pending_owner');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, taker.agentId)).toBe(5);
+      expect(await balanceOf(ctx, taker.agentId)).toBe(GENESIS_GRANT);
     });
     await t.mutation(internal.kernel.decideApproval, {
       tokenHash: giver.ownerToken, approvalId: held.approvalId, decision: 'approve',
     });
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, taker.agentId)).toBe(45);
+      expect(await balanceOf(ctx, taker.agentId)).toBe(GENESIS_GRANT + 4_000);
       await assertSupplyInvariant(ctx);
     });
   });

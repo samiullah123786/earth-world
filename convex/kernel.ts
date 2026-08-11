@@ -4,7 +4,9 @@ import { findRoute, walkableInWorld } from './pathfinding';
 import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
-  GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, balanceOf, grantFromTreasury, issue, mintToTreasury, payForTrade, sendTokens, supplyAudit,
+  BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
+  assertSupplyInvariant, balanceOf, dayStampOf, grantFromTreasury, issue, mintToTreasury, payForTrade,
+  payToTreasury, redenominate, sendTokens, supplyAudit, tip,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
@@ -43,7 +45,7 @@ const CROP_TEND_RELIEF_MS = 8 * 60 * 1000;
 const GATHER_COOLDOWN_MS = 20 * 60 * 1000;
 // Above this price a release stops being routine and waits for the owner even
 // under active standing consent.
-const ROUTINE_RELEASE_PRICE = 25;
+const ROUTINE_RELEASE_PRICE = 2_500;
 // How long a work animation plays after the act that started it.
 const WORK_ANIMATION_MS = 6 * 1000;
 // Work is credited where the citizen stands, so arriving is only half of it -
@@ -54,7 +56,7 @@ const WORK_ARRIVAL_GRACE_MS = 90 * 1000;
 const BANK_COUNTER = { x: 32, y: 22 };
 // Above this, a send stops being an ordinary gift and waits for the owner even
 // under active standing consent.
-const ROUTINE_SEND_AMOUNT = 5;
+const ROUTINE_SEND_AMOUNT = 500;
 const avatarSpecValidator = v.object({
   version: v.number(), catalogKey: v.string(), archetype: v.string(), variant: v.number(),
   hairStyle: v.string(), hairColor: v.string(), headShape: v.string(), outfitColor: v.string(),
@@ -1202,6 +1204,19 @@ export const act = internalMutation({
     const { agent, citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
     if (!citizen) throw new Error('citizen is missing from the world');
     const warning = await rateLimit(ctx, agentId);
+
+    // The daily stipend, paid for turning up and doing something - never for
+    // merely existing. This sits after authorization, so it takes a signed,
+    // nonce-checked act to earn it, and inside the same transaction, so an act
+    // that goes on to fail rolls the payment back with it. Idle processes and
+    // failed calls both earn nothing. The day stamp makes it once, per citizen,
+    // per calendar day, however many times they act.
+    await issue(ctx, {
+      toAgentId: agentId, amount: DAILY_STIPEND, kind: 'daily_stipend',
+      reason: `${citizen.name} was active on Earth today.`,
+      sourceId: `stipend:${agentId}:${dayStampOf(Date.now())}`,
+    });
+
     const physicallyCommitted = new Set([
       'settle', 'move_to', 'visit', 'say', 'teach', 'meet', 'practice', 'inspect_issue',
     ]);
@@ -1508,7 +1523,7 @@ export const act = internalMutation({
       if (!license || license.length > 60) throw new Error('name the licence the Bank may distribute copies under');
       if (!Number.isInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_PACKAGE_BYTES) throw new Error('deposit size is out of range');
       if (!Number.isInteger(fileCount) || fileCount <= 0 || fileCount > 400) throw new Error('deposit file count is out of range');
-      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 1000) throw new Error('price must be 0-1000 Earth Tokens');
+      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 100_000) throw new Error('price must be 0-100,000 Earth Tokens');
       const categories = (Array.isArray(action.categories) ? action.categories : [])
         .map((item: unknown) => String(item).toLowerCase()).filter((item: string) => KNOWN_CATEGORIES.has(item)).slice(0, 4);
       const safetyInput = action.safety ?? {};
@@ -1560,11 +1575,20 @@ export const act = internalMutation({
       await ctx.db.patch(doc, { assetId });
       await recordContribution(ctx, agentId, 'civic', 'bank_deposit', 2, assetId,
         `Deposited ${title} into the Earth Bank as community knowledge.`, now);
+      // Knowledge mining. Only a NOVEL master earns this: the duplicate paths
+      // above return before reaching here, so depositing the same knowledge
+      // under a new title pays nothing. Keyed on the content digest rather than
+      // the asset, so the same bytes can never be mined twice.
+      const mined = await issue(ctx, {
+        toAgentId: agentId, amount: MINING_REWARD, kind: 'mining_reward',
+        reason: `Novel knowledge accepted into the Earth Bank: ${title}.`.slice(0, 240),
+        sourceId: `mine:${normalizedDigest}`,
+      });
       await ctx.db.insert('events', {
         kind: 'bank_deposit', actorId: agentId,
-        payload: { assetId, title, sizeBytes, flagged: verdict !== 'inert_safe' },
+        payload: { assetId, title, sizeBytes, flagged: verdict !== 'inert_safe', mined: mined.posted ? MINING_REWARD : 0 },
         gloss: verdict === 'inert_safe'
-          ? `${citizen.name} deposited ${title} into the Earth Bank vault.`
+          ? `${citizen.name} deposited ${title} into the Earth Bank vault and mined ${MINING_REWARD} Earth Tokens for it.`
           : `${citizen.name} deposited ${title} into the Earth Bank; it waits in the vault for a safety review before anyone may withdraw a copy.`,
       });
       const portfolio = (await ctx.db.query('bankAssets')
@@ -1607,7 +1631,7 @@ export const act = internalMutation({
       if (!/^[a-f0-9]{64}$/.test(contentDigest)) throw new Error('a SHA-256 content digest is required');
       if (!KNOWN_CATEGORIES.has(category)) throw new Error('unknown skill category — use one of: ' + [...KNOWN_CATEGORIES].join(', '));
       if (!['local', 'plugin', 'github'].includes(sourceKind)) throw new Error('sourceKind must be local, plugin, or github');
-      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 1000) throw new Error('price must be 0-1000 Earth Tokens');
+      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 100_000) throw new Error('price must be 0-100,000 Earth Tokens');
 
       const safetyInput = action.safety ?? {};
       const verdict = String(safetyInput.verdict ?? 'inert_safe');
@@ -1764,7 +1788,7 @@ export const act = internalMutation({
       }
       if (!Number.isInteger(fileCount) || fileCount <= 0 || fileCount > 5_000) throw new Error('package file count must be between 1 and 5000');
       const priceTokens = Number(action.priceTokens ?? 1);
-      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 500) throw new Error('price must be a whole number of Earth Tokens up to 500');
+      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 50_000) throw new Error('price must be a whole number of Earth Tokens up to 50,000');
 
       const safety = action.safety ?? {};
       const verdict = String(safety.verdict ?? '');
@@ -2327,12 +2351,23 @@ export const act = internalMutation({
       });
       await recordContribution(ctx, targetId, 'endorsement', 'like', 1, `like:${pairKey}`,
         `${citizen.name} liked ${target.name}: ${reason}`, now);
+      // A like carries a tip out of the liker's own pocket. Paying for praise
+      // is what stops praise from being free to manufacture; minting it instead
+      // would have made reputation a faucet. Somebody with nothing can still
+      // like - reputation is not for sale, so a missing coin cannot veto it.
+      const tipped = await tip(ctx, {
+        fromAgentId: agentId, toAgentId: targetId, amount: LIKE_TIP, kind: 'like_tip',
+        reason: `${citizen.name} liked ${target.name}: ${reason}`.slice(0, 240),
+        sourceId: `like_tip:${pairKey}`,
+      });
       await ctx.db.insert('events', {
-        kind: 'like', actorId: agentId, payload: { targetId },
-        gloss: `${citizen.name} liked ${target.name}'s work.`,
+        kind: 'like', actorId: agentId, payload: { targetId, tip: tipped.paid },
+        gloss: tipped.paid
+          ? `${citizen.name} liked ${target.name}'s work and sent ${tipped.paid} Earth Tokens with it.`
+          : `${citizen.name} liked ${target.name}'s work.`,
       });
       const received = (await ctx.db.query('likes').withIndex('receiver_created', (q) => q.eq('receiverAgentId', targetId)).collect()).length;
-      return { ok: true, pairKey, receiverLikes: received, warning };
+      return { ok: true, pairKey, receiverLikes: received, tip: tipped.paid, warning };
     }
 
     if (action?.type === 'propose_marriage') {
@@ -2729,6 +2764,16 @@ export const act = internalMutation({
       }
       const label = footprint.blueprint?.name ?? structure;
       const review = buildReview(footprint);
+      // Building rights are bought before they are reviewed, the way a permit
+      // application is paid for whether or not it is granted. Charging only on
+      // approval would make speculative footprints free, and the geometry
+      // checks above are the expensive part. Keyed to the exact footprint, so
+      // a retried request pays once and a genuinely different plan pays again.
+      await payToTreasury(ctx, {
+        fromAgentId: agentId, amount: BUILD_FEE, kind: 'build_fee',
+        reason: `Building rights for ${label} on ${plot.plotId}.`.slice(0, 240),
+        sourceId: `build:${agentId}:${plot.plotId}:${footprint.x}:${footprint.y}:${footprint.w}x${footprint.h}`,
+      });
       if ((agent.autonomy ?? 'light') === 'active' && review.risk === 'routine') {
         const result = await stageLandReview(ctx, agentId, 'build', payload, Date.now());
         await notifyOwner(ctx, agentId, 'info', result.awaitingCivicReview ? 'Native build moved to civic review' : 'Routine native build approved',
@@ -3054,6 +3099,14 @@ export const act = internalMutation({
       if (duplicate) throw new Error(`a meeting request is already open as ${duplicate.meetingId}`);
       const venue = await chooseMeetingVenue(ctx, startsAt);
       if (!venue) throw new Error('every suitable meeting venue is already booked for that time');
+      // Booking a public venue costs the booker. A free room gets held by
+      // whoever asks first and nobody thinks twice; a priced one gets held by
+      // whoever actually means to use it. The fee funds the Treasury.
+      await payToTreasury(ctx, {
+        fromAgentId: agentId, amount: VENUE_FEE, kind: 'venue_fee',
+        reason: `Booked ${venue.name} to meet ${inviteeId}.`.slice(0, 240),
+        sourceId: `venue:${agentId}:${inviteeId}:${startsAt}`,
+      });
       const meetingDoc = await ctx.db.insert('meetings', {
         meetingId: 'pending', requesterId: agentId, inviteeId, venueId: venue.venueId,
         startsAt, state: 'pending_requester_owner', createdAt: now, updatedAt: now,
@@ -4806,6 +4859,28 @@ export const mayorGovernanceSet = internalMutation({
         : 'The Mayor adjusted the daily thinking budget.',
     });
     return { ok: true, ...patch };
+  },
+});
+
+/**
+ * Widen the unit from V1 to V2, once, for everybody at the same instant.
+ *
+ * Reachable only through the deployment CLI - this is not a power any citizen,
+ * office, or even the Mayor holds through a UI, because it is not a policy
+ * decision that recurs. It happened once. Running it again is a no-op.
+ */
+export const redenominateEconomy = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const result = await redenominate(ctx);
+    const audit = await assertSupplyInvariant(ctx);
+    if (result.posted && result.issued > 0) {
+      await ctx.db.insert('events', {
+        kind: 'redenomination', actorId: 'kernel', payload: { issued: result.issued },
+        gloss: `Earth Tokens were redenominated: every holding multiplied so nobody's share of the world changed.`,
+      });
+    }
+    return { ...result, audit };
   },
 });
 

@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api, internal } from './_generated/api';
 import schema from './schema';
-import { assertSupplyInvariant, balanceOf } from './economy';
+import { DAILY_STIPEND, GENESIS_GRANT, INSTALL_REWARD, MINING_REWARD, assertSupplyInvariant, balanceOf } from './economy';
 
 const modules = import.meta.glob('./**/*.ts');
 
@@ -313,8 +313,8 @@ describe('withdrawing from the vault', () => {
     const sale = await act(t, buyer, { type: 'request_asset', assetId: banked.assetId });
     expect(sale.mode).toBe('counter_sale');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(3);
-      expect(await balanceOf(ctx, author.agentId)).toBe(7);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + MINING_REWARD - 2);
+      expect(await balanceOf(ctx, author.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + MINING_REWARD + 2);
       const events = await ctx.db.query('events').collect();
       expect(events.some((event) => event.kind === 'bank_sale')).toBe(true);
       await assertSupplyInvariant(ctx);
@@ -326,7 +326,7 @@ describe('withdrawing from the vault', () => {
     // A confirmed install pays the author the larger reward, once.
     await act(t, buyer, { type: 'confirm_install', tradeId: sale.tradeId, outcome: 'installed' });
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, author.agentId)).toBe(7 + 3);
+      expect(await balanceOf(ctx, author.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + MINING_REWARD + 2 + INSTALL_REWARD);
     });
   });
 
@@ -370,8 +370,8 @@ describe('withdrawing from the vault', () => {
     const done = await act(t, author, { type: 'respond_package', tradeId: opened.tradeId, decision: 'accept' });
     expect(done.state).toBe('delivered');
     await t.run(async (ctx) => {
-      expect(await balanceOf(ctx, buyer.agentId)).toBe(3);
-      expect(await balanceOf(ctx, author.agentId)).toBe(7);
+      expect(await balanceOf(ctx, buyer.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + MINING_REWARD - 2);
+      expect(await balanceOf(ctx, author.agentId)).toBe(GENESIS_GRANT + DAILY_STIPEND + MINING_REWARD + 2);
       await assertSupplyInvariant(ctx);
     });
   });
@@ -406,7 +406,7 @@ describe('withdrawing from the vault', () => {
     const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
     const pricey = await act(t, author, deposit({
       storageId: await newStorageId(t), digest: '3'.repeat(64), normalizedDigest: '2'.repeat(64),
-      name: 'rare-craft', priceTokens: 25,
+      name: 'rare-craft', priceTokens: 2_500,
     }));
 
     const plea = await act(t, pleader, { type: 'request_asset', assetId: banked.assetId, free: true, need: 'I have no tokens and a real gap.' });

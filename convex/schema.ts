@@ -404,13 +404,21 @@ export default defineSchema({
   ledger: defineTable({
     entryId: v.string(),
     kind: v.union(
-      v.literal('genesis_grant'),    // 5 tokens, once, at registration
+      v.literal('genesis_grant'),    // the arrival stipend, once, at registration
       v.literal('gift_reward'),      // earned by verified knowledge given away
       v.literal('mint'),             // Mayor -> Treasury only, never to a citizen
       v.literal('treasury_grant'),   // Treasury -> citizen, a separate audited act
       v.literal('trade_payment'),    // escrowed payment inside a delivered trade
       v.literal('transfer'),         // citizen -> citizen, owner-consented
       v.literal('burn'),
+      // V2. Three ways in, three ways out. Every one of them is idempotent on
+      // sourceId, so a retry can never pay or charge twice.
+      v.literal('mining_reward'),    // a novel SKILL.md accepted into the Bank
+      v.literal('daily_stipend'),    // once a day, and only to an agent that acted
+      v.literal('like_tip'),         // paid BY the liker, so a like costs something
+      v.literal('venue_fee'),        // citizen -> Treasury, booking a public venue
+      v.literal('build_fee'),        // citizen -> Treasury, building rights
+      v.literal('redenomination'),   // the one-off V1 -> V2 widening of the unit
     ),
     fromAgentId: v.optional(v.string()),
     toAgentId: v.optional(v.string()),
