@@ -54,7 +54,9 @@ function assetRow(asset: any): MarketRow {
     digest: asset.digest,
     price: asset.priceTokens ?? 0,
     pulls: asset.pulls ?? 0,
-    verified: asset.safety?.verdict === 'inert_safe' && asset.state !== 'flagged',
+    // Verified is the KERNEL's own conclusion about the bytes it holds,
+    // signed. A depositor's claim never reaches this field.
+    verified: asset.serverScan?.verdict === 'inert_safe' && Boolean(asset.earthVerified) && asset.state !== 'flagged',
     forkOf: asset.forkOf ?? null,
     rank: adoptionRank(asset),
   };
@@ -68,7 +70,7 @@ function packageRow(pack: any): MarketRow {
     digest: pack.digest,
     price: pack.priceTokens ?? 0,
     pulls: pack.pulls ?? 0,
-    verified: pack.safety?.verdict === 'inert_safe',
+    verified: pack.serverScan?.verdict === 'inert_safe' && Boolean(pack.earthVerified),
     forkOf: pack.forkOf ?? null,
     rank: adoptionRank(pack),
   };
@@ -106,7 +108,9 @@ export const detail = query({
   args: { id: v.string() },
   handler: async (ctx, { id }) => {
     const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q: any) => q.eq('assetId', id)).first();
-    if (asset && asset.state !== 'retired') {
+    // The same gate as the list: a flagged master is held for review, and a
+    // held listing must not be reachable by anyone who saved its id.
+    if (asset && (asset.state === 'deposited' || asset.state === 'evaluated')) {
       const depositor = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', asset.depositorAgentId)).first();
       return {
         ok: true,
@@ -121,10 +125,12 @@ export const detail = query({
         alsoDepositedBy: (asset.alsoDepositedBy ?? []).length,
         verifiedInstalls: asset.verifiedInstalls ?? 0,
         scanner: {
-          verdict: asset.safety?.verdict ?? 'unknown',
-          scannerVersion: asset.safety?.scannerVersion ?? null,
-          flags: asset.safety?.flags ?? [],
+          verdict: asset.serverScan?.verdict ?? 'pending',
+          scannerVersion: asset.serverScan?.scannerVersion ?? null,
+          flags: asset.serverScan?.flags ?? [],
+          claimedByDepositor: asset.safety?.verdict ?? 'unknown',
         },
+        earthVerified: asset.earthVerified ?? null,
         source: asset.source,
         createdAt: asset.createdAt,
         pull: `Earth pull ${asset.title}`,
@@ -144,10 +150,12 @@ export const detail = query({
         author: { agentId: pack.ownerAgentId, name: owner?.name ?? pack.ownerAgentId },
         verifiedInstalls: pack.verifiedInstalls ?? 0,
         scanner: {
-          verdict: pack.safety?.verdict ?? 'unknown',
-          scannerVersion: pack.safety?.scannerVersion ?? null,
-          flags: pack.safety?.flags ?? [],
+          verdict: pack.serverScan?.verdict ?? 'pending',
+          scannerVersion: pack.serverScan?.scannerVersion ?? null,
+          flags: pack.serverScan?.flags ?? [],
+          claimedByDepositor: pack.safety?.verdict ?? 'unknown',
         },
+        earthVerified: pack.earthVerified ?? null,
         repoUrl: pack.repoUrl ?? null,
         sourceKind: pack.sourceKind,
         createdAt: pack.createdAt,

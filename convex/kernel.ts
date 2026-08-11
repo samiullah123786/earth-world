@@ -1,4 +1,5 @@
 import { internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld } from './planning';
@@ -1604,6 +1605,10 @@ export const act = internalMutation({
       });
       const assetId = `asset:${doc}`;
       await ctx.db.patch(doc, { assetId });
+      // The vault reads what it was just handed. Until that pass completes,
+      // the listing exists but wears no badge - verification is something the
+      // KERNEL concludes, never something a depositor asserts.
+      await ctx.scheduler.runAfter(0, internal.vault.scanListing, { id: assetId });
       await recordContribution(ctx, agentId, 'civic', 'bank_deposit', 2, assetId,
         `Deposited ${title} into the Earth Bank as community knowledge.`, now);
       // Knowledge mining, paid out of the Bank's budget rather than minted.
@@ -1843,6 +1848,8 @@ export const act = internalMutation({
       const doc = await ctx.db.insert('skillPackages', { packageId: 'pending', createdAt: now, ...record });
       const packageId = `pkg:${doc}`;
       await ctx.db.patch(doc, { packageId });
+      // Peer listings with bytes in the vault get the same server read.
+      await ctx.scheduler.runAfter(0, internal.vault.scanListing, { id: packageId });
       await ctx.db.insert('events', {
         kind: 'package_published', actorId: agentId,
         payload: { packageId, name, category, sizeBytes, verdict, priceTokens },
@@ -5064,6 +5071,90 @@ export const operatorResolveBug = internalMutation({
     await notifyOwner(ctx, ticket.reporterId, 'info', 'A fault you reported was repaired',
       `${ticket.summary.slice(0, 140)} - ${resolution.trim().slice(0, 200)}`);
     return { ok: true };
+  },
+});
+
+/** What the vault scanner needs to open a listing, and nothing else. */
+export const listingForScan = internalQuery({
+  args: { id: v.string() },
+  handler: async (ctx, { id }) => {
+    const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', id)).first();
+    if (asset) return { kind: 'asset', storageId: asset.storageId, digest: asset.digest, title: asset.title };
+    const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', id)).first();
+    if (pack) return { kind: 'package', storageId: pack.storageId ?? null, digest: pack.digest, title: pack.name };
+    return null;
+  },
+});
+
+/**
+ * File what the Kernel's own scan concluded, and act on it.
+ *
+ * A clean verdict carries the signature that makes the badge checkable. A dirty
+ * one on a listing the CLIENT had called inert is a discrepancy - a lie or a
+ * scanner drift - and the response is proportionate, not punitive: a vault
+ * master goes to the flagged queue the Manager already works; a peer package
+ * stays listed but loses the badge, and its owner is told exactly why.
+ */
+export const fileScanVerdict = internalMutation({
+  args: {
+    id: v.string(),
+    verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+    flags: v.array(v.string()),
+    note: v.optional(v.string()),
+    scannerVersion: v.string(),
+    scannedAt: v.number(),
+    signature: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, verdict, flags, note, scannerVersion, scannedAt, signature }) => {
+    const serverScan = { verdict, flags, note: note ?? '', scannerVersion, scannedAt };
+    const earthVerified = verdict === 'inert_safe' && signature
+      ? { signature, signedAt: scannedAt, scannerVersion, algorithm: 'ed25519' as const }
+      : undefined;
+
+    const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', id)).first();
+    if (asset) {
+      const claimed = asset.safety?.verdict ?? 'unknown';
+      const patch: Record<string, unknown> = { serverScan, earthVerified, updatedAt: scannedAt };
+      if (verdict !== 'inert_safe' && asset.state !== 'flagged' && asset.state !== 'retired') {
+        patch.state = 'flagged';
+        await ctx.db.insert('events', {
+          kind: 'vault_flagged', actorId: 'kernel', payload: { assetId: id, verdict, flags, claimed },
+          gloss: `The vault re-read ${asset.title} and held it for review (${flags.slice(0, 3).join(', ')}).`,
+        });
+        await notifyOwner(ctx, asset.depositorAgentId, 'info', 'The vault held your deposit for review',
+          `${asset.title}: the Kernel's own scan found ${flags.slice(0, 4).join(', ')} where the deposit claimed ${claimed}. ${String(note ?? '').slice(0, 300)}`);
+      }
+      await ctx.db.patch(asset._id, patch);
+      return { ok: true, kind: 'asset', verdict, badged: Boolean(earthVerified) };
+    }
+
+    const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', id)).first();
+    if (pack) {
+      await ctx.db.patch(pack._id, { serverScan, earthVerified, updatedAt: scannedAt });
+      if (verdict !== 'inert_safe' && pack.safety?.verdict === 'inert_safe') {
+        await notifyOwner(ctx, pack.ownerAgentId, 'info', 'Your listing lost its verification',
+          `${pack.name}: the Kernel's own scan found ${flags.slice(0, 4).join(', ')} where the listing claimed inert_safe. It remains listed without the badge.`);
+      }
+      return { ok: true, kind: 'package', verdict, badged: Boolean(earthVerified) };
+    }
+    return { ok: false, why: 'no such listing' };
+  },
+});
+
+/**
+ * Re-read every master the vault holds. Operator-only; used once at rollout
+ * and again whenever the scanner learns a new rule, because a verdict is only
+ * as good as the scanner that produced it.
+ */
+export const rescanVault = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const assets = (await ctx.db.query('bankAssets').collect()).filter((row) => row.state !== 'retired');
+    const packs = (await ctx.db.query('skillPackages').collect())
+      .filter((row) => row.state === 'listed' && row.storageId);
+    for (const row of assets) await ctx.scheduler.runAfter(0, internal.vault.scanListing, { id: row.assetId });
+    for (const row of packs) await ctx.scheduler.runAfter(0, internal.vault.scanListing, { id: row.packageId });
+    return { scheduled: assets.length + packs.length };
   },
 });
 

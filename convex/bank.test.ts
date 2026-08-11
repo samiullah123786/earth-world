@@ -25,7 +25,10 @@ async function citizen(t: ReturnType<typeof convexTest>, suffix: string) {
 }
 
 async function newStorageId(t: ReturnType<typeof convexTest>) {
-  return await t.run(async (ctx) => ctx.storage.store(new Blob(['master bytes'])));
+  // A REAL archive, because the vault now opens what it is handed. Junk bytes
+  // are refused as unreadable, in tests exactly as in production.
+  const { cleanSkillArchive } = await import('../testHelpers/tar');
+  return await t.run(async (ctx) => ctx.storage.store(new Blob([cleanSkillArchive()])));
 }
 
 const deposit = (over: Record<string, unknown> = {}) => ({

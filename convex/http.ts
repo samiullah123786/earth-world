@@ -383,6 +383,15 @@ const agentDesk = httpAction(async (ctx, request) => {
  * how the outside world discovers Earth, and a browse costs the browser only
  * the bytes below. Buying still takes citizenship and a signed act.
  */
+/** The public half of "Earth Verified": key, algorithm, and message format. */
+const verifyKey = httpAction(async (ctx) => {
+  try {
+    return json(await ctx.runAction(internal.vault.verifyInfo, {}));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 500);
+  }
+});
+
 const marketList = httpAction(async (ctx, request) => {
   try {
     const url = new URL(request.url);
@@ -737,6 +746,7 @@ http.route({ path: '/v1/owner/skills', method: 'GET', handler: ownerSkills });
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
+http.route({ path: '/v1/verify', method: 'GET', handler: verifyKey });
 http.route({ path: '/v1/market', method: 'GET', handler: marketList });
 http.route({ pathPrefix: '/v1/market/', method: 'GET', handler: marketDetail });
 http.route({ path: '/v1/agent/desk', method: 'POST', handler: agentDesk });

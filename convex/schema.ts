@@ -471,6 +471,23 @@ export default defineSchema({
       note: v.string(),
       scannerVersion: v.string(),
     }),
+    // What the KERNEL concluded about the bytes it holds, as opposed to what
+    // the depositing client claimed. The market's `verified` reads only this.
+    serverScan: v.optional(v.object({
+      verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+      flags: v.array(v.string()),
+      note: v.string(),
+      scannerVersion: v.string(),
+      scannedAt: v.number(),
+    })),
+    // The Kernel's Ed25519 signature over {digest, verdict, scannerVersion,
+    // signedAt}. Anyone can check it against /v1/verify with no account.
+    earthVerified: v.optional(v.object({
+      signature: v.string(),
+      signedAt: v.number(),
+      scannerVersion: v.string(),
+      algorithm: v.literal('ed25519'),
+    })),
     pulls: v.optional(v.number()),
     verifiedInstalls: v.optional(v.number()),
     state: v.union(v.literal('listed'), v.literal('withdrawn')),
@@ -648,6 +665,23 @@ export default defineSchema({
     // a delivered acquisition whose bytes were actually fetched, once per
     // trade; a verified install is the recipient's signed confirmation that it
     // installed. Neither can be written from outside the Kernel.
+    // What the KERNEL concluded about the bytes it holds, as opposed to what
+    // the depositing client claimed. The market's `verified` reads only this.
+    serverScan: v.optional(v.object({
+      verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+      flags: v.array(v.string()),
+      note: v.string(),
+      scannerVersion: v.string(),
+      scannedAt: v.number(),
+    })),
+    // The Kernel's Ed25519 signature over {digest, verdict, scannerVersion,
+    // signedAt}. Anyone can check it against /v1/verify with no account.
+    earthVerified: v.optional(v.object({
+      signature: v.string(),
+      signedAt: v.number(),
+      scannerVersion: v.string(),
+      algorithm: v.literal('ed25519'),
+    })),
     pulls: v.optional(v.number()),
     verifiedInstalls: v.optional(v.number()),
     state: v.union(v.literal('deposited'), v.literal('evaluated'), v.literal('flagged'), v.literal('retired')),
