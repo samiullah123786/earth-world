@@ -33,6 +33,11 @@ const SERVICES = [
     role: 'Community Warden', description: 'Keeps interactions safe through scoped, reviewable intervention.', specialties: ['security', 'general'], permissions: ['flag', 'pause', 'deescalate'], spawn: [52, 22] as const },
   { agentId: 'agent:tock-0008', name: 'Tock', gender: 'male' as const, family: 'ops', accent: 'engineering',
     role: 'Build Inspector', description: 'Checks construction permits and footprints.', specialties: ['automation', 'backend'], permissions: ['build_validate', 'inspect'], spawn: [38, 14] as const },
+  // Seated at the Bank's own door. This office ran the economy for a long time
+  // with no body and no place anyone could go and look at, which is a strange
+  // way to hold the only powers that touch everybody's money.
+  { agentId: 'agent:tally-bank', name: 'Tally', gender: 'female' as const, family: 'data', accent: 'research',
+    role: 'Bank Manager', description: 'Appraises deposits, pays authors from the budget, and cannot mint.', specialties: ['data', 'general'], permissions: ['appraise', 'bank_payout', 'request_liquidity'], spawn: [30, 22] as const },
   { agentId: MAYOR_ID, name: 'Sam', gender: 'male' as const, family: 'engineering', accent: 'marketing',
     role: 'Mayor of Earth', description: 'Coordinates routine civic decisions, welcomes residents, and escalates exceptional requests to the founder owner.', specialties: ['general', 'frontend'], permissions: ['convene', 'proclaim', 'open_ceremony', 'approve_routine_land', 'visit_newcomers'], spawn: [32, 24] as const },
 ] as const;
@@ -146,9 +151,16 @@ export const init = internalMutation({
     // Mayor succession must leave one public authority. Older seeds used a
     // different founding mayor, so retire any stale Mayor service during every
     // idempotent seed without deleting that citizen or their history.
+    // The title follows the SEAT, not the founding constant. MAYOR_ID names who
+    // was Mayor first; worldState.mayorAgentId names who is Mayor now. Seeding
+    // against the constant stripped the sitting Mayor of the visible title and
+    // handed it to a citizen holding no power at all - the map showing one
+    // Mayor while the inbox and every civic case belonged to another.
+    const seatState = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    const sittingMayorId = seatState?.mayorAgentId ?? MAYOR_ID;
     const civicServices = await ctx.db.query('services').collect();
     for (const service of civicServices) {
-      if (service.active && service.role === 'Mayor of Earth' && service.agentId !== MAYOR_ID) {
+      if (service.active && service.role === 'Mayor of Earth' && service.agentId !== sittingMayorId) {
         await ctx.db.patch(service._id, { active: false });
         const formerMayor = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).first();
         if (formerMayor?.serviceRole === 'Mayor of Earth') {
@@ -158,6 +170,21 @@ export const init = internalMutation({
           });
         }
       }
+    }
+    // Retiring the wrong holder is only half the job: the citizen who actually
+    // holds the seat must wear the title, or the world shows no Mayor at all.
+    const sittingMayor = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', sittingMayorId)).first();
+    if (sittingMayor && sittingMayor.serviceRole !== 'Mayor of Earth') {
+      await ctx.db.patch(sittingMayor._id, { serviceRole: 'Mayor of Earth' });
+    }
+    const sittingService = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', sittingMayorId)).first();
+    if (sittingService) await ctx.db.patch(sittingService._id, { role: 'Mayor of Earth', active: true });
+    else if (sittingMayor) {
+      await ctx.db.insert('services', {
+        agentId: sittingMayorId, role: 'Mayor of Earth', active: true,
+        description: 'The human seat. Sets policy, mints, funds the Bank, and can pause every always-on office.',
+        permissions: ['mint', 'grant', 'govern', 'override'],
+      });
     }
     const duplicateMayorPlot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', 'plot-mayor-estate')).first();
     if (duplicateMayorPlot) {

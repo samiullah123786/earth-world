@@ -31,6 +31,9 @@ export const DAILY_STIPEND = 25;         // paid once per day, and only to an ag
 export const LIKE_TIP = 10;              // paid BY the liker, so a like costs something
 export const VENUE_FEE = 50;             // booking a public venue for a meeting
 export const BUILD_FEE = 200;            // building rights on your own land
+// What one point of the Manager's appraisal is worth in tokens, so a citizen's
+// net worth is a single figure rather than tokens and points side by side.
+export const APPRAISAL_POINT_VALUE = 50;
 export const MAX_MINT_PER_CALL = 1_000_000;
 export const TREASURY_KEY = 'earth';
 

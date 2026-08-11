@@ -119,3 +119,38 @@ describe('the always-on civic offices', () => {
     expect(gate.why).toContain('paused');
   });
 });
+
+describe('the Mayor title follows the seat', () => {
+  // Seeding is idempotent and runs on every deploy. It used to retire any Mayor
+  // service that was not the FOUNDING mayor, which stripped the sitting Mayor of
+  // the visible title and left it on a citizen holding no power - the map naming
+  // one Mayor while the inbox and every civic case belonged to another.
+  it('leaves the title on whoever actually holds the seat, across a reseed', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+
+    const successor = 'agent:successor-seat';
+    await t.run(async (ctx) => {
+      const world = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first();
+      const founder = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', world!.mayorAgentId!)).first();
+      // A second citizen takes the seat, the way a real handover leaves it.
+      await ctx.db.insert('citizens', {
+        ...founder!, _id: undefined as never, _creationTime: undefined as never,
+        agentId: successor, name: 'Successor', serviceRole: 'Mayor of Earth',
+      } as never);
+      await ctx.db.patch(founder!._id, { serviceRole: undefined });
+      await ctx.db.patch(world!._id, { mayorAgentId: successor });
+    });
+
+    await t.mutation(internal.seed.init, {});
+
+    const wearing = (await t.query(api.world.citizens, {}) as any[])
+      .filter((row) => row.serviceRole === 'Mayor of Earth')
+      .map((row) => row.agentId);
+    // Exactly one Mayor, and it is the one holding the seat.
+    expect(wearing).toEqual([successor]);
+    const seat = await t.run(async (ctx) =>
+      (await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first())?.mayorAgentId);
+    expect(seat).toBe(successor);
+  });
+});

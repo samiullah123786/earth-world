@@ -5,7 +5,7 @@ import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld } from
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
   BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
-  BANK_ACCOUNT, DEFAULT_BANK_FEE_BASIS_POINTS, DEFAULT_LIQUIDITY_FLOOR,
+  APPRAISAL_POINT_VALUE, BANK_ACCOUNT, DEFAULT_BANK_FEE_BASIS_POINTS, DEFAULT_LIQUIDITY_FLOOR,
   assertSupplyInvariant, balanceOf, bankFeeFor, collectBankFee, dayStampOf, fundBank, grantFromTreasury, issue,
   mintToTreasury, payForTrade, payFromBank, payToTreasury, redenominate, sendTokens, supplyAudit, tip,
 } from './economy';
@@ -1614,13 +1614,7 @@ export const act = internalMutation({
         .filter((row) => row.state !== 'retired');
       return {
         ok: true, assetId, state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
-        netWorth: {
-          assets: portfolio.length,
-          bytes: portfolio.reduce((total, row) => total + row.sizeBytes, 0),
-          // Appraisal points: the manager's value ranks summed across this
-          // citizen's masters. Bulk is storage; worth is judged usefulness.
-          appraisalPoints: portfolio.reduce((total, row) => total + (row.valueRank ?? 0), 0),
-        },
+        netWorth: await netWorthOf(ctx, agentId),
         warning,
       };
     }
@@ -1718,11 +1712,7 @@ export const act = internalMutation({
         .filter((row) => row.state !== 'retired');
       return {
         ok: true, skillId, state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
-        netWorth: {
-          skills: portfolio.length,
-          bytes: portfolio.reduce((total, row) => total + row.sizeBytes, 0),
-          appraisalPoints: portfolio.reduce((total, row) => total + (row.valueRank ?? 0), 0),
-        },
+        netWorth: await netWorthOf(ctx, agentId),
         warning,
       };
     }
@@ -4541,6 +4531,11 @@ const LLM_AUTHORITIES = [
   { role: 'Build Inspector', duty: 'audit new structures against their plots and footprints' },
   { role: 'Land Steward', duty: 'watch plot occupancy and protect land from overlap' },
   { role: 'Boundary Surveyor', duty: 'watch density and survey where the world should grow' },
+  // The Bank Manager held real economic power with no body, no seat, and no
+  // place in this rotation - powers nobody could watch being used. It is an
+  // office like the rest now: same novelty gate, same budget, same pause, and
+  // the same inability to mint a single token.
+  { role: 'Bank Manager', duty: 'appraise what is deposited, pay authors from the budget, and ask the Mayor when it runs dry' },
 ] as const;
 
 export async function ensureGovernanceConfig(ctx: any) {
@@ -5020,6 +5015,42 @@ export const mayorGovernanceSet = internalMutation({
     return { ok: true, ...patch };
   },
 });
+
+/**
+ * What a citizen is actually worth, as one number and its parts.
+ *
+ * "Banked" used to be a bare word on the masthead meaning none of this. Worth
+ * here is liquid tokens plus the appraised worth of the masters they put in the
+ * Bank - what they can spend, plus what they gave the town and the Manager
+ * valued. Bytes are reported too, but bulk is storage, not worth: a large
+ * useless file must never outrank a small useful one.
+ */
+async function netWorthOf(ctx: any, agentId: string) {
+  // A citizen's masters live in two tables - the original vault and the V2
+  // structured registry - and their worth is one number, so both are counted
+  // here. Splitting this across call sites is how the two drift apart.
+  const live = (rows: any[]) => rows.filter((row) => row.state !== 'retired');
+  const assets = live(await ctx.db.query('bankAssets')
+    .withIndex('depositor_created', (q: any) => q.eq('depositorAgentId', agentId)).collect());
+  const skills = live(await ctx.db.query('bankSkills')
+    .withIndex('depositor_created', (q: any) => q.eq('depositorAgentId', agentId)).collect());
+  const masters = [...assets, ...skills];
+  const walletBalance = await balanceOf(ctx, agentId);
+  const appraisalPoints = masters.reduce((total: number, row: any) => total + (row.valueRank ?? 0), 0);
+  // A point of appraised worth is denominated in the same unit as everything
+  // else, so the total is a single figure rather than two scales added together.
+  const appraisedValue = appraisalPoints * APPRAISAL_POINT_VALUE;
+  return {
+    walletBalance,
+    bankedSkills: masters.length,
+    assets: masters.length,
+    bytes: masters.reduce((total: number, row: any) => total + row.sizeBytes, 0),
+    appraisalPoints,
+    appraisedValue,
+    total: walletBalance + appraisedValue,
+    skills: skills.length,
+  };
+}
 
 /**
  * Pay an author for novel knowledge, or record that the Bank owes them.

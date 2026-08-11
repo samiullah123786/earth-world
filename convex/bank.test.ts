@@ -45,7 +45,13 @@ describe('the Earth Bank vault', () => {
     const first = await act(t, depositor, deposit({ storageId: sid }));
     expect(first.assetId).toMatch(/^asset:/);
     expect(first.state).toBe('deposited');
-    expect(first.netWorth).toEqual({ assets: 1, bytes: 512, appraisalPoints: 0 });
+    // Net worth is one figure now: what they can spend plus what the Manager
+    // valued. This Bank was never funded, so the mining reward is owed rather
+    // than paid, and the wallet still reads the arrival grant plus the stipend.
+    expect(first.netWorth).toMatchObject({
+      assets: 1, bankedSkills: 1, bytes: 512, appraisalPoints: 0, appraisedValue: 0,
+    });
+    expect(first.netWorth!.total).toBe(first.netWorth!.walletBalance);
     await t.run(async (ctx) => {
       const rows = await ctx.db.query('bankAssets').collect();
       expect(rows).toHaveLength(1);

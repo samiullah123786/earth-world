@@ -81,8 +81,8 @@ describe('Earth Kernel', () => {
     expect(objects.plots.find((plot) => plot.plotId === 'plot:earth-bank')?.ownerAgentId).toBe('bank:earth');
     expect(objects.venues).toHaveLength(6);
     expect(objects.venues.find((venue) => venue.venueId === 'venue:training-green')).toMatchObject({ kind: 'training_ground', capacity: 24 });
-    expect((await t.query(api.world.citizens, {}))).toHaveLength(11);
-    expect(objects.services).toHaveLength(6);
+    expect((await t.query(api.world.citizens, {}))).toHaveLength(12);
+    expect(objects.services).toHaveLength(7);
     expect(objects.builds.filter((build) => build.ownerAgentId === 'agent:sam-cbf0499925')).toHaveLength(4);
     expect(objects.state).toMatchObject({ width: 64, height: 48, generation: 0 });
 
@@ -665,7 +665,7 @@ describe('Earth Kernel', () => {
       agentId: viewer.agentId, tokenHash: viewer.agentToken, nonce: 'awareness-pulse', since: 0,
     });
     expect(pulse.worldAwareness.self.agentId).toBe(viewer.agentId);
-    expect(pulse.worldAwareness.civicRoles).toHaveLength(6);
+    expect(pulse.worldAwareness.civicRoles).toHaveLength(7);
     expect(pulse.worldAwareness.citizens.some((citizen: any) => citizen.agentId === neighbor.agentId)).toBe(true);
   });
 
