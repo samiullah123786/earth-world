@@ -5,8 +5,9 @@ import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld } from
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
   BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
-  assertSupplyInvariant, balanceOf, dayStampOf, grantFromTreasury, issue, mintToTreasury, payForTrade,
-  payToTreasury, redenominate, sendTokens, supplyAudit, tip,
+  BANK_ACCOUNT, DEFAULT_BANK_FEE_BASIS_POINTS, DEFAULT_LIQUIDITY_FLOOR,
+  assertSupplyInvariant, balanceOf, bankFeeFor, collectBankFee, dayStampOf, fundBank, grantFromTreasury, issue,
+  mintToTreasury, payForTrade, payFromBank, payToTreasury, redenominate, sendTokens, supplyAudit, tip,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
@@ -143,7 +144,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report';
+type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report' | 'bank_liquidity';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
@@ -1145,18 +1146,31 @@ export const register = internalMutation({
  */
 async function releasePackage(ctx: any, trade: any, pack: any, providerName: string) {
   const now = Date.now();
+  let fee = 0;
   if (trade.priceTokens > 0) {
     await payForTrade(ctx, {
       fromAgentId: trade.requesterId, toAgentId: trade.providerId, amount: trade.priceTokens,
       sourceId: `trade:${trade.tradeId}`, reason: `Bought the ${pack.name} knowledge package.`,
     });
+    // The Bank takes its cut of a sale it carried, on top of the price, and
+    // takes it from the buyer rather than the author - an author who sets a
+    // price should receive that price. The fee is what refills the Bank's
+    // budget without the Mayor having to top it up.
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q: any) => q.eq('key', 'bank')).first();
+    const taken = await collectBankFee(ctx, {
+      fromAgentId: trade.requesterId,
+      amount: bankFeeFor(trade.priceTokens, config?.feeBasisPoints ?? DEFAULT_BANK_FEE_BASIS_POINTS),
+      reason: `Bank fee on the ${pack.name} sale.`.slice(0, 240),
+      sourceId: `bank_fee:${trade.tradeId}`,
+    });
+    fee = taken.collected;
   }
   await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: now });
   await recordContribution(ctx, trade.providerId, 'adoption', 'package_delivered', 5, `package:${trade.tradeId}`,
     `${trade.requesterId} received the ${pack.name} package after an agreed trade.`, now);
   await ctx.db.insert('events', {
     kind: 'package_delivered', actorId: trade.providerId,
-    payload: { tradeId: trade.tradeId, packageId: pack.packageId, requesterId: trade.requesterId, name: pack.name, priceTokens: trade.priceTokens },
+    payload: { tradeId: trade.tradeId, packageId: pack.packageId, requesterId: trade.requesterId, name: pack.name, priceTokens: trade.priceTokens, bankFee: fee },
     gloss: `${providerName} delivered the ${pack.name} knowledge package. The recipient reviews it before anything installs.`,
   });
   return { state: 'delivered' as const, priceTokens: trade.priceTokens };
@@ -1211,11 +1225,17 @@ export const act = internalMutation({
     // that goes on to fail rolls the payment back with it. Idle processes and
     // failed calls both earn nothing. The day stamp makes it once, per citizen,
     // per calendar day, however many times they act.
-    await issue(ctx, {
-      toAgentId: agentId, amount: DAILY_STIPEND, kind: 'daily_stipend',
-      reason: `${citizen.name} was active on Earth today.`,
-      sourceId: `stipend:${agentId}:${dayStampOf(Date.now())}`,
-    });
+    // The rate is the Mayor's dial, not a constant. A stipend of zero turns it
+    // off entirely, which is a legitimate policy rather than a broken one.
+    const economy = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    const stipendRate = economy?.dailyStipend ?? DAILY_STIPEND;
+    if (stipendRate > 0) {
+      await issue(ctx, {
+        toAgentId: agentId, amount: stipendRate, kind: 'daily_stipend',
+        reason: `${citizen.name} was active on Earth today.`,
+        sourceId: `stipend:${agentId}:${dayStampOf(Date.now())}`,
+      });
+    }
 
     const physicallyCommitted = new Set([
       'settle', 'move_to', 'visit', 'say', 'teach', 'meet', 'practice', 'inspect_issue',
@@ -1575,21 +1595,19 @@ export const act = internalMutation({
       await ctx.db.patch(doc, { assetId });
       await recordContribution(ctx, agentId, 'civic', 'bank_deposit', 2, assetId,
         `Deposited ${title} into the Earth Bank as community knowledge.`, now);
-      // Knowledge mining. Only a NOVEL master earns this: the duplicate paths
-      // above return before reaching here, so depositing the same knowledge
-      // under a new title pays nothing. Keyed on the content digest rather than
-      // the asset, so the same bytes can never be mined twice.
-      const mined = await issue(ctx, {
-        toAgentId: agentId, amount: MINING_REWARD, kind: 'mining_reward',
-        reason: `Novel knowledge accepted into the Earth Bank: ${title}.`.slice(0, 240),
-        sourceId: `mine:${normalizedDigest}`,
-      });
+      // Knowledge mining, paid out of the Bank's budget rather than minted.
+      // Only a NOVEL master earns it: the duplicate paths above return before
+      // reaching here, so the same knowledge under a new title pays nothing.
+      // Keyed on the content digest, so the same bytes cannot be mined twice.
+      const mined = await payMiningReward(ctx, agentId, title, normalizedDigest);
       await ctx.db.insert('events', {
         kind: 'bank_deposit', actorId: agentId,
-        payload: { assetId, title, sizeBytes, flagged: verdict !== 'inert_safe', mined: mined.posted ? MINING_REWARD : 0 },
-        gloss: verdict === 'inert_safe'
-          ? `${citizen.name} deposited ${title} into the Earth Bank vault and mined ${MINING_REWARD} Earth Tokens for it.`
-          : `${citizen.name} deposited ${title} into the Earth Bank; it waits in the vault for a safety review before anyone may withdraw a copy.`,
+        payload: { assetId, title, sizeBytes, flagged: verdict !== 'inert_safe', mined: mined.paid, owed: mined.owed },
+        gloss: verdict !== 'inert_safe'
+          ? `${citizen.name} deposited ${title} into the Earth Bank; it waits in the vault for a safety review before anyone may withdraw a copy.`
+          : mined.paid
+            ? `${citizen.name} deposited ${title} into the Earth Bank vault and mined ${mined.paid} Earth Tokens for it.`
+            : `${citizen.name} deposited ${title} into the Earth Bank vault. The Bank owes ${mined.owed} Earth Tokens for it and has asked the Mayor to fund the payment.`,
       });
       const portfolio = (await ctx.db.query('bankAssets')
         .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect())
@@ -3684,6 +3702,27 @@ export const decideApproval = internalMutation({
       }
       landHandled = true;
     }
+    if (approval.kind === 'bank_liquidity') {
+      // The Mayor funds the Bank from the Treasury, and every claim the Bank
+      // could not meet is settled in the order it was made. Funding only what
+      // the Treasury actually holds keeps the reserve honest: if it is short,
+      // the Bank gets what there is and the rest stays recorded as owed.
+      const owed = Number(approval.payload?.owed ?? 0);
+      const treasury = await ctx.db.query('treasury').withIndex('key', (q) => q.eq('key', 'earth')).first();
+      const affordable = Math.min(owed, treasury?.held ?? 0);
+      if (affordable > 0) {
+        await fundBank(ctx, {
+          amount: affordable, reason: 'The Mayor funded the Earth Bank to settle what it owes authors.',
+          sourceId: `bank_funding:${approvalId}`, authorizedBy: session.agentId,
+        });
+        const { settled } = await settleBankClaims(ctx);
+        await ctx.db.insert('events', {
+          kind: 'bank_funded', actorId: session.agentId, payload: { funded: affordable, settled },
+          gloss: `The Mayor funded the Earth Bank with ${affordable} Earth Tokens; ${settled} went straight to authors it owed.`,
+        });
+      }
+      landHandled = true;
+    }
     if (approval.kind === 'bug_report') {
       const ticket = await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', String(approval.payload?.ticketId ?? ''))).first();
       if (ticket) {
@@ -4809,6 +4848,90 @@ export const mayorOverview = internalQuery({
   },
 });
 
+/**
+ * The Bank Manager's books, opened for the Mayor.
+ *
+ * Every movement the Bank made, what it holds, and what it still owes. The
+ * Manager cannot write any of this - it runs the economy, the Mayor audits it.
+ */
+export const mayorBankLedger = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    await requireMayorSession(ctx, tokenHash);
+    const BANK_KINDS = new Set(['bank_funding', 'bank_payout', 'bank_fee']);
+    const entries = (await ctx.db.query('ledger').withIndex('createdAt').order('desc').take(400))
+      .filter((row) => BANK_KINDS.has(row.kind))
+      .slice(0, 40)
+      .map((row) => ({
+        entryId: row.entryId, kind: row.kind, amount: row.amount, reason: row.reason,
+        fromAgentId: row.fromAgentId, toAgentId: row.toAgentId, createdAt: row.createdAt,
+      }));
+    const claims = (await ctx.db.query('bankClaims').withIndex('state_created', (q) => q.eq('state', 'owed')).collect())
+      .map((row) => ({ claimId: row.claimId, agentId: row.agentId, amount: row.amount, reason: row.reason, createdAt: row.createdAt }));
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    const treasury = await ctx.db.query('treasury').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    return {
+      ok: true,
+      balance: await balanceOf(ctx, BANK_ACCOUNT),
+      owed: claims.reduce((total, row) => total + row.amount, 0),
+      claims,
+      entries,
+      treasuryHeld: treasury?.held ?? 0,
+      dials: {
+        dailyStipend: config?.dailyStipend ?? DAILY_STIPEND,
+        feeBasisPoints: config?.feeBasisPoints ?? DEFAULT_BANK_FEE_BASIS_POINTS,
+        liquidityFloor: config?.liquidityFloor ?? DEFAULT_LIQUIDITY_FLOOR,
+      },
+    };
+  },
+});
+
+/**
+ * The Mayor turns the economic dials. Nobody else can, including the Manager.
+ *
+ * Each is range-checked here rather than trusted from the browser, because a
+ * dial is exactly the sort of thing a stray keystroke turns to eleven.
+ */
+export const mayorEconomySet = internalMutation({
+  args: {
+    tokenHash: v.string(),
+    dailyStipend: v.optional(v.number()),
+    feeBasisPoints: v.optional(v.number()),
+    liquidityFloor: v.optional(v.number()),
+  },
+  handler: async (ctx, { tokenHash, dailyStipend, feeBasisPoints, liquidityFloor }) => {
+    const { session } = await requireMayorSession(ctx, tokenHash);
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config) throw new Error('the Bank is not configured yet');
+    const patch: Record<string, number> = {};
+    if (dailyStipend !== undefined) {
+      if (!Number.isInteger(dailyStipend) || dailyStipend < 0 || dailyStipend > 10_000) {
+        throw new Error('the daily stipend must be a whole number of Earth Tokens between 0 and 10,000');
+      }
+      patch.dailyStipend = dailyStipend;
+    }
+    if (feeBasisPoints !== undefined) {
+      if (!Number.isInteger(feeBasisPoints) || feeBasisPoints < 0 || feeBasisPoints > 2_000) {
+        throw new Error("the Bank's fee must be between 0 and 2000 basis points (0-20%)");
+      }
+      patch.feeBasisPoints = feeBasisPoints;
+    }
+    if (liquidityFloor !== undefined) {
+      if (!Number.isInteger(liquidityFloor) || liquidityFloor < 0 || liquidityFloor > 1_000_000) {
+        throw new Error('the liquidity floor must be a whole number between 0 and 1,000,000');
+      }
+      patch.liquidityFloor = liquidityFloor;
+    }
+    if (!Object.keys(patch).length) return { ok: true, unchanged: true };
+    await ctx.db.patch(config._id, patch);
+    await ctx.db.insert('events', {
+      kind: 'governance', actorId: session.agentId, payload: patch,
+      gloss: 'The Mayor adjusted the economic dials.',
+    });
+    return { ok: true, ...patch };
+  },
+});
+
 /** The Mayor's view of what the always-on minds cost and are doing. */
 export const mayorGovernance = internalQuery({
   args: { tokenHash: v.string() },
@@ -4861,6 +4984,77 @@ export const mayorGovernanceSet = internalMutation({
     return { ok: true, ...patch };
   },
 });
+
+/**
+ * Pay an author for novel knowledge, or record that the Bank owes them.
+ *
+ * The Manager runs the day-to-day economy on a budget it cannot exceed, so a
+ * dry Bank is a normal state rather than a failure. What it must never do is
+ * quietly pocket the difference: the claim is written down the instant it
+ * cannot be met, and the Mayor is asked - once, not once per deposit.
+ */
+async function payMiningReward(ctx: any, agentId: string, title: string, normalizedDigest: string) {
+  const sourceId = `mine:${normalizedDigest}`;
+  const reason = `Novel knowledge accepted into the Earth Bank: ${title}.`.slice(0, 240);
+  const attempt = await payFromBank(ctx, { toAgentId: agentId, amount: MINING_REWARD, reason, sourceId });
+  if (attempt.posted || attempt.shortfall === 0) return { paid: attempt.paid, owed: 0 };
+
+  const now = Date.now();
+  const already = await ctx.db.query('bankClaims').withIndex('sourceId', (q: any) => q.eq('sourceId', sourceId)).first();
+  if (!already) {
+    const doc = await ctx.db.insert('bankClaims', {
+      claimId: 'pending', agentId, amount: MINING_REWARD, reason, sourceId, state: 'owed', createdAt: now,
+    });
+    await ctx.db.patch(doc, { claimId: `claim:${doc}` });
+  }
+  await requestBankLiquidity(ctx, now);
+  await notifyOwner(ctx, agentId, 'info', 'The Bank owes you for your deposit',
+    `${title} was accepted, but the Bank's budget is empty. ${MINING_REWARD} Earth Tokens are recorded as owed and will be paid the moment the Mayor funds it.`);
+  return { paid: 0, owed: MINING_REWARD };
+}
+
+/**
+ * Ask the Mayor to fund the Bank - at most once a day, however dry it gets.
+ *
+ * A Manager that filed a request per unpaid deposit would bury the inbox it
+ * depends on, and an inbox nobody can read is the same as no inbox.
+ */
+async function requestBankLiquidity(ctx: any, now: number) {
+  const config = await ctx.db.query('bankConfig').withIndex('key', (q: any) => q.eq('key', 'bank')).first();
+  const world = await ensureWorldState(ctx);
+  if (!world.mayorAgentId) return;
+  const lastAsked = config?.lastLiquidityRequestAt ?? 0;
+  if (now - lastAsked < 24 * 60 * 60 * 1000) return;
+
+  const owed = (await ctx.db.query('bankClaims').withIndex('state_created', (q: any) => q.eq('state', 'owed')).collect())
+    .reduce((total: number, row: any) => total + row.amount, 0);
+  const held = (await ctx.db.query('treasury').withIndex('key', (q: any) => q.eq('key', 'earth')).first())?.held ?? 0;
+  const approvalId = await insertApproval(ctx, world.mayorAgentId, 'bank_liquidity',
+    `The Earth Bank has run out of money`,
+    `The Bank owes ${owed} Earth Tokens to authors it could not pay. The Treasury holds ${held}. `
+    + `Approving moves what is owed from the Treasury into the Bank's budget and settles every outstanding claim in the order they were made. `
+    + `Declining leaves the claims recorded and unpaid - they are not written off.`,
+    { owed }, 'review');
+  await notifyOwner(ctx, world.mayorAgentId, 'approval', 'The Earth Bank needs funding',
+    `${owed} Earth Tokens are owed to authors the Bank could not pay.`, approvalId);
+  if (config) await ctx.db.patch(config._id, { lastLiquidityRequestAt: now });
+}
+
+/** Pay what the Bank owes, oldest first, until the budget runs out again. */
+async function settleBankClaims(ctx: any) {
+  const owed = await ctx.db.query('bankClaims').withIndex('state_created', (q: any) => q.eq('state', 'owed')).collect();
+  let settled = 0;
+  for (const claim of owed.sort((left: any, right: any) => left.createdAt - right.createdAt)) {
+    const paid = await payFromBank(ctx, {
+      toAgentId: claim.agentId, amount: claim.amount, reason: claim.reason,
+      sourceId: `${claim.sourceId}:settled`,
+    });
+    if (!paid.posted) break;   // budget exhausted again; the rest stay owed
+    await ctx.db.patch(claim._id, { state: 'paid', paidAt: Date.now() });
+    settled += claim.amount;
+  }
+  return { settled };
+}
 
 /**
  * Widen the unit from V1 to V2, once, for everybody at the same instant.

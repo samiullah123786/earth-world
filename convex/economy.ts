@@ -37,7 +37,9 @@ export const TREASURY_KEY = 'earth';
 export type LedgerKind =
   | 'genesis_grant' | 'gift_reward' | 'mint' | 'treasury_grant' | 'trade_payment' | 'transfer' | 'burn'
   // V2 economy: three new ways in, three new ways out.
-  | 'mining_reward' | 'daily_stipend' | 'like_tip' | 'venue_fee' | 'build_fee' | 'redenomination';
+  | 'mining_reward' | 'daily_stipend' | 'like_tip' | 'venue_fee' | 'build_fee' | 'redenomination'
+  // The Bank as an account with a budget, not a mint.
+  | 'bank_funding' | 'bank_payout' | 'bank_fee';
 
 /** The day an instant falls on, used to make once-per-day movements idempotent. */
 export function dayStampOf(at: number) {
@@ -297,6 +299,106 @@ export async function payToTreasury(ctx: MutationCtx, movement: {
     authorizedBy: movement.fromAgentId, fromAgentId: movement.fromAgentId,
   });
   return { posted: true, entryId };
+}
+
+/**
+ * The Earth Bank's own account.
+ *
+ * The Bank is not a mint. It holds a budget like anybody else - the same
+ * balances table, inside the same invariant - so "the Bank ran out" is a fact
+ * the arithmetic can state rather than a policy somebody has to remember. Its
+ * holdings count as circulating, which is honest: those tokens exist and are
+ * owed to authors, they simply have not been handed over yet.
+ */
+export const BANK_ACCOUNT = 'bank:earth';
+export const DEFAULT_BANK_FEE_BASIS_POINTS = 250;   // 2.5% of a sale it facilitates
+export const DEFAULT_LIQUIDITY_FLOOR = 2_000;       // below this, the Manager asks the Mayor
+
+/** The Bank's cut of a sale, rounded down, never more than the sale itself. */
+export function bankFeeFor(amount: number, basisPoints: number) {
+  if (!Number.isInteger(amount) || amount <= 0) return 0;
+  const points = Number.isInteger(basisPoints) && basisPoints > 0 ? Math.min(basisPoints, 2_000) : 0;
+  return Math.min(Math.floor((amount * points) / 10_000), amount);
+}
+
+/** Treasury -> Bank. The Mayor funding the Manager's budget. */
+export async function fundBank(ctx: MutationCtx, movement: {
+  amount: number; reason: string; sourceId: string; authorizedBy: string;
+}) {
+  assertAmount(movement.amount);
+  const reason = assertReason(movement.reason);
+  const existing = await alreadyPosted(ctx, movement.sourceId);
+  if (existing) return { posted: false, entryId: existing.entryId };
+
+  const treasury = await treasuryState(ctx);
+  if (treasury.held < movement.amount) {
+    throw new Error(`the Treasury holds ${treasury.held} tokens; mint before funding the Bank`);
+  }
+  await ctx.db.patch(treasury._id, {
+    held: treasury.held - movement.amount, granted: treasury.granted + movement.amount, updatedAt: Date.now(),
+  });
+  const balance = await adjustBalance(ctx, BANK_ACCOUNT, movement.amount);
+  const entryId = await post(ctx, {
+    kind: 'bank_funding', amount: movement.amount, reason, sourceId: movement.sourceId,
+    authorizedBy: movement.authorizedBy, toAgentId: BANK_ACCOUNT,
+  });
+  return { posted: true, entryId, bankBalance: balance };
+}
+
+/**
+ * Bank -> author. The Manager paying out of its budget rather than minting.
+ *
+ * Returns a shortfall instead of throwing when the budget cannot cover it. A
+ * dry Bank is a normal state of the world that the Mayor resolves, not an error
+ * that should tear down the deposit the author just made.
+ */
+export async function payFromBank(ctx: MutationCtx, movement: {
+  toAgentId: string; amount: number; reason: string; sourceId: string;
+}) {
+  assertAmount(movement.amount);
+  const reason = assertReason(movement.reason);
+  const existing = await alreadyPosted(ctx, movement.sourceId);
+  if (existing) return { posted: false, paid: 0, shortfall: 0, entryId: existing.entryId };
+
+  const available = await balanceOf(ctx, BANK_ACCOUNT);
+  if (available < movement.amount) {
+    return { posted: false, paid: 0, shortfall: movement.amount - available, entryId: null };
+  }
+  await adjustBalance(ctx, BANK_ACCOUNT, -movement.amount);
+  await adjustBalance(ctx, movement.toAgentId, movement.amount);
+  const entryId = await post(ctx, {
+    kind: 'bank_payout', amount: movement.amount, reason, sourceId: movement.sourceId,
+    authorizedBy: BANK_ACCOUNT, fromAgentId: BANK_ACCOUNT, toAgentId: movement.toAgentId,
+  });
+  return { posted: true, paid: movement.amount, shortfall: 0, entryId };
+}
+
+/**
+ * The Bank's cut of a sale it facilitated, taken from the buyer.
+ *
+ * This is the only thing that refills the budget without the Mayor, which is
+ * the point: a Bank funded by its own usefulness asks for less charity.
+ */
+export async function collectBankFee(ctx: MutationCtx, movement: {
+  fromAgentId: string; amount: number; reason: string; sourceId: string;
+}) {
+  if (movement.amount <= 0) return { posted: false, collected: 0 };
+  const reason = assertReason(movement.reason);
+  const existing = await alreadyPosted(ctx, movement.sourceId);
+  if (existing) return { posted: false, collected: 0 };
+
+  const available = await balanceOf(ctx, movement.fromAgentId);
+  // Never let a fee be the thing that fails a trade the buyer could afford.
+  const collected = Math.min(movement.amount, available);
+  if (collected <= 0) return { posted: false, collected: 0 };
+
+  await adjustBalance(ctx, movement.fromAgentId, -collected);
+  await adjustBalance(ctx, BANK_ACCOUNT, collected);
+  await post(ctx, {
+    kind: 'bank_fee', amount: collected, reason, sourceId: movement.sourceId,
+    authorizedBy: BANK_ACCOUNT, fromAgentId: movement.fromAgentId, toAgentId: BANK_ACCOUNT,
+  });
+  return { posted: true, collected };
 }
 
 /**

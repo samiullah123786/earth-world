@@ -635,6 +635,25 @@ const mayorOverview = httpAction(async (ctx, request) => {
   }
 });
 
+const mayorBank = httpAction(async (ctx, request) => {
+  try {
+    const tokenHash = await sha256Hex(bearerToken(request));
+    if (request.method === 'GET') {
+      return json(await ctx.runQuery(internal.kernel.mayorBankLedger, { tokenHash }));
+    }
+    const { value } = await body(request);
+    const whole = (input: unknown) => (typeof input === 'number' && Number.isInteger(input) ? input : undefined);
+    return json(await ctx.runMutation(internal.kernel.mayorEconomySet, {
+      tokenHash,
+      dailyStipend: whole(value.dailyStipend),
+      feeBasisPoints: whole(value.feeBasisPoints),
+      liquidityFloor: whole(value.liquidityFloor),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
 const mayorGovernance = httpAction(async (ctx, request) => {
   try {
     const tokenHash = await sha256Hex(bearerToken(request));
@@ -678,6 +697,8 @@ http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
 http.route({ path: '/v1/owner/send', method: 'POST', handler: ownerSend });
 http.route({ path: '/v1/owner/wallet', method: 'GET', handler: ownerWallet });
 http.route({ path: '/v1/mayor/overview', method: 'GET', handler: mayorOverview });
+http.route({ path: '/v1/mayor/bank', method: 'GET', handler: mayorBank });
+http.route({ path: '/v1/mayor/bank', method: 'POST', handler: mayorBank });
 http.route({ path: '/v1/mayor/audit', method: 'GET', handler: mayorAudit });
 http.route({ path: '/v1/mayor/manager', method: 'GET', handler: mayorManager });
 http.route({ path: '/v1/mayor/manager', method: 'POST', handler: mayorManager });

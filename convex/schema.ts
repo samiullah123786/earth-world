@@ -164,7 +164,7 @@ export default defineSchema({
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
-      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'), v.literal('marriage'), v.literal('bug_report'),
+      v.literal('package_install'), v.literal('package_release'), v.literal('token_transfer'), v.literal('bank_flag'), v.literal('free_grant'), v.literal('marriage'), v.literal('bug_report'), v.literal('bank_liquidity'),
     ),
     summary: v.string(),
     detail: v.string(),
@@ -419,6 +419,10 @@ export default defineSchema({
       v.literal('venue_fee'),        // citizen -> Treasury, booking a public venue
       v.literal('build_fee'),        // citizen -> Treasury, building rights
       v.literal('redenomination'),   // the one-off V1 -> V2 widening of the unit
+      // The Bank as an account with a budget, not a mint.
+      v.literal('bank_funding'),     // Treasury -> Bank, the Mayor topping it up
+      v.literal('bank_payout'),      // Bank -> author, paid out of that budget
+      v.literal('bank_fee'),         // citizen -> Bank, its cut of a sale
     ),
     fromAgentId: v.optional(v.string()),
     toAgentId: v.optional(v.string()),
@@ -757,7 +761,29 @@ export default defineSchema({
     dayStamp: v.string(),
     freeGrantBudget: v.number(),
     freeGrantsToday: v.number(),
+    // The economic dials the Mayor turns. The Bank Manager reads them and can
+    // never write them: it runs the economy day to day, it does not set policy.
+    dailyStipend: v.optional(v.number()),      // paid to a citizen that acted today
+    feeBasisPoints: v.optional(v.number()),    // the Bank's cut of a sale it facilitates
+    liquidityFloor: v.optional(v.number()),    // below this the Manager asks the Mayor
+    lastLiquidityRequestAt: v.optional(v.number()),
   }).index('key', ['key']),
+
+  // What the Bank owes an author it could not pay at the time.
+  //
+  // A dry Bank must not quietly swallow somebody's mining reward. The claim is
+  // recorded the moment it cannot be met, and settled in order once the Mayor
+  // funds the Bank - so running out is a delay, never a loss.
+  bankClaims: defineTable({
+    claimId: v.string(),
+    agentId: v.string(),
+    amount: v.number(),
+    reason: v.string(),
+    sourceId: v.string(),
+    state: v.union(v.literal('owed'), v.literal('paid')),
+    createdAt: v.number(),
+    paidAt: v.optional(v.number()),
+  }).index('sourceId', ['sourceId']).index('state_created', ['state', 'createdAt']),
 
   // What an authority has seen lately, and the summary older memories fold
   // into. Bounded on purpose: a sliding window plus one daily summary keeps
