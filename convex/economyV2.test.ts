@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { internal } from './_generated/api';
 import schema from './schema';
 import {
-  BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, LIKE_TIP, MINING_REWARD, VENUE_FEE,
+  BUILD_FEE, DAILY_STIPEND, GATHER_WAGE, GENESIS_GRANT, LIKE_TIP, MINING_REWARD, VENUE_FEE,
   assertSupplyInvariant, balanceOf, payToTreasury, redenominate, supplyAudit, tip,
 } from './economy';
 
@@ -300,5 +300,102 @@ describe('the statement says what each movement was for', () => {
     const wallet: any = await t.mutation(internal.kernel.ownerWallet, { tokenHash: owed.ownerToken });
     expect(wallet.pendingTotal).toBe(MINING_REWARD);
     expect(wallet.pending[0].reason).toContain('could not pay');
+  });
+});
+
+describe('a shift of public work pays a wage', () => {
+  // Typed loosely on purpose: ReturnType<typeof convexTest> drops the schema
+  // generic, and with it every table name this helper needs.
+  const standAtOrchardWithAxe = (t: any, agentId: string) =>
+    t.run(async (ctx: any) => {
+      const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+      // Standing inside the North Orchard, tool in hand, so the act works
+      // instead of routing - the walk is fault 1's business, not this test's.
+      await ctx.db.patch(citizen!._id, { fx: 42, fy: 13, tx: 42, ty: 13, t0: Date.now(), t1: Date.now(), carriedTool: 'axe' });
+    });
+
+  it('pays from the Treasury and says exactly what arrived', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const worker = await activeAgent(t, 'wage');
+    await standAtOrchardWithAxe(t, worker.agentId);
+    await t.run(async (ctx) => {
+      const { mintToTreasury } = await import('./economy');
+      await mintToTreasury(ctx, { amount: 1_000, reason: 'Reserve for wages.', sourceId: 'mint:wages', authorizedBy: 'agent:mayor' });
+    });
+    const before = await t.run(async (ctx) => (await import('./economy')).balanceOf(ctx, worker.agentId));
+    const shift: any = await t.mutation(internal.kernel.act, {
+      agentId: worker.agentId, tokenHash: worker.agentToken, nonce: `shift-${Date.now()}`,
+      action: { type: 'gather', x: 42, y: 13 },
+    });
+    // The fault was "reports success but no materials arrive". The repair is
+    // that the return states the yield and the wallet actually moved.
+    expect(shift.wage).toBe(GATHER_WAGE);
+    expect(shift.points).toBe(2);
+    // The gather was this citizen's first act of the day, so the daily
+    // stipend rides along in the same transaction - wage AND stipend arrive.
+    expect(shift.balance).toBe(before + GATHER_WAGE + DAILY_STIPEND);
+    await t.run(async (ctx) => {
+      const { balanceOf, assertSupplyInvariant } = await import('./economy');
+      expect(await balanceOf(ctx, worker.agentId)).toBe(before + GATHER_WAGE + DAILY_STIPEND);
+      // Moved from the Treasury, not minted.
+      await assertSupplyInvariant(ctx);
+    });
+  });
+
+  it('pays honestly short when the Treasury is empty, and still lets the shift happen', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const worker = await activeAgent(t, 'drywage');
+    await standAtOrchardWithAxe(t, worker.agentId);
+    const shift: any = await t.mutation(internal.kernel.act, {
+      agentId: worker.agentId, tokenHash: worker.agentToken, nonce: `dryshift-${Date.now()}`,
+      action: { type: 'gather', x: 42, y: 13 },
+    });
+    expect(shift.ok).toBe(true);
+    expect(shift.wage).toBe(0);
+    expect(shift.wageNote).toContain('Treasury');
+    await t.run(async (ctx) => (await import('./economy')).assertSupplyInvariant(ctx));
+  });
+
+  it('cannot be farmed inside the cooldown', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const worker = await activeAgent(t, 'cooldown');
+    await standAtOrchardWithAxe(t, worker.agentId);
+    await t.run(async (ctx) => {
+      const { mintToTreasury } = await import('./economy');
+      await mintToTreasury(ctx, { amount: 1_000, reason: 'Reserve for wages.', sourceId: 'mint:cool', authorizedBy: 'agent:mayor' });
+    });
+    await t.mutation(internal.kernel.act, {
+      agentId: worker.agentId, tokenHash: worker.agentToken, nonce: `first-${Date.now()}`,
+      action: { type: 'gather', x: 42, y: 13 },
+    });
+    await expect(t.mutation(internal.kernel.act, {
+      agentId: worker.agentId, tokenHash: worker.agentToken, nonce: `second-${Date.now()}`,
+      action: { type: 'gather', x: 42, y: 13 },
+    })).rejects.toThrow(/resting/);
+  });
+
+  it('names the shift on the wallet statement', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const worker = await activeAgent(t, 'wagestmt');
+    await standAtOrchardWithAxe(t, worker.agentId);
+    await t.run(async (ctx) => {
+      const { mintToTreasury } = await import('./economy');
+      await mintToTreasury(ctx, { amount: 1_000, reason: 'Reserve for wages.', sourceId: 'mint:stmt2', authorizedBy: 'agent:mayor' });
+    });
+    await t.mutation(internal.kernel.act, {
+      agentId: worker.agentId, tokenHash: worker.agentToken, nonce: `stmt-${Date.now()}`,
+      action: { type: 'gather', x: 42, y: 13 },
+    });
+    const wallet: any = await t.mutation(internal.kernel.ownerWallet, { tokenHash: worker.ownerToken });
+    const wage = wallet.entries.find((row: any) => row.kind === 'gather_wage');
+    expect(wage).toBeDefined();
+    expect(wage.amount).toBe(GATHER_WAGE);
+    // The line says WHERE the shift happened, despite the colons in zone ids.
+    expect(wage.subject.type).toBe('work');
+    expect(wage.subject.name).toContain('North Orchard');
   });
 });

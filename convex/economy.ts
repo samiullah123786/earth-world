@@ -34,6 +34,11 @@ export const BUILD_FEE = 200;            // building rights on your own land
 // What one point of the Manager's appraisal is worth in tokens, so a citizen's
 // net worth is a single figure rather than tokens and points side by side.
 export const APPRAISAL_POINT_VALUE = 50;
+// A shift of public work - gathering at a forest, orchard, or quarry - pays
+// this from the TREASURY, not from a mint. Build and venue fees fill the
+// Treasury; wages recycle it back to whoever does the town's labour. Paced by
+// the gather cooldown, and self-limiting: an empty Treasury pays nothing.
+export const GATHER_WAGE = 15;
 export const MAX_MINT_PER_CALL = 1_000_000;
 export const TREASURY_KEY = 'earth';
 
@@ -42,7 +47,9 @@ export type LedgerKind =
   // V2 economy: three new ways in, three new ways out.
   | 'mining_reward' | 'daily_stipend' | 'like_tip' | 'venue_fee' | 'build_fee' | 'redenomination'
   // The Bank as an account with a budget, not a mint.
-  | 'bank_funding' | 'bank_payout' | 'bank_fee';
+  | 'bank_funding' | 'bank_payout' | 'bank_fee'
+  // Public works: Treasury -> citizen, for a shift actually worked.
+  | 'gather_wage';
 
 /** The day an instant falls on, used to make once-per-day movements idempotent. */
 export function dayStampOf(at: number) {
@@ -450,6 +457,34 @@ export async function redenominate(ctx: MutationCtx, factor = REDENOMINATION_FAC
     reason: `Every holding multiplied by ${factor} so V1 citizens and V2 arrivals hold the same share.`,
   });
   return { posted: true, entryId, issued: uplift };
+}
+
+/**
+ * Treasury -> citizen, as a wage for a shift of public work.
+ *
+ * Pays what the Treasury can actually cover and says so, rather than failing
+ * the shift or inventing the difference. The citizen worked either way; a poor
+ * town pays short, it does not pretend.
+ */
+export async function payWage(ctx: MutationCtx, movement: {
+  toAgentId: string; amount: number; reason: string; sourceId: string;
+}) {
+  if (!Number.isInteger(movement.amount) || movement.amount <= 0) return { posted: false, paid: 0 };
+  const reason = assertReason(movement.reason);
+  const existing = await alreadyPosted(ctx, movement.sourceId);
+  if (existing) return { posted: false, paid: 0 };
+
+  const treasury = await treasuryState(ctx);
+  const paid = Math.min(movement.amount, treasury.held);
+  if (paid <= 0) return { posted: false, paid: 0 };
+
+  await ctx.db.patch(treasury._id, { held: treasury.held - paid, updatedAt: Date.now() });
+  await adjustBalance(ctx, movement.toAgentId, paid);
+  await post(ctx, {
+    kind: 'gather_wage', amount: paid, reason, sourceId: movement.sourceId,
+    authorizedBy: 'kernel', toAgentId: movement.toAgentId,
+  });
+  return { posted: true, paid };
 }
 
 /** sum(balances) + treasury.held === minted - burned, or the economy is broken. */

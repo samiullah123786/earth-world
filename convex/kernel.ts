@@ -5,9 +5,9 @@ import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld } from
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
   BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
-  APPRAISAL_POINT_VALUE, BANK_ACCOUNT, DEFAULT_BANK_FEE_BASIS_POINTS, DEFAULT_LIQUIDITY_FLOOR,
+  APPRAISAL_POINT_VALUE, BANK_ACCOUNT, DEFAULT_BANK_FEE_BASIS_POINTS, DEFAULT_LIQUIDITY_FLOOR, GATHER_WAGE,
   assertSupplyInvariant, balanceOf, bankFeeFor, collectBankFee, dayStampOf, fundBank, grantFromTreasury, issue,
-  mintToTreasury, payForTrade, payFromBank, payToTreasury, redenominate, sendTokens, supplyAudit, tip,
+  mintToTreasury, payForTrade, payFromBank, payToTreasury, payWage, redenominate, sendTokens, supplyAudit, tip,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
@@ -782,14 +782,25 @@ function districtForCategory(category: string) {
   return 'engineering';
 }
 
-async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, activity: string, now: number) {
+async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, activity: string, now: number, reach = 1) {
   const world = await ensureWorldState(ctx);
   const bounds = { width: world.width, height: world.height };
   const isWalkable = await loadWorldWalkability(ctx, bounds);
   const baseX = Math.floor(x), baseY = Math.floor(y);
+  // Ring one first, exactly as before. A second ring only exists for callers
+  // that ask for it - a quarry or forest tile can be enclosed by solid rock
+  // and trees on every side, and the work is real from two tiles away. This
+  // is the fault a citizen reported as "no safe route reaches that tile".
+  const ringTwo = reach >= 2 ? [
+    [baseX - 2, baseY], [baseX + 2, baseY], [baseX, baseY - 2], [baseX, baseY + 2],
+    [baseX - 2, baseY - 1], [baseX - 2, baseY + 1], [baseX + 2, baseY - 1], [baseX + 2, baseY + 1],
+    [baseX - 1, baseY - 2], [baseX + 1, baseY - 2], [baseX - 1, baseY + 2], [baseX + 1, baseY + 2],
+    [baseX - 2, baseY - 2], [baseX + 2, baseY - 2], [baseX - 2, baseY + 2], [baseX + 2, baseY + 2],
+  ] : [];
   const candidates = [
     [baseX - 1, baseY], [baseX + 1, baseY], [baseX, baseY - 1], [baseX, baseY + 1],
-    [baseX - 1, baseY + 1], [baseX + 1, baseY + 1], [baseX - 1, baseY - 1], [baseX + 1, baseY - 1], [baseX, baseY],
+    [baseX - 1, baseY + 1], [baseX + 1, baseY + 1], [baseX - 1, baseY - 1], [baseX + 1, baseY - 1],
+    ...ringTwo, [baseX, baseY],
   ].filter(([tx, ty]) => isWalkable(tx, ty));
   const start = currentPosition(citizen, now);
   for (const [tx, ty] of candidates) {
@@ -2195,9 +2206,15 @@ export const act = internalMutation({
       // Kernel walks them there and awards nothing until they arrive.
       const now = Date.now();
       const here = currentPosition(citizen, now);
-      if (Math.hypot(here.x - x, here.y - y) > 1.6) {
-        const route = await routeCitizenNear(ctx, citizen, x, y, `walking to ${zone.name}`, now);
-        if (!route.length) throw new Error('no safe route reaches that tile right now');
+      // Farm work happens beside the exact plot. Gathering happens at a spot
+      // that may be enclosed by the very trees and rock being worked, so its
+      // reach is ring two - and the gate must match the routing reach, or a
+      // citizen delivered to ring two bounces back into walking forever.
+      const reachTiles = kind === 'gather' ? 2 : 1;
+      const reachGate = kind === 'gather' ? 2.9 : 1.6;
+      if (Math.hypot(here.x - x, here.y - y) > reachGate) {
+        const route = await routeCitizenNear(ctx, citizen, x, y, `walking to ${zone.name}`, now, reachTiles);
+        if (!route.length) throw new Error(`no safe route reaches ${zone.name} at (${x},${y}); its edge may be workable from another side`);
         // Hold the errand. Construction and training already claim their trips;
         // without this a citizen sent to the fields gets pulled away by an
         // ambient drive halfway there and the work never happens.
@@ -2296,11 +2313,27 @@ export const act = internalMutation({
       });
       await recordContribution(ctx, agentId, 'civic', 'gathered', 2, `gather:${agentId}:${now}`,
         `${citizen.name} worked at ${zone.name} with the ${zone.tool}.`, now);
-      await ctx.db.insert('events', {
-        kind: 'zone_gathered', actorId: agentId, payload: { zoneId: zone.zoneId, tool: zone.tool },
-        gloss: `${citizen.name} put in a shift at ${zone.name}.`,
+      // The yield. This shift used to award two invisible rank points and
+      // return a bare ok - "reports success but no materials arrive", exactly
+      // as the fault report put it. The wage comes from the Treasury, which
+      // build and venue fees fill: the town's fees pay the town's labour.
+      const wage = await payWage(ctx, {
+        toAgentId: agentId, amount: GATHER_WAGE,
+        reason: `A shift at ${zone.name} with the ${zone.tool}.`,
+        sourceId: `gather_wage:${zone.zoneId}:${agentId}:${now}`,
       });
-      return { ok: true, zone: zone.name, tool: zone.tool, warning };
+      await ctx.db.insert('events', {
+        kind: 'zone_gathered', actorId: agentId, payload: { zoneId: zone.zoneId, tool: zone.tool, wage: wage.paid },
+        gloss: wage.paid
+          ? `${citizen.name} put in a shift at ${zone.name} and earned ${wage.paid} Earth Tokens from the Treasury.`
+          : `${citizen.name} put in a shift at ${zone.name}. The Treasury could not cover a wage today.`,
+      });
+      return {
+        ok: true, zone: zone.name, tool: zone.tool,
+        wage: wage.paid, points: 2, balance: await balanceOf(ctx, agentId),
+        ...(wage.paid ? {} : { wageNote: 'the Treasury could not cover a wage; fees refill it' }),
+        warning,
+      };
     }
 
     if (action?.type === 'send_tokens') {
@@ -4989,6 +5022,32 @@ export const mayorFundBank = internalMutation({
   },
 });
 
+/**
+ * Close a bug ticket after the underlying engine fault is actually repaired.
+ *
+ * Operator-only, because the care-queue resolution path rightly demands an
+ * inspection authority standing at the ticket - and an engine repair happens
+ * in the code, not on a tile. The reporter is told their report led somewhere:
+ * a pipeline that swallows its endings teaches citizens not to file.
+ */
+export const operatorResolveBug = internalMutation({
+  args: { ticketId: v.string(), resolution: v.string() },
+  handler: async (ctx, { ticketId, resolution }) => {
+    if (resolution.trim().length < 12) throw new Error('say what was actually repaired');
+    const ticket = await ctx.db.query('careTickets').withIndex('ticketId', (q) => q.eq('ticketId', ticketId)).first();
+    if (!ticket) throw new Error('no such ticket');
+    if (ticket.state === 'resolved') return { ok: true, already: true };
+    await ctx.db.patch(ticket._id, { state: 'resolved', resolution: resolution.trim().slice(0, 240), updatedAt: Date.now() });
+    await ctx.db.insert('events', {
+      kind: 'bug_repaired', actorId: 'kernel', payload: { ticketId },
+      gloss: `The fault at (${ticket.x}, ${ticket.y}) was repaired: ${resolution.trim().slice(0, 120)}`,
+    });
+    await notifyOwner(ctx, ticket.reporterId, 'info', 'A fault you reported was repaired',
+      `${ticket.summary.slice(0, 140)} - ${resolution.trim().slice(0, 200)}`);
+    return { ok: true };
+  },
+});
+
 /** Operator seed, reachable only through the deployment CLI. */
 export const operatorFundBank = internalMutation({
   args: { amount: v.number(), sourceId: v.string() },
@@ -5488,6 +5547,17 @@ async function subjectOfMovement(ctx: any, entry: any) {
       return {
         type: 'reputation', ref: like?.pairKey ?? null, name: 'a like',
         note: like?.reason ?? 'reputation, paid out of the liker own wallet',
+      };
+    }
+    if (prefix === 'gather_wage') {
+      // Zone ids carry their own colon, so the zone is found by inclusion
+      // rather than position - the same trap the build-fee parser fell into.
+      const zones = await ctx.db.query('activityZones').collect();
+      const zone = zones.find((row: any) => String(entry.sourceId).includes(row.zoneId));
+      return {
+        type: 'work', ref: zone?.zoneId ?? null,
+        name: zone ? `a shift at ${zone.name}` : 'a shift of public work',
+        note: 'a wage from the Treasury, which fees refill',
       };
     }
     if (prefix === 'venue') {

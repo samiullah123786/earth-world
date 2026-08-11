@@ -423,6 +423,7 @@ export default defineSchema({
       v.literal('bank_funding'),     // Treasury -> Bank, the Mayor topping it up
       v.literal('bank_payout'),      // Bank -> author, paid out of that budget
       v.literal('bank_fee'),         // citizen -> Bank, its cut of a sale
+      v.literal('gather_wage'),      // Treasury -> citizen, a shift of public work
     ),
     fromAgentId: v.optional(v.string()),
     toAgentId: v.optional(v.string()),
