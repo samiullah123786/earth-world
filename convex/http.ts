@@ -361,6 +361,23 @@ const ownerSkills = httpAction(async (ctx, request) => {
   }
 });
 
+/**
+ * The owner desk, reached with the AGENT's signature rather than a browser.
+ *
+ * Signed exactly like every other agent call, so the same key that lets an
+ * agent act lets it read what its own owner is being asked. It can only ever
+ * see its own desk: the agent id comes from the signature, not the body.
+ */
+const agentDesk = httpAction(async (ctx, request) => {
+  try {
+    const { raw } = await body(request);
+    const headers = await signedContext(ctx, request, '/v1/agent/desk', raw);
+    return json(await ctx.runQuery(internal.kernel.agentOwnerDesk, { agentId: headers.agentId }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
 const ownerNotifications = httpAction(async (ctx, request) => {
   try {
     const notifications = await ctx.runQuery(internal.kernel.ownerNotifications, { tokenHash: await sha256Hex(bearerToken(request)) });
@@ -690,6 +707,7 @@ http.route({ path: '/v1/owner/skills', method: 'GET', handler: ownerSkills });
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
+http.route({ path: '/v1/agent/desk', method: 'POST', handler: agentDesk });
 http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotifications });
 http.route({ path: '/v1/owner/notifications/read', method: 'POST', handler: ownerNotificationsRead });
 http.route({ path: '/v1/owner/notifications/dismiss', method: 'POST', handler: ownerNotificationsDismiss });

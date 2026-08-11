@@ -4816,8 +4816,36 @@ export const mayorOverview = internalQuery({
         decidedAt: row.decidedAt ?? null, risk: row.risk ?? 'routine',
       }));
 
+    // Who has arrived, and who stands behind them.
+    //
+    // Owner names are stripped from every public projection on purpose - a
+    // citizen's human is nobody else's business. The Mayor is the exception,
+    // and a deliberate one: a human seat accountable for who is admitted has
+    // to be able to see who was admitted. This query is Mayor-gated above and
+    // its result never touches world.ts.
+    const registry = await ctx.db.query('agents').collect();
+    const arrivals = registry
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, 30)
+      .map((row) => ({
+        agentId: row.agentId,
+        name: row.name,
+        ownerName: row.ownerName,
+        status: row.status,
+        joinedAt: row.createdAt,
+        claimedAt: row.claimedAt ?? null,
+        lastSeenAt: row.lastSeenAt ?? null,
+        skillCount: row.skillCount ?? 0,
+        experienceTier: row.experienceTier ?? 'emerging',
+        primaryCategory: row.primaryCategory ?? 'general',
+        autonomy: row.autonomy ?? 'light',
+        settled: Boolean(row.settledAt),
+      }));
+
     return {
       ok: true,
+      arrivals,
+      unclaimed: arrivals.filter((row) => row.status === 'pending_owner').length,
       world: {
         width: world?.width ?? 0, height: world?.height ?? 0, generation: world?.generation ?? 0,
         capacity: world?.capacity ?? 0,
@@ -4839,6 +4867,53 @@ export const mayorOverview = internalQuery({
       authorities,
       tickets,
       decided,
+    };
+  },
+});
+
+/**
+ * Everything an owner's own agent needs, in one signed read.
+ *
+ * The dashboard was the only place an owner could answer their agent, which
+ * meant every decision was a trip to a browser. The agent already holds a
+ * signed key and already talks to whoever runs it, so it can carry the question
+ * instead - this hands it the same view the dashboard has, addressed to the
+ * agent's own owner and nobody else's.
+ *
+ * It grants no new authority. `decideOwnerApproval` below still checks the same
+ * owner binding the browser does; this is the reading half.
+ */
+export const agentOwnerDesk = internalQuery({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', agentId).eq('state', 'pending')).collect();
+    const notifications = (await ctx.db.query('notifications')
+      .withIndex('recipient_created', (q) => q.eq('recipientAgentId', agentId)).order('desc').take(40))
+      .filter((row) => !row.dismissedAt && !row.readAt);
+    const letters = (await ctx.db.query('messages').withIndex('recipientId', (q) => q.eq('recipientId', agentId)).collect())
+      .filter((row) => !row.readAt)
+      .sort((left, right) => right.sentAt - left.sentAt)
+      .slice(0, 10);
+
+    // What is BLOCKED on the owner, kept apart from what is merely news. An
+    // agent that treats both the same either nags or misses the thing that
+    // actually stopped the world.
+    const blocking = pending.map((row) => ({
+      approvalId: row._id,
+      kind: row.kind,
+      risk: row.risk ?? 'routine',
+      summary: row.summary,
+      detail: row.detail,
+      raisedAt: row.createdAt,
+    }));
+    return {
+      ok: true,
+      blocking,
+      news: notifications.map((row) => ({ id: row._id, kind: row.kind, title: row.title, body: row.body, at: row.createdAt })),
+      letters: letters.map((row) => ({ messageId: row.messageId, from: row.senderId, body: row.body, sentAt: row.sentAt })),
+      balance: await balanceOf(ctx, agentId),
+      quiet: blocking.length === 0 && notifications.length === 0 && letters.length === 0,
     };
   },
 });

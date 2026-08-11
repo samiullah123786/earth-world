@@ -154,3 +154,72 @@ describe('the Mayor title follows the seat', () => {
     expect(seat).toBe(successor);
   });
 });
+
+describe('nobody can take the Mayor seat', () => {
+  const owner = async (t: ReturnType<typeof convexTest>, suffix: string) => {
+    const agentId = `agent:seat-${suffix}`;
+    await t.mutation(internal.kernel.register, {
+      agentId, publicKey: `pk-${suffix}`, name: `Seat ${suffix}`, ownerName: `Owner ${suffix}`,
+      gender: 'male', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
+      charterVersion: '2026-08-09', claimTokenHash: `c-${suffix}`, claimExpiresAt: Date.now() + 60_000,
+      evidenceDigest: 'b'.repeat(64), specialties: ['ui'], primaryCategory: 'ui', skillCount: 2, autonomy: 'active',
+    });
+    await t.mutation(internal.kernel.claimOwner, { claimTokenHash: `c-${suffix}`, ownerSessionHash: `o-${suffix}` });
+    return { agentId, ownerToken: `o-${suffix}` };
+  };
+
+  it('refuses a nomination from anyone who is not the founder', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const stranger = await owner(t, 'stranger');
+    const friend = await owner(t, 'friend');
+    // Nominating someone else, and nominating yourself, are both refused.
+    for (const target of [friend.agentId, stranger.agentId]) {
+      await expect(t.mutation(internal.kernel.requestMayorAppointment, {
+        tokenHash: stranger.ownerToken, targetAgentId: target,
+      })).rejects.toThrow(/only the founder owner can nominate/);
+    }
+    const seat = await t.run(async (ctx) =>
+      (await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first())?.mayorAgentId);
+    expect(seat).not.toBe(stranger.agentId);
+  });
+
+  it('keeps the seat where it is when a stranger asks for the Mayor books', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const stranger = await owner(t, 'nosy');
+    // The arrivals roster carries owner names. It must never open for anyone else.
+    await expect(t.query(internal.kernel.mayorOverview, { tokenHash: stranger.ownerToken }))
+      .rejects.toThrow(/only the sitting Mayor/);
+    await expect(t.query(internal.kernel.mayorBankLedger, { tokenHash: stranger.ownerToken }))
+      .rejects.toThrow(/only the sitting Mayor/);
+  });
+
+  it('shows the Mayor who joined and who owns them', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const newcomer = await owner(t, 'newcomer');
+    const seatHolder = await t.run(async (ctx) =>
+      (await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first())?.mayorAgentId);
+    const mayorToken = 'o-mayor-seat';
+    await t.run(async (ctx) => {
+      await ctx.db.insert('sessions', {
+        tokenHash: mayorToken, agentId: seatHolder!, kind: 'owner',
+        createdAt: Date.now(), expiresAt: Date.now() + 600_000, lastSeenAt: Date.now(),
+      });
+    });
+    const view: any = await t.query(internal.kernel.mayorOverview, { tokenHash: mayorToken });
+    const row = view.arrivals.find((entry: any) => entry.agentId === newcomer.agentId);
+    expect(row).toBeDefined();
+    expect(row.ownerName).toBe('Owner newcomer');
+    expect(row.status).toBe('active');
+  });
+
+  it('never leaks an owner name into the public projection', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    await owner(t, 'private');
+    const publicRows = await t.query(api.world.citizens, {}) as any[];
+    for (const row of publicRows) expect(row.ownerName).toBeUndefined();
+  });
+});

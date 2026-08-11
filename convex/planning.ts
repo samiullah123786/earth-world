@@ -12,13 +12,22 @@ const DISTRICTS = [
   'research', 'content', 'growth', 'automation', 'media', 'general',
 ];
 
+/** The seat a brand-new world starts with. It is not a default anybody
+ *  inherits later: once worldState exists, the seat moves only through a
+ *  founder nomination that the candidate's owner also accepts. */
+export const FOUNDING_MAYOR_ID = 'agent:sam-cbf0499925';
+
 export async function ensureWorldState(ctx: any) {
   let state = await ctx.db.query('worldState').withIndex('key', (q: any) => q.eq('key', WORLD_KEY)).first();
   if (!state) {
     const plots = await ctx.db.query('plots').collect();
     const id = await ctx.db.insert('worldState', {
       key: WORLD_KEY, width: W, height: H, generation: 0,
-      capacity: Math.max(50, plots.length), landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925', updatedAt: Date.now(),
+      capacity: Math.max(50, plots.length), landPolicy: 'risk_based',
+      // Only ever used when a world is being created from nothing. A stray
+      // literal here is how a fresh deployment silently installs the wrong
+      // Mayor, so the founding seat is named once and named openly.
+      mayorAgentId: FOUNDING_MAYOR_ID, updatedAt: Date.now(),
     });
     state = await ctx.db.get(id);
   }
