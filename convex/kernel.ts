@@ -2092,6 +2092,16 @@ export const act = internalMutation({
       const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q) => q.eq('tradeId', tradeId)).first();
       if (!trade || trade.requesterId !== agentId) throw new Error('that trade does not belong to this citizen');
       if (!['delivered', 'installed'].includes(trade.state)) throw new Error('that package has not been delivered yet');
+      // The pull is counted here, at the first byte fetch, because this is the
+      // one moment "somebody actually took a copy" is true. Re-downloads of
+      // the same trade are legal and count nothing.
+      if (!trade.pulledAt) {
+        await ctx.db.patch(trade._id, { pulledAt: Date.now() });
+        const pulled = trade.kind === 'asset'
+          ? await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', trade.packageId)).first()
+          : await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+        if (pulled) await ctx.db.patch(pulled._id, { pulls: (pulled.pulls ?? 0) + 1 });
+      }
       if (trade.kind === 'asset') {
         const vaultAsset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', trade.packageId)).first();
         if (!vaultAsset) throw new Error('that asset no longer exists');
@@ -2127,6 +2137,15 @@ export const act = internalMutation({
       const now = Date.now();
       await ctx.db.patch(trade._id, { state: outcome as 'installed' | 'failed', updatedAt: now, note: String(action.note ?? '').slice(0, 240) });
       if (outcome === 'failed') return { ok: true, state: 'failed', warning };
+      // A verified install is the strongest adoption signal the market has:
+      // the recipient's own signed word that it installed. The delivered ->
+      // installed state gate above makes this once per trade by construction.
+      const installedListing = trade.kind === 'asset'
+        ? await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', trade.packageId)).first()
+        : await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', trade.packageId)).first();
+      if (installedListing) {
+        await ctx.db.patch(installedListing._id, { verifiedInstalls: (installedListing.verifiedInstalls ?? 0) + 1 });
+      }
 
       // The larger reward lands only once a recipient reports a real install.
       const reward = await issue(ctx, {

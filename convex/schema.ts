@@ -471,6 +471,8 @@ export default defineSchema({
       note: v.string(),
       scannerVersion: v.string(),
     }),
+    pulls: v.optional(v.number()),
+    verifiedInstalls: v.optional(v.number()),
     state: v.union(v.literal('listed'), v.literal('withdrawn')),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -494,6 +496,9 @@ export default defineSchema({
     note: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
+    // Stamped on the first byte fetch. A pull counts once per trade however
+    // many times the same buyer re-downloads what they already own.
+    pulledAt: v.optional(v.number()),
   }).index('tradeId', ['tradeId'])
     .index('requester_created', ['requesterId', 'createdAt'])
     .index('provider_created', ['providerId', 'createdAt'])
@@ -639,6 +644,12 @@ export default defineSchema({
       scannerVersion: v.string(),
     }),
     priceTokens: v.number(),
+    // Adoption, counted where it happens rather than inferred later. A pull is
+    // a delivered acquisition whose bytes were actually fetched, once per
+    // trade; a verified install is the recipient's signed confirmation that it
+    // installed. Neither can be written from outside the Kernel.
+    pulls: v.optional(v.number()),
+    verifiedInstalls: v.optional(v.number()),
     state: v.union(v.literal('deposited'), v.literal('evaluated'), v.literal('flagged'), v.literal('retired')),
     valueRank: v.optional(v.number()),
     valueNote: v.optional(v.string()),

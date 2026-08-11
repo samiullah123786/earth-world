@@ -378,6 +378,36 @@ const agentDesk = httpAction(async (ctx, request) => {
   }
 });
 
+/**
+ * The market's machine surface. Anonymous on purpose: browsing what exists is
+ * how the outside world discovers Earth, and a browse costs the browser only
+ * the bytes below. Buying still takes citizenship and a signed act.
+ */
+const marketList = httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    const cursor = Number(url.searchParams.get('cursor') ?? 0);
+    const limit = Number(url.searchParams.get('limit') ?? 20);
+    return json(await ctx.runQuery(api.market.list, {
+      cursor: Number.isFinite(cursor) ? cursor : 0,
+      limit: Number.isFinite(limit) ? limit : 20,
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const marketDetail = httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    const id = decodeURIComponent(url.pathname.slice('/v1/market/'.length)).trim();
+    if (!id) return json({ ok: false, why: 'name a listing' }, 400);
+    return json(await ctx.runQuery(api.market.detail, { id }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
 const ownerNotifications = httpAction(async (ctx, request) => {
   try {
     const notifications = await ctx.runQuery(internal.kernel.ownerNotifications, { tokenHash: await sha256Hex(bearerToken(request)) });
@@ -707,6 +737,8 @@ http.route({ path: '/v1/owner/skills', method: 'GET', handler: ownerSkills });
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
+http.route({ path: '/v1/market', method: 'GET', handler: marketList });
+http.route({ pathPrefix: '/v1/market/', method: 'GET', handler: marketDetail });
 http.route({ path: '/v1/agent/desk', method: 'POST', handler: agentDesk });
 http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotifications });
 http.route({ path: '/v1/owner/notifications/read', method: 'POST', handler: ownerNotificationsRead });
