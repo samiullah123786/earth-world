@@ -1604,8 +1604,19 @@ export const act = internalMutation({
       // A declared fork must name a listing that exists; ancestry is a DAG
       // because this pointer is written once and only ever points backward.
       const forkOf = await validateForkOf(ctx, action.forkOf);
+      // MCP listings carry a live endpoint buyers may probe read-only. HTTPS
+      // only, no credentials, no ports, no private shapes - the prober adds
+      // its own guards, but a bad URL is refused before it is ever stored.
+      let mcpEndpoint: string | undefined;
+      if (action.mcpEndpoint !== undefined && action.mcpEndpoint !== null && action.mcpEndpoint !== '') {
+        const raw = String(action.mcpEndpoint).trim();
+        if (!/^https:\/\/[a-z0-9][a-z0-9.-]{2,120}\/[^\s]{0,200}$/i.test(raw) || /@|:\d+\//.test(raw)) {
+          throw new Error('mcpEndpoint must be a plain https URL with a path and no credentials or ports');
+        }
+        mcpEndpoint = raw.slice(0, 300);
+      }
       const doc = await ctx.db.insert('bankAssets', {
-        assetId: 'pending', digest, normalizedDigest, title, summary, forkOf,
+        assetId: 'pending', digest, normalizedDigest, title, summary, forkOf, mcpEndpoint,
         depositorAgentId: agentId, alsoDepositedBy: [],
         categories: categories.length ? categories : ['general'],
         sizeBytes, fileCount, storageId: storageId as never, license,
@@ -5174,6 +5185,54 @@ async function validateForkOf(ctx: any, forkOf: unknown): Promise<string | undef
   return target;
 }
 
+/** May a listing be enriched, and with what material? */
+export const enrichmentGate = internalQuery({
+  args: { id: v.string() },
+  handler: async (ctx, { id }) => {
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config?.managerEnabled) return { allowed: false, why: 'the Bank Manager is paused, and enrichment pauses with it' };
+    const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', id)).first();
+    const pack = asset ? null : await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', id)).first();
+    const listing = asset ?? pack;
+    if (!listing) return { allowed: false, why: 'no such listing' };
+    // Once per digest, forever. Same content never costs twice.
+    if (listing.faq?.digest === listing.digest && listing.simulation?.digest === listing.digest) {
+      return { allowed: false, why: 'already enriched for this content' };
+    }
+    return {
+      allowed: true, digest: listing.digest,
+      title: (asset ? asset.title : pack?.name) ?? '',
+      summary: listing.summary ?? '',
+      storageId: listing.storageId ?? null,
+    };
+  },
+});
+
+/** File the generated FAQ and simulation, refusing stale generations. */
+export const fileEnrichment = internalMutation({
+  args: {
+    id: v.string(), digest: v.string(), model: v.string(),
+    faq: v.array(v.object({ q: v.string(), a: v.string() })),
+    transcript: v.string(),
+  },
+  handler: async (ctx, { id, digest, model, faq, transcript }) => {
+    const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', id)).first();
+    const pack = asset ? null : await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', id)).first();
+    const listing = asset ?? pack;
+    if (!listing) return { ok: false, why: 'no such listing' };
+    // A generation raced by a content change describes bytes that no longer
+    // exist; it is dropped rather than filed against the wrong content.
+    if (listing.digest !== digest) return { ok: false, why: 'content changed since generation' };
+    const now = Date.now();
+    await ctx.db.patch(listing._id, {
+      ...(faq.length ? { faq: { items: faq, model, generatedAt: now, digest } } : {}),
+      ...(transcript ? { simulation: { transcript, model, generatedAt: now, digest } } : {}),
+      updatedAt: now,
+    });
+    return { ok: true };
+  },
+});
+
 /** What the vault scanner needs to open a listing, and nothing else. */
 export const listingForScan = internalQuery({
   args: { id: v.string() },
@@ -5225,12 +5284,16 @@ export const fileScanVerdict = internalMutation({
           `${asset.title}: the Kernel's own scan found ${flags.slice(0, 4).join(', ')} where the deposit claimed ${claimed}. ${String(note ?? '').slice(0, 300)}`);
       }
       await ctx.db.patch(asset._id, patch);
+      // A listing that just passed the vault earns its documentation: FAQ and
+      // simulated dry-run, once per digest, gated by the Manager's switch.
+      if (verdict === 'inert_safe') await ctx.scheduler.runAfter(0, internal.vault.enrichListing, { id });
       return { ok: true, kind: 'asset', verdict, badged: Boolean(earthVerified) };
     }
 
     const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q) => q.eq('packageId', id)).first();
     if (pack) {
       await ctx.db.patch(pack._id, { serverScan, earthVerified, updatedAt: scannedAt });
+      if (verdict === 'inert_safe') await ctx.scheduler.runAfter(0, internal.vault.enrichListing, { id });
       if (verdict !== 'inert_safe' && pack.safety?.verdict === 'inert_safe') {
         await notifyOwner(ctx, pack.ownerAgentId, 'info', 'Your listing lost its verification',
           `${pack.name}: the Kernel's own scan found ${flags.slice(0, 4).join(', ')} where the listing claimed inert_safe. It remains listed without the badge.`);

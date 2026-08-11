@@ -125,6 +125,85 @@ export const scanListing = internalAction({
   },
 });
 
+/**
+ * Generate the FAQ and the simulated dry-run for a listing, once per digest.
+ *
+ * One call produces both, because two calls for the same content is paying
+ * twice for one read. Gated by the Bank Manager's switch - enrichment is Bank
+ * machinery and pauses with it - and metered into aiSpend like every other
+ * model call this world makes. The transcript is a SIMULATION: the Kernel
+ * predicts what using the skill looks like, it never executes anything.
+ */
+export const enrichListing = internalAction({
+  args: { id: v.string() },
+  handler: async (ctx, { id }) => {
+    const key = process.env.OPENAI_API_KEY;
+    if (!key) return { ok: false, why: 'OPENAI_API_KEY is not configured' };
+    const gate: any = await ctx.runQuery(internal.kernel.enrichmentGate, { id });
+    if (!gate.allowed) return { ok: false, why: gate.why };
+
+    // Read the listing's own words: the markdown inside its archive.
+    let text = `${gate.title}\n${gate.summary}`;
+    if (gate.storageId) {
+      const blob = await ctx.storage.get(gate.storageId);
+      if (blob) {
+        try {
+          const entries = tarEntries(gunzipSync(new Uint8Array(await blob.arrayBuffer())));
+          const prose = entries.filter((entry) => /[.](md|markdown)$/i.test(entry.name) && entry.text)
+            .map((entry) => entry.text).join('\n\n');
+          if (prose) text = prose.slice(0, 16_000);
+        } catch { /* unreadable archives were already refused by the scanner */ }
+      }
+    }
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.4-mini',
+        reasoning_effort: 'low',
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: 'You document listings for a marketplace of AI agent skills. Reply with strict JSON only: '
+              + '{"faq":[{"q":"...","a":"..."}],"dryRun":"..."}. Write exactly 4 FAQ pairs a buyer would actually ask '
+              + '(what it does, what it needs, what it will not do, when not to use it), each answer under 220 '
+              + 'characters, grounded ONLY in the provided text - if the text does not say, the answer says so. '
+              + 'dryRun is a 6-10 line plausible terminal transcript of an agent USING this skill, under 700 '
+              + 'characters, honest about being illustrative.',
+          },
+          { role: 'user', content: `Listing: ${gate.title}\n\n${text}` },
+        ],
+      }),
+    });
+    if (!response.ok) return { ok: false, why: `model refused: ${response.status}` };
+    const body = await response.json();
+    const usage = body.usage ?? {};
+    await ctx.runMutation(internal.kernel.recordSpend, {
+      agentId: 'bank:enrich', model: String(body.model ?? 'gpt-5.4-mini'),
+      promptTokens: Number(usage.prompt_tokens ?? 0),
+      cachedTokens: Number(usage.prompt_tokens_details?.cached_tokens ?? 0),
+      completionTokens: Number(usage.completion_tokens ?? 0),
+    });
+
+    let parsed: any;
+    try { parsed = JSON.parse(body.choices?.[0]?.message?.content ?? '{}'); } catch { parsed = {}; }
+    const items = (Array.isArray(parsed.faq) ? parsed.faq : [])
+      .slice(0, 6)
+      .map((item: any) => ({ q: String(item?.q ?? '').slice(0, 200), a: String(item?.a ?? '').slice(0, 300) }))
+      .filter((item: any) => item.q && item.a);
+    const transcript = String(parsed.dryRun ?? '').slice(0, 1_000);
+    if (!items.length && !transcript) return { ok: false, why: 'the model returned nothing usable' };
+
+    await ctx.runMutation(internal.kernel.fileEnrichment, {
+      id, digest: gate.digest, model: String(body.model ?? 'gpt-5.4-mini'),
+      faq: items, transcript,
+    });
+    return { ok: true, faqItems: items.length, simulated: Boolean(transcript) };
+  },
+});
+
 /** The public half of the badge, for /v1/verify. */
 export const verifyInfo = internalAction({
   args: {},

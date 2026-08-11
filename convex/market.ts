@@ -145,6 +145,10 @@ export const detail = query({
         source: asset.source,
         createdAt: asset.createdAt,
         pull: `Earth pull ${asset.title}`,
+        faq: asset.faq?.digest === asset.digest ? asset.faq.items : [],
+        simulation: asset.simulation?.digest === asset.digest
+          ? { transcript: asset.simulation.transcript, model: asset.simulation.model } : null,
+        mcpEndpoint: asset.mcpEndpoint ?? null,
         // Nearest first, at most three: the ancestors royalties climb.
         lineage: await lineageView(ctx, asset.assetId),
       };
@@ -173,6 +177,10 @@ export const detail = query({
         sourceKind: pack.sourceKind,
         createdAt: pack.createdAt,
         pull: `Earth pull ${pack.name}`,
+        faq: pack.faq?.digest === pack.digest ? pack.faq.items : [],
+        simulation: pack.simulation?.digest === pack.digest
+          ? { transcript: pack.simulation.transcript, model: pack.simulation.model } : null,
+        mcpEndpoint: pack.mcpEndpoint ?? null,
         lineage: await lineageView(ctx, pack.packageId),
       };
     }

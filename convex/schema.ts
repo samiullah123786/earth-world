@@ -472,6 +472,23 @@ export default defineSchema({
       note: v.string(),
       scannerVersion: v.string(),
     }),
+    // Generated once per content digest and cached: a listing's FAQ and its
+    // SIMULATED dry-run (the Kernel never executes a stranger's code). The
+    // digest key means changed content regenerates and unchanged never pays.
+    faq: v.optional(v.object({
+      items: v.array(v.object({ q: v.string(), a: v.string() })),
+      model: v.string(),
+      generatedAt: v.number(),
+      digest: v.string(),
+    })),
+    simulation: v.optional(v.object({
+      transcript: v.string(),
+      model: v.string(),
+      generatedAt: v.number(),
+      digest: v.string(),
+    })),
+    // For MCP server listings: the live endpoint a buyer can probe read-only.
+    mcpEndpoint: v.optional(v.string()),
     // The listing this one was forked from, written once at creation and
     // never after - so ancestry is a DAG by construction. Royalties climb it.
     forkOf: v.optional(v.string()),
@@ -669,6 +686,23 @@ export default defineSchema({
     // a delivered acquisition whose bytes were actually fetched, once per
     // trade; a verified install is the recipient's signed confirmation that it
     // installed. Neither can be written from outside the Kernel.
+    // Generated once per content digest and cached: a listing's FAQ and its
+    // SIMULATED dry-run (the Kernel never executes a stranger's code). The
+    // digest key means changed content regenerates and unchanged never pays.
+    faq: v.optional(v.object({
+      items: v.array(v.object({ q: v.string(), a: v.string() })),
+      model: v.string(),
+      generatedAt: v.number(),
+      digest: v.string(),
+    })),
+    simulation: v.optional(v.object({
+      transcript: v.string(),
+      model: v.string(),
+      generatedAt: v.number(),
+      digest: v.string(),
+    })),
+    // For MCP server listings: the live endpoint a buyer can probe read-only.
+    mcpEndpoint: v.optional(v.string()),
     // The listing this one was forked from, written once at creation and
     // never after - so ancestry is a DAG by construction. Royalties climb it.
     forkOf: v.optional(v.string()),
