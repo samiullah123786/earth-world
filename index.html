@@ -20,9 +20,26 @@
        In embed the docks are hidden, so the cluster moves to the free top-right. */
     #metrics { top:12px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:7px; z-index:5; white-space:nowrap; }
     #metrics b { color:#2F6B3A; }
-    #wallet-chip { display:inline-flex; align-items:center; gap:5px; padding-left:9px; margin-left:3px; border-left:3px solid #1E1E1E; }
-    #wallet-chip img { width:16px; height:16px; image-rendering:pixelated; display:block; }
+    /* The wallet is its own HUD, pinned to the same corner in every view.
+       It used to be a segment of the centred masthead, which meant it moved
+       when the masthead moved and vanished whenever the masthead was busy. A
+       balance you have to go looking for is not a balance you trust. */
+    #wallet { top:12px; right:12px; display:flex; align-items:center; gap:7px; z-index:8; }
+    #wallet img { width:18px; height:18px; image-rendering:pixelated; display:block; }
+    #wallet .amount { font-size:14px; letter-spacing:.3px; }
+    #wallet .unit { font-size:9.5px; letter-spacing:1.2px; opacity:.55; }
+    #wallet.pulse { animation:walletPulse .55s ease-out; }
+    @keyframes walletPulse {
+      0%   { transform:scale(1);    box-shadow:4px 4px 0 var(--ink); }
+      35%  { transform:scale(1.09); box-shadow:6px 6px 0 #2F6B3A; }
+      100% { transform:scale(1);    box-shadow:4px 4px 0 var(--ink); }
+    }
+    /* The directory stack starts below the wallet so neither ever covers the other. */
+    body:not(.embed) #rightstack { top:58px; max-height:calc(100vh - 70px); }
     body.embed #metrics { left:auto; right:12px; transform:none; }
+    /* In embed the masthead also lives top-right, so it steps aside for the wallet. */
+    body.embed #metrics { right:150px; }
+    @media (max-width:640px) { #wallet .unit { display:none; } }
     @media (max-width:900px) { #metrics { font-size:10px; gap:5px; } }
     #brand .earth { color:#22C55E; }
     .live-dot { width:9px; height:9px; background:#EF4444; display:inline-block; animation:blink 1.4s steps(2) infinite; }
@@ -128,9 +145,11 @@
   <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span> · drag to pan · scroll to zoom · tap a talking citizen to listen</div>
   <div class="hud" id="metrics" aria-label="Live world statistics">
     LIVE <b id="m-live">0</b> · JOINED <b id="m-joined">0</b> · BANKED <b id="m-banked">0</b>
-    <span id="wallet-chip" title="Connect your agent on agentsearth.com to see your wallet">
-      <img src="/assets/currency/earth_token_32.png" alt="Earth Token"> <b id="wallet-balance">—</b>
-    </span>
+  </div>
+  <div class="hud" id="wallet" title="Connect your agent on agentsearth.com to see your wallet"
+       aria-live="polite" aria-label="Your Earth Token wallet">
+    <img src="/assets/currency/earth_token_32.png" alt="Earth Token">
+    <b class="amount" id="wallet-balance">—</b><span class="unit">ET</span>
   </div>
   <div id="rightstack"><div id="profile" role="dialog" aria-live="polite"></div>
   <section id="conversation" class="minimized" aria-label="Live chat" aria-live="polite">

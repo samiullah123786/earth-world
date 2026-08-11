@@ -643,6 +643,12 @@ const mayorBank = httpAction(async (ctx, request) => {
     }
     const { value } = await body(request);
     const whole = (input: unknown) => (typeof input === 'number' && Number.isInteger(input) ? input : undefined);
+    // Funding is its own verb, not a dial: it moves money rather than setting policy.
+    if (value.action === 'fund') {
+      return json(await ctx.runMutation(internal.kernel.mayorFundBank, {
+        tokenHash, amount: Number(value.amount), sourceId: String(value.sourceId ?? ''),
+      }));
+    }
     return json(await ctx.runMutation(internal.kernel.mayorEconomySet, {
       tokenHash,
       dailyStipend: whole(value.dailyStipend),

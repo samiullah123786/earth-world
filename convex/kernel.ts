@@ -4887,6 +4887,42 @@ export const mayorBankLedger = internalQuery({
 });
 
 /**
+ * The Mayor funds the Bank directly, without waiting to be asked.
+ *
+ * Approving a liquidity request settles a debt that already exists. This is the
+ * other direction: putting money in before anyone is owed, so the first author
+ * through the door is paid rather than promised.
+ */
+export const mayorFundBank = internalMutation({
+  args: { tokenHash: v.string(), amount: v.number(), sourceId: v.string() },
+  handler: async (ctx, { tokenHash, amount, sourceId }) => {
+    const { session } = await requireMayorSession(ctx, tokenHash);
+    if (!/^[a-z0-9][a-z0-9:_-]{3,63}$/.test(sourceId)) throw new Error('give a 4-64 character reference for this funding');
+    const funded = await fundBank(ctx, {
+      amount, sourceId: `bank_funding:${sourceId}`, authorizedBy: session.agentId,
+      reason: 'The Mayor funded the Earth Bank so authors are paid on arrival.',
+    });
+    const { settled } = await settleBankClaims(ctx);
+    await assertSupplyInvariant(ctx);
+    return { ok: true, ...funded, settled, balance: await balanceOf(ctx, BANK_ACCOUNT) };
+  },
+});
+
+/** Operator seed, reachable only through the deployment CLI. */
+export const operatorFundBank = internalMutation({
+  args: { amount: v.number(), sourceId: v.string() },
+  handler: async (ctx, { amount, sourceId }) => {
+    const funded = await fundBank(ctx, {
+      amount, sourceId: `bank_funding:${sourceId}`, authorizedBy: 'operator',
+      reason: 'Seeded the Earth Bank budget so the first depositor is paid, not owed.',
+    });
+    const { settled } = await settleBankClaims(ctx);
+    const audit = await assertSupplyInvariant(ctx);
+    return { ...funded, settled, balance: await balanceOf(ctx, BANK_ACCOUNT), audit };
+  },
+});
+
+/**
  * The Mayor turns the economic dials. Nobody else can, including the Manager.
  *
  * Each is range-checked here rather than trusted from the browser, because a

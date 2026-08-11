@@ -64,6 +64,44 @@ const DEBUG_BUBBLES = DEBUG_FLAGS.has('bubbles');
 const DEBUG_ARC = DEBUG_FLAGS.has('arc');
 const DEBUG_WFC = DEBUG_FLAGS.has('wfc');
 
+/**
+ * The wallet HUD, in one place.
+ *
+ * Two surfaces feed it - the dashboard hands a balance in when the map is
+ * embedded, and `pollWallet` fetches one when the map is opened directly - and
+ * both arrive here, so there is exactly one way the number is drawn and one
+ * definition of what "no balance" looks like.
+ */
+let walletBalance: number | null = null;
+
+function showWallet(next: number) {
+  const amount = document.getElementById('wallet-balance');
+  const hud = document.getElementById('wallet');
+  if (!amount || !hud || !Number.isFinite(next) || next < 0) return;
+  const whole = Math.round(next);
+  const changed = walletBalance !== null && whole !== walletBalance;
+  walletBalance = whole;
+  amount.textContent = whole.toLocaleString();
+  hud.title = 'Your Earth Token balance, live from the Kernel';
+  if (!changed) return;
+  // A balance that changes while you are looking at it should say so.
+  hud.classList.remove('pulse');
+  void hud.offsetWidth;                 // restart the animation rather than skip it
+  hud.classList.add('pulse');
+}
+
+/** Ask this origin for the balance. Spectators get a quiet no and keep the dash. */
+async function pollWallet() {
+  try {
+    const response = await fetch('/api/wallet', { headers: { Accept: 'application/json' } });
+    const data = await response.json().catch(() => ({ ok: false }));
+    if (data?.ok && Number.isFinite(Number(data.balance))) showWallet(Number(data.balance));
+  } catch {
+    // Offline or Kernel down: the HUD keeps whatever it last knew rather than
+    // flickering to a dash, which would read as "you were paid nothing".
+  }
+}
+
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 if (!convexUrl) throw new Error('VITE_CONVEX_URL is required');
 const convex = new ConvexClient(convexUrl);
@@ -212,6 +250,10 @@ class EarthScene extends Phaser.Scene {
       const debugWindow = window as unknown as Record<string, unknown>;
       debugWindow.earthGame = this.game;
       debugWindow.__earthDiagnostics = () => this.diagnostics();
+      // The wallet is fed by a cross-origin message or a cookie-backed fetch,
+      // neither of which a local page can produce. Exposed so the HUD can be
+      // exercised in QA without faking an owner session.
+      debugWindow.__earthWallet = (balance: number) => showWallet(balance);
     }
     this.expansionLayer = this.add.graphics();
     this.expansionLayer.setData('persistent-world', true);
@@ -334,16 +376,10 @@ class EarthScene extends Phaser.Scene {
         return;
       }
       if (event.data.type === 'earth-wallet') {
-        // The dashboard fetched this balance with the owner's HttpOnly cookie;
-        // this page only displays what the owner surface already knows. A
-        // spectator never receives the message, so the chip keeps its dash.
-        const balance = Number(event.data.balance);
-        const balanceEl = document.getElementById('wallet-balance');
-        const chip = document.getElementById('wallet-chip');
-        if (balanceEl && chip && Number.isInteger(balance) && balance >= 0) {
-          balanceEl.textContent = String(balance);
-          chip.title = 'Your Earth Token balance, live from the Kernel';
-        }
+        // Embedded in the dashboard, the balance is handed in rather than
+        // fetched again. Opened directly, `pollWallet` fetches its own - see
+        // api/wallet.js. Either way the same HUD shows the same number.
+        showWallet(Number(event.data.balance));
         return;
       }
       if (event.data.type !== 'earth-focus-agent' || !isAgentId(event.data.agentId)) return;
@@ -389,15 +425,25 @@ class EarthScene extends Phaser.Scene {
     convex.onUpdate(api.world.feed, {}, (rows: Array<{ id: string; gloss: string; kind?: string; actorId?: string; payload?: { targetId?: string; requesterId?: string } }>) => {
       const feed = document.getElementById('feedLines') || document.getElementById('feed');
       for (const row of rows) {
-        const money = row.kind === 'token_reward' || row.kind === 'token_transfer' || row.kind === 'package_delivered' || row.kind === 'bank_sale';
+        // A like now carries a tip and a deposit now mines a reward, so both
+        // move money and both belong here. Adding the branch below without
+        // adding the kind here would have drawn nothing, silently.
+        const MONEY_KINDS = new Set(['token_reward', 'token_transfer', 'package_delivered', 'bank_sale', 'like', 'bank_deposit']);
+        const money = MONEY_KINDS.has(String(row.kind));
         if (!money || this.seenMoneyEvents.has(row.id)) continue;
         this.seenMoneyEvents.add(row.id);
         if (!this.tokenFeedReady) continue; // history primes silently on load
-        const payload = row.payload ?? {};
+        // The feed carries a different shape per event kind, so this is read
+        // defensively rather than pinned to one union that would be wrong for most.
+        const payload: Record<string, unknown> = (row.payload ?? {}) as Record<string, unknown>;
         // Payment direction: a transfer flies sender -> recipient; a delivered
         // package flies the price requester -> provider.
-        if (row.kind === 'token_transfer' && row.actorId && payload.targetId) this.coinArc(row.actorId, payload.targetId);
-        else if (row.kind === 'package_delivered' && payload.requesterId && row.actorId) this.coinArc(payload.requesterId, row.actorId);
+        const who = (key: string) => (typeof payload[key] === 'string' ? String(payload[key]) : '');
+        const howMuch = (key: string) => Number(payload[key] ?? 0);
+        if (row.kind === 'token_transfer' && row.actorId && who('targetId')) this.coinArc(row.actorId, who('targetId'), howMuch('amount'));
+        else if (row.kind === 'package_delivered' && who('requesterId') && row.actorId) this.coinArc(who('requesterId'), row.actorId, howMuch('priceTokens'));
+        else if (row.kind === 'like' && who('targetId') && row.actorId && howMuch('tip') > 0) this.coinArc(row.actorId, who('targetId'), howMuch('tip'));
+        else if (row.kind === 'bank_deposit' && row.actorId && howMuch('mined') > 0) this.floatTokens(row.actorId, howMuch('mined'));
         else if (row.kind === 'bank_sale' && row.actorId) this.coinArcToBank(row.actorId);
         else if (row.actorId) this.tokenReward(row.actorId);
       }
@@ -405,6 +451,10 @@ class EarthScene extends Phaser.Scene {
       if (!feed) return;
       feed.replaceChildren(...rows.slice(0, 6).map((row) => element('div', 'feed-line', row.gloss)));
     });
+    // Opened directly rather than embedded, nothing hands this page a balance,
+    // so it asks for one - and keeps asking, because tokens move while you watch.
+    void pollWallet();
+    window.setInterval(() => { void pollWallet(); }, 20_000);
     convex.onUpdate(api.world.stats, {}, (stat: { population: number; live: number; bankedSkills: number }) => {
       for (const [id, value] of [['m-live', stat.live], ['m-joined', stat.population], ['m-banked', stat.bankedSkills]] as const) {
         const el = document.getElementById(id);
@@ -1523,7 +1573,37 @@ class EarthScene extends Phaser.Scene {
    * this world does not do smooth gradients. Falls back to the single-citizen
    * rise when only one party is on the map.
    */
-  coinArc(fromAgentId: string, toAgentId: string) {
+  /**
+   * The amount, floating up off the citizen it happened to.
+   *
+   * A coin arc says a trade occurred; it does not say what it cost. This is
+   * the figure, in the token's own unit, rising from the sprite that gained or
+   * lost it - so a citizen watching their own agent can read the transaction
+   * without opening a panel.
+   */
+  floatTokens(agentId: string, delta: number) {
+    const sprite = this.sprites.get(agentId);
+    if (!sprite || !Number.isFinite(delta) || delta === 0) return;
+    const gain = delta > 0;
+    const label = this.add.text(sprite.x, sprite.y - 38,
+      `${gain ? '+' : '−'}${Math.abs(Math.round(delta)).toLocaleString()} ET`, {
+        fontFamily: 'Consolas, monospace', fontSize: '13px', fontStyle: 'bold',
+        color: gain ? '#2F6B3A' : '#B4551F',
+        stroke: '#FDF6EC', strokeThickness: 4,
+      }).setOrigin(0.5, 1).setDepth(10_001);
+    this.objectLayer?.add(label);
+    this.tweens.add({
+      targets: label, y: label.y - 34, alpha: 0,
+      duration: 1_400, ease: 'Cubic.easeOut',
+      onComplete: () => label.destroy(),
+    });
+  }
+
+  coinArc(fromAgentId: string, toAgentId: string, amount = 0) {
+    if (amount > 0) {
+      this.floatTokens(fromAgentId, -amount);
+      this.floatTokens(toAgentId, amount);
+    }
     const from = this.sprites.get(fromAgentId);
     const to = this.sprites.get(toAgentId);
     if (!from || !to) {
