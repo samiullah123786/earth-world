@@ -226,3 +226,79 @@ describe('the faucets', () => {
     });
   });
 });
+
+describe('the statement says what each movement was for', () => {
+  it('reads a plot out of a build fee even though agent ids contain colons', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const builder = await activeAgent(t, 'statement-build');
+    await t.run(async (ctx) => {
+      const { payToTreasury } = await import('./economy');
+      await payToTreasury(ctx, {
+        fromAgentId: builder.agentId, amount: BUILD_FEE, kind: 'build_fee',
+        reason: 'Building rights for a garden.',
+        // The real shape: prefix, agent id (which has its own colon), plot, geometry.
+        sourceId: `build:${builder.agentId}:plot-22-30:22:30:2x2`,
+      });
+    });
+    const wallet: any = await t.mutation(internal.kernel.ownerWallet, { tokenHash: builder.ownerToken });
+    const fee = wallet.entries.find((row: any) => row.kind === 'build_fee');
+    expect(fee).toBeDefined();
+    expect(fee.subject.type).toBe('land');
+    expect(fee.subject.ref).toBe('plot-22-30');
+    expect(fee.subject.name).toContain('plot-22-30');
+    expect(fee.amount).toBe(-BUILD_FEE);
+    expect(fee.direction).toBe('out');
+  });
+
+  it('names the skill a mining reward was paid for', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const author = await activeAgent(t, 'statement-mine');
+    const digest = 'c'.repeat(64);
+    await t.run(async (ctx) => {
+      const { mintToTreasury, fundBank, payFromBank } = await import('./economy');
+      const storageId = await ctx.storage.store(new Blob(['orchard notes']));
+      const doc = await ctx.db.insert('bankAssets', {
+        assetId: 'pending', digest: 'd'.repeat(64), normalizedDigest: digest,
+        title: 'orchard-notes', summary: 'How the orchard behaves.',
+        depositorAgentId: author.agentId, alsoDepositedBy: [], categories: ['general'],
+        sizeBytes: 512, fileCount: 1, storageId, license: 'CC-BY-4.0',
+        source: 'local' as const, safety: { verdict: 'inert_safe' as const, flags: [], note: '', scannerVersion: '1' },
+        priceTokens: 0, state: 'deposited' as const, createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      await ctx.db.patch(doc, { assetId: `asset:${doc}` });
+      await mintToTreasury(ctx, { amount: 5_000, reason: 'Reserve.', sourceId: 'mint:stmt', authorizedBy: 'agent:mayor' });
+      await fundBank(ctx, { amount: 5_000, reason: 'Fund the Bank.', sourceId: 'fund:stmt', authorizedBy: 'agent:mayor' });
+      await payFromBank(ctx, {
+        toAgentId: author.agentId, amount: MINING_REWARD,
+        reason: 'Novel knowledge accepted.', sourceId: `mine:${digest}`,
+      });
+    });
+    const wallet: any = await t.mutation(internal.kernel.ownerWallet, { tokenHash: author.ownerToken });
+    const mined = wallet.entries.find((row: any) => row.kind === 'bank_payout');
+    // The whole point: the line names the skill, not just the amount.
+    expect(mined.subject.type).toBe('skill');
+    expect(mined.subject.name).toBe('orchard-notes');
+    expect(mined.counterparty).toBe('The Earth Bank');
+    expect(mined.direction).toBe('in');
+    expect(mined.balanceAfter).toBe(wallet.balance);
+  });
+
+  it('lists what the Bank owes but has not paid', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const owed = await activeAgent(t, 'statement-owed');
+    await t.run(async (ctx) => {
+      const doc = await ctx.db.insert('bankClaims', {
+        claimId: 'pending', agentId: owed.agentId, amount: MINING_REWARD,
+        reason: 'Novel knowledge the Bank could not pay for.', sourceId: 'mine:unpaid',
+        state: 'owed' as const, createdAt: Date.now(),
+      });
+      await ctx.db.patch(doc, { claimId: `claim:${doc}` });
+    });
+    const wallet: any = await t.mutation(internal.kernel.ownerWallet, { tokenHash: owed.ownerToken });
+    expect(wallet.pendingTotal).toBe(MINING_REWARD);
+    expect(wallet.pending[0].reason).toContain('could not pay');
+  });
+});

@@ -3305,17 +3305,28 @@ export const ownerSession = internalQuery({
     const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).collect();
     const civicApplications = await ctx.db.query('civicApplications').withIndex('agent_created', (q) => q.eq('agentId', agent.agentId)).order('desc').take(20);
     const skillShares = await ctx.db.query('skillShares').withIndex('recipient_created', (q) => q.eq('recipientId', agent.agentId)).order('desc').take(20);
-    const isFable = agent.name === 'Fable' || agent.agentId === 'agent:fable-cbf0499925';
-    return { agentId: isFable ? MAYOR_ID : agent.agentId, agentName: isFable ? 'Sam' : agent.name, ownerName: agent.ownerName,
+    // No aliasing and no hardcoded seat. A leftover Fable->Sam rename reported
+    // isMayor for a NAME rather than for the office, and governance carried the
+    // FOUNDING mayor id instead of whoever actually holds it - so a dashboard
+    // could tell one owner they were Mayor and name a different one in the same
+    // breath. Both now read the seat, once.
+    return { agentId: agent.agentId, agentName: agent.name, ownerName: agent.ownerName,
       gender: agent.gender, family: agent.family, accent: agent.accent,
+      // The avatar the world actually draws. Without this the dashboard had
+      // nothing to go on and invented its own figure, which looked like a
+      // different citizen entirely.
+      avatarSpec: agent.avatarSpec ?? null,
       specialties: agent.specialties ?? [agent.family], primaryCategory: agent.primaryCategory ?? agent.family,
       skillCount: agent.skillCount ?? 0, experienceTier: agent.experienceTier ?? 'emerging', autonomy: agent.autonomy ?? 'light',
       skillPolicy: agent.skillPolicy ?? 'safe_auto',
       plot: plot ?? null, builds, isFounder: world.founderAgentId === agent.agentId,
-      isMayor: isFable || world.mayorAgentId === agent.agentId,
+      isMayor: world.mayorAgentId === agent.agentId,
       unreadNotifications: notifications.filter((notification: any) => !notification.readAt).length,
       rank: rankSnapshot(contributions), quests: dailyQuests(contributions), civicApplications, skillShares,
-      governance: { landPolicy: world.landPolicy, mayorAgentId: MAYOR_ID, width: world.width, height: world.height, generation: world.generation },
+      governance: {
+        landPolicy: world.landPolicy, mayorAgentId: world.mayorAgentId ?? null,
+        width: world.width, height: world.height, generation: world.generation,
+      },
       expiresAt: session.expiresAt };
   },
 });
@@ -5430,17 +5441,157 @@ export const ownerWallet = internalMutation({
   },
 });
 
+/**
+ * What a movement was actually FOR.
+ *
+ * Every entry already carries a sourceId, and that id is not decoration: it is
+ * the address of the thing the money was about. Resolving it turns "-2 trade
+ * payment" into "-2, bought tidy-notes from Verity", which is the difference
+ * between a ledger somebody can audit and a list of numbers.
+ *
+ * An unknown prefix resolves to null rather than a guess. A statement that
+ * invents a subject is worse than one that admits it does not know.
+ */
+async function subjectOfMovement(ctx: any, entry: any) {
+  const parts = String(entry.sourceId ?? '').split(':');
+  const prefix = parts[0];
+  try {
+    if (prefix === 'mine') {
+      // Keyed on the normalized content digest, so the skill is found whatever
+      // the depositor happened to call it.
+      const asset = await ctx.db.query('bankAssets')
+        .withIndex('normalizedDigest', (q: any) => q.eq('normalizedDigest', parts[1] ?? '')).first();
+      return asset
+        ? { type: 'skill', ref: asset.assetId, name: asset.title, note: 'mined for banking novel knowledge' }
+        : null;
+    }
+    if (prefix === 'trade' || prefix === 'bank_fee') {
+      const trade = await ctx.db.query('skillTrades')
+        .withIndex('tradeId', (q: any) => q.eq('tradeId', parts.slice(1).join(':'))).first();
+      if (!trade) return null;
+      const pack = trade.packageId
+        ? await ctx.db.query('skillPackages').withIndex('packageId', (q: any) => q.eq('packageId', trade.packageId)).first()
+        : null;
+      const asset = !pack && trade.assetId
+        ? await ctx.db.query('bankAssets').withIndex('assetId', (q: any) => q.eq('assetId', trade.assetId)).first()
+        : null;
+      return {
+        type: 'skill',
+        ref: trade.tradeId,
+        name: pack?.name ?? asset?.title ?? 'a knowledge package',
+        note: prefix === 'bank_fee' ? 'the Bank fee on this sale' : 'a knowledge package changing hands',
+      };
+    }
+    if (prefix === 'like_tip') {
+      const like = await ctx.db.query('likes')
+        .withIndex('pairKey', (q: any) => q.eq('pairKey', parts.slice(1).join(':'))).first();
+      return {
+        type: 'reputation', ref: like?.pairKey ?? null, name: 'a like',
+        note: like?.reason ?? 'reputation, paid out of the liker own wallet',
+      };
+    }
+    if (prefix === 'venue') {
+      return { type: 'venue', ref: null, name: 'a venue booking', note: 'booked a public venue for a meeting' };
+    }
+    if (prefix === 'build') {
+      // An agent id contains a colon of its own, so positional indexing lands
+      // on the wrong segment. Find the plot by its shape instead of its place.
+      const plotId = parts.find((part: string) => part.startsWith('plot-')) ?? null;
+      return {
+        type: 'land', ref: plotId,
+        name: plotId ? `building rights on ${plotId}` : 'building rights',
+        note: 'a permit bought before the review, like any application fee',
+      };
+    }
+    if (prefix === 'stipend') {
+      return { type: 'stipend', ref: parts[2] ?? null, name: 'daily stipend', note: 'paid for acting on Earth that day' };
+    }
+    if (prefix === 'genesis') return { type: 'arrival', ref: null, name: 'arrival grant', note: 'given once, on joining' };
+    if (prefix === 'gift') {
+      return { type: 'skill', ref: parts.slice(1).join(':'), name: 'knowledge given away', note: 'a matched evidence card' };
+    }
+    if (prefix === 'bank_funding') return { type: 'treasury', ref: null, name: 'Bank funding', note: 'the Mayor topping up the Bank' };
+    if (prefix === 'mint') return { type: 'treasury', ref: null, name: 'mint', note: 'new supply into the Treasury' };
+    if (prefix === 'send') return { type: 'transfer', ref: null, name: 'a direct send', note: 'one citizen to another' };
+  } catch {
+    // A statement must never fail to render because one lookup went wrong.
+    return null;
+  }
+  return null;
+}
+
+/**
+ * A full statement: every movement, what it was for, who it was with, and the
+ * balance standing after it. Plus what is still owed - money promised and not
+ * yet received belongs on a statement rather than being invisible until it
+ * happens to land.
+ */
+async function statementFor(ctx: any, agentId: string, limit = 60) {
+  const received = await ctx.db.query('ledger').withIndex('to_created', (q: any) => q.eq('toAgentId', agentId)).order('desc').take(limit);
+  const sent = await ctx.db.query('ledger').withIndex('from_created', (q: any) => q.eq('fromAgentId', agentId)).order('desc').take(limit);
+  const merged = [...received, ...sent].sort((left, right) => right.createdAt - left.createdAt).slice(0, limit);
+
+  const names = new Map<string, string>();
+  const nameOf = async (id?: string | null) => {
+    if (!id) return null;
+    if (id === BANK_ACCOUNT) return 'The Earth Bank';
+    if (id === 'kernel' || id === 'operator') return 'The Kernel';
+    if (names.has(id)) return names.get(id) ?? id;
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', id)).first();
+    const name = citizen?.name ?? id;
+    names.set(id, name);
+    return name;
+  };
+
+  const balance = await balanceOf(ctx, agentId);
+  const entries: any[] = [];
+  // Walking newest first, the balance before an entry is the balance after it
+  // minus its own effect, so every row can show where the wallet stood.
+  let running = balance;
+  for (const entry of merged) {
+    const outgoing = entry.fromAgentId === agentId;
+    const delta = outgoing ? -entry.amount : entry.amount;
+    entries.push({
+      entryId: entry.entryId,
+      kind: entry.kind,
+      direction: outgoing ? 'out' : 'in',
+      amount: delta,
+      balanceAfter: running,
+      reason: entry.reason,
+      counterpartyId: (outgoing ? entry.toAgentId : entry.fromAgentId) ?? null,
+      counterparty: await nameOf(outgoing ? entry.toAgentId : entry.fromAgentId),
+      subject: await subjectOfMovement(ctx, entry),
+      sourceId: entry.sourceId,
+      createdAt: entry.createdAt,
+    });
+    running -= delta;
+  }
+
+  const pending = (await ctx.db.query('bankClaims').withIndex('state_created', (q: any) => q.eq('state', 'owed')).collect())
+    .filter((row: any) => row.agentId === agentId)
+    .map((row: any) => ({ claimId: row.claimId, amount: row.amount, reason: row.reason, since: row.createdAt }));
+
+  const earned = entries.filter((row) => row.amount > 0).reduce((total, row) => total + row.amount, 0);
+  const spent = entries.filter((row) => row.amount < 0).reduce((total, row) => total - row.amount, 0);
+  const byKind: Record<string, number> = {};
+  for (const row of entries) byKind[row.kind] = (byKind[row.kind] ?? 0) + row.amount;
+
+  return {
+    agentId,
+    balance,
+    pending,
+    pendingTotal: pending.reduce((total: number, row: any) => total + row.amount, 0),
+    entries,
+    totals: { earned, spent, net: earned - spent, byKind },
+    // Kept so older callers reading `history` keep working unchanged.
+    history: entries.map((row) => ({
+      entryId: row.entryId, kind: row.kind, reason: row.reason, createdAt: row.createdAt, amount: row.amount,
+    })),
+  };
+}
+
 async function walletFor(ctx: any, agentId: string) {
-  const received = await ctx.db.query('ledger').withIndex('to_created', (q: any) => q.eq('toAgentId', agentId)).order('desc').take(40);
-  const sent = await ctx.db.query('ledger').withIndex('from_created', (q: any) => q.eq('fromAgentId', agentId)).order('desc').take(40);
-  const history = [...received, ...sent]
-    .sort((left, right) => right.createdAt - left.createdAt)
-    .slice(0, 40)
-    .map((entry) => ({
-      entryId: entry.entryId, kind: entry.kind, reason: entry.reason, createdAt: entry.createdAt,
-      amount: entry.fromAgentId === agentId ? -entry.amount : entry.amount,
-    }));
-  return { agentId, balance: await balanceOf(ctx, agentId), history };
+  return await statementFor(ctx, agentId);
 }
 
 // Founder authority is private-operator only. Public agent and owner sessions
