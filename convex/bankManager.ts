@@ -175,3 +175,99 @@ export const run = internalAction({
     return { ran, granted };
   },
 });
+
+/**
+ * Structured SKILL.md evaluation and embedding.
+ *
+ * Runs on the same cron schedule as the main manager. Processes bankSkills
+ * rows that are in 'deposited' state (need evaluation + embedding) or have
+ * a zero-vector embedding (need re-embedding after sync).
+ *
+ * Two steps per skill:
+ * 1. Generate a 1536-dim embedding from the markdown body.
+ * 2. Run the LLM evaluation prompt (same shape as bankAssets).
+ */
+export const evalSkills = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const key = process.env.OPENAI_API_KEY;
+    if (!key) return { processed: 0, why: 'OPENAI_API_KEY is not configured' };
+
+    const gate: any = await ctx.runMutation(internal.kernel.skillManagerGate, { batch: 3 });
+    if (!gate.allowed) return { processed: 0, why: gate.why };
+
+    let processed = 0;
+    for (const skill of gate.skills) {
+      try {
+        // Step 1: Generate embedding from the skill content.
+        const embeddingText = `${skill.name}: ${skill.description}\n\n${skill.markdownBody}`.slice(0, 32_000);
+
+        const embResponse = await fetch('https://api.openai.com/v1/embeddings', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'text-embedding-3-small',
+            input: embeddingText,
+            dimensions: 1536,
+          }),
+        });
+        if (!embResponse.ok) {
+          console.error(`skill manager: ${skill.skillId} embedding failed: ${embResponse.status}`);
+          continue;
+        }
+        const embBody = await embResponse.json();
+        const embedding: number[] = embBody.data?.[0]?.embedding;
+        if (!Array.isArray(embedding) || embedding.length !== 1536) {
+          console.error(`skill manager: ${skill.skillId} bad embedding shape`);
+          continue;
+        }
+
+        // Step 2: LLM evaluation — same shape as bankAssets evaluation.
+        const model = skill.verdict === 'needs_review' ? ESCALATION_MODEL : ROUTINE_MODEL;
+        const evalText = skill.markdownBody.slice(0, MAX_TEXT);
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            reasoning_effort: model === ESCALATION_MODEL ? 'medium' : 'low',
+            response_format: { type: 'json_object' },
+            messages: evaluationPrompt({
+              title: skill.name,
+              summary: skill.description,
+              license: skill.license,
+              source: skill.sourceKind,
+              categories: [skill.category],
+              verdict: skill.verdict,
+              flags: skill.flags,
+            }, evalText),
+          }),
+        });
+        if (!response.ok) {
+          console.error(`skill manager: ${skill.skillId} eval failed: ${response.status}`);
+          continue;
+        }
+        const body = await response.json();
+        const parsed = JSON.parse(body.choices?.[0]?.message?.content ?? '{}');
+
+        await ctx.runMutation(internal.kernel.applySkillEvaluation, {
+          skillId: skill.skillId,
+          embedding,
+          model: String(body.model ?? model),
+          evaluation: {
+            riskLevel: String(parsed.riskLevel ?? 'high'),
+            riskFindings: Array.isArray(parsed.riskFindings) ? parsed.riskFindings.map(String).slice(0, 8) : [],
+            valueRank: Number(parsed.valueRank ?? 1),
+            categories: Array.isArray(parsed.categories) ? parsed.categories.map(String).slice(0, 5) : [],
+            novelCategory: typeof parsed.novelCategory === 'string' && parsed.novelCategory.trim() ? parsed.novelCategory : undefined,
+            summary: String(parsed.summary ?? 'No appraisal was written.').slice(0, 400),
+          },
+        });
+        processed += 1;
+      } catch (error) {
+        console.error(`skill manager: ${skill.skillId} failed: ${String(error).slice(0, 200)}`);
+      }
+    }
+    return { processed };
+  },
+});

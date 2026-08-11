@@ -12,6 +12,7 @@ crons.interval('meeting scheduler', { seconds: 30 }, internal.kernel.meetingTick
 // The Bank Manager reads new deposits. Budget-gated and pausable by the Mayor;
 // a tick with nothing pending costs nothing at all.
 crons.interval('bank manager', { minutes: 3 }, internal.bankManager.run, {});
+crons.interval('skill manager', { minutes: 3 }, internal.bankManager.evalSkills, {});
 
 // The committee watches deterministic counters and words a report only when
 // something is actually wrong, at most once per six hours.

@@ -11,10 +11,12 @@
 import type * as act from "../act.js";
 import type * as authorities from "../authorities.js";
 import type * as bankManager from "../bankManager.js";
+import type * as bankSearch from "../bankSearch.js";
 import type * as committee from "../committee.js";
 import type * as community from "../community.js";
 import type * as crons from "../crons.js";
 import type * as economy from "../economy.js";
+import type * as embeddings from "../embeddings.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
 import type * as pathfinding from "../pathfinding.js";
@@ -36,10 +38,12 @@ declare const fullApi: ApiFromModules<{
   act: typeof act;
   authorities: typeof authorities;
   bankManager: typeof bankManager;
+  bankSearch: typeof bankSearch;
   committee: typeof committee;
   community: typeof community;
   crons: typeof crons;
   economy: typeof economy;
+  embeddings: typeof embeddings;
   http: typeof http;
   kernel: typeof kernel;
   pathfinding: typeof pathfinding;

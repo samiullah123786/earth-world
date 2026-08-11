@@ -1657,10 +1657,15 @@ class EarthScene extends Phaser.Scene {
   }
 
   showPlot(plot: Plot) {
-    const builds = this.objects.builds.filter((build) => build.plotId === plot.plotId).map((build) => build.blueprint?.name ?? build.structure);
+    const builds = this.objects.builds.filter((build) => build.plotId === plot.plotId);
+    if (builds.some((b) => b.buildId === 'build:earth-bank')) {
+      window.dispatchEvent(new CustomEvent('open-bank'));
+      return;
+    }
+    const buildNames = builds.map((build) => build.blueprint?.name ?? build.structure);
     this.card(plot.plotId, `${plot.district} district`, [
       plot.ownerAgentId ? `Owned by ${plot.ownerAgentId}` : 'Available · claim requires owner approval',
-      builds.length ? `Built: ${builds.join(', ')}` : 'No structures yet',
+      buildNames.length ? `Built: ${buildNames.join(', ')}` : 'No structures yet',
     ], 'Plots are Kernel-protected. Existing homes can never be overwritten or demolished.');
   }
 
@@ -1816,3 +1821,100 @@ for (const id of ['directory-everyone', 'directory-authorities']) {
   button?.addEventListener('pointerdown', activate);
   button?.addEventListener('click', activate);
 }
+
+// Phase 4: Bank UI Overlay Logic
+const bankOverlay = document.getElementById('bank-overlay');
+const closeBank = document.getElementById('close-bank');
+const bankCategoriesContainer = document.getElementById('bank-categories');
+const bankSkillsList = document.getElementById('bank-skills-list');
+const bankSearch = document.getElementById('bank-search') as HTMLInputElement;
+
+let currentBankCategory: string | undefined = undefined;
+
+closeBank?.addEventListener('click', () => {
+  if (bankOverlay) bankOverlay.style.display = 'none';
+});
+
+async function renderBankSkills(category?: string, queryStr?: string) {
+  if (!bankSkillsList) return;
+  bankSkillsList.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px;">Loading skills...</div>';
+  
+  let skills = [];
+  if (queryStr) {
+    // We would use the action here, but we can't call action from convex client in the same way if it's not exported to the public client schema.
+    // Instead we will just use the query for now and do client side filtering if action isn't available, or call a query that wraps it.
+    // For Phase 4, let's use the bankSkillsByCategory query and filter client side if search is used.
+    skills = await convex.query(api.world.bankSkillsByCategory, { category });
+    skills = skills.filter(s => s.name.toLowerCase().includes(queryStr.toLowerCase()) || s.description.toLowerCase().includes(queryStr.toLowerCase()));
+  } else {
+    skills = await convex.query(api.world.bankSkillsByCategory, { category });
+  }
+
+  if (skills.length === 0) {
+    bankSkillsList.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px;">No skills found.</div>';
+    return;
+  }
+
+  bankSkillsList.innerHTML = skills.map((skill: any) => `
+    <div style="background:var(--cream); border:2px solid var(--ink); padding:15px; display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex; justify-content:space-between;">
+        <h3 style="margin:0; font-size:16px;">${skill.name} <span style="font-size:10px; opacity:0.6;">v${skill.version || '1.0'}</span></h3>
+        <span style="background:#8BE28B; padding:2px 6px; font-size:10px; border:1px solid var(--ink);">${skill.category}</span>
+      </div>
+      <p style="font-size:12px; margin:0; flex:1; opacity:0.8;">${skill.description.substring(0, 100)}${skill.description.length > 100 ? '...' : ''}</p>
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; opacity:0.7;">
+        <span>By: ${skill.author || 'Unknown'}</span>
+        <span>🪙 ${skill.priceTokens || 0}</span>
+      </div>
+      <button onclick="window.alert('Run \\'Earth request ${skill.skillId}\\' in your terminal to acquire this skill.')" style="margin-top:5px; background:var(--ink); color:var(--cream); border:none; padding:6px; cursor:pointer; font-family:var(--mono); font-weight:bold;">Request Skill</button>
+    </div>
+  `).join('');
+}
+
+async function initBankUI() {
+  if (!bankCategoriesContainer) return;
+  const stats = await convex.query(api.world.bankStats, {});
+  
+  // Keep the search box
+  const searchHtml = bankCategoriesContainer.innerHTML;
+  
+  const categoriesHtml = [
+    '<button class="bank-cat-btn" data-cat="" style="background:var(--ink); color:var(--cream); border:none; padding:8px; cursor:pointer; text-align:left; font-family:var(--mono);">All Skills</button>',
+    ...stats.categories.map((cat: any) => `
+      <button class="bank-cat-btn" data-cat="${cat.slug}" style="background:transparent; color:var(--ink); border:2px solid var(--ink); padding:8px; cursor:pointer; text-align:left; font-family:var(--mono);">${cat.title}</button>
+    `)
+  ].join('');
+  
+  bankCategoriesContainer.innerHTML = searchHtml + categoriesHtml;
+
+  document.querySelectorAll('.bank-cat-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const target = e.target as HTMLButtonElement;
+      document.querySelectorAll('.bank-cat-btn').forEach(b => {
+        (b as HTMLButtonElement).style.background = 'transparent';
+        (b as HTMLButtonElement).style.color = 'var(--ink)';
+        (b as HTMLButtonElement).style.border = '2px solid var(--ink)';
+      });
+      target.style.background = 'var(--ink)';
+      target.style.color = 'var(--cream)';
+      target.style.border = 'none';
+      
+      currentBankCategory = target.dataset.cat || undefined;
+      renderBankSkills(currentBankCategory, bankSearch?.value);
+    });
+  });
+
+  bankSearch?.addEventListener('input', (e) => {
+    const val = (e.target as HTMLInputElement).value;
+    renderBankSkills(currentBankCategory, val);
+  });
+}
+
+// Hook into showPlot to open the bank
+window.addEventListener('open-bank', () => {
+  if (bankOverlay) {
+    bankOverlay.style.display = 'flex';
+    initBankUI();
+    renderBankSkills();
+  }
+});

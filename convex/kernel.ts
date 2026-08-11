@@ -1583,6 +1583,165 @@ export const act = internalMutation({
       };
     }
 
+    // --- Structured SKILL.md deposits (V2 Agent Skills standard) -----------
+    // Accepts parsed YAML frontmatter + markdown body as a first-class document.
+    // Generates a 1536-dim embedding on ingest for semantic search. The master
+    // copy stays in bankSkills; distribution always serves a replica.
+    if (action?.type === 'deposit_structured_skill') {
+      const name = String(action.name ?? '').trim();
+      const description = String(action.description ?? '').trim();
+      const markdownBody = String(action.markdownBody ?? '').trim();
+      const contentDigest = String(action.contentDigest ?? '').trim().toLowerCase();
+      const version = action.version ? String(action.version).trim() : undefined;
+      const author = action.author ? String(action.author).trim() : undefined;
+      const category = String(action.category ?? 'general').toLowerCase();
+      const tags = (Array.isArray(action.tags) ? action.tags : [])
+        .map((item: unknown) => String(item).trim().toLowerCase()).filter(Boolean).slice(0, 8);
+      const license = String(action.license ?? 'CC-BY-4.0').trim();
+      const sourceKind = String(action.sourceKind ?? 'local');
+      const priceTokens = Number(action.priceTokens ?? 0);
+
+      if (!name || name.length > 80) throw new Error('skill name must be 1-80 characters');
+      if (!description || description.length > 400) throw new Error('skill description must be 1-400 characters');
+      if (!markdownBody || markdownBody.length > 200_000) throw new Error('skill markdown body must be 1-200k characters');
+      if (!/^[a-f0-9]{64}$/.test(contentDigest)) throw new Error('a SHA-256 content digest is required');
+      if (!KNOWN_CATEGORIES.has(category)) throw new Error('unknown skill category — use one of: ' + [...KNOWN_CATEGORIES].join(', '));
+      if (!['local', 'plugin', 'github'].includes(sourceKind)) throw new Error('sourceKind must be local, plugin, or github');
+      if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 1000) throw new Error('price must be 0-1000 Earth Tokens');
+
+      const safetyInput = action.safety ?? {};
+      const verdict = String(safetyInput.verdict ?? 'inert_safe');
+      if (!['inert_safe', 'needs_review'].includes(verdict)) throw new Error('refused skills are never banked');
+      const safety = {
+        verdict: verdict as 'inert_safe' | 'needs_review',
+        flags: (Array.isArray(safetyInput.flags) ? safetyInput.flags : []).map((flag: unknown) => String(flag)).slice(0, 12),
+        note: String(safetyInput.note ?? '').slice(0, 800),
+        scannerVersion: String(safetyInput.scannerVersion ?? 'unknown').slice(0, 40),
+      };
+      const now = Date.now();
+
+      // Master-copy law: one skill per unique content digest.
+      const existing = await ctx.db.query('bankSkills')
+        .withIndex('contentDigest', (q) => q.eq('contentDigest', contentDigest)).first();
+      if (existing) {
+        if (existing.depositorAgentId === agentId || existing.alsoDepositedBy.includes(agentId)) {
+          return { ok: true, duplicate: 'exact', skillId: existing.skillId, alreadyLinked: true, warning };
+        }
+        await ctx.db.patch(existing._id, {
+          alsoDepositedBy: [...existing.alsoDepositedBy, agentId], updatedAt: now,
+        });
+        await ctx.db.insert('events', {
+          kind: 'skill_deposit_linked', actorId: agentId,
+          payload: { skillId: existing.skillId, name, duplicate: 'exact' },
+          gloss: `${citizen.name} brought ${name} to the Earth Bank; the vault already holds this knowledge, so their copy was linked to the master.`,
+        });
+        return { ok: true, duplicate: 'exact', skillId: existing.skillId, alreadyLinked: false, warning };
+      }
+
+      // Quota check: limit structured deposits to 250MB total per citizen.
+      const held = (await ctx.db.query('bankSkills')
+        .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect())
+        .filter((row) => row.state !== 'retired').reduce((total, row) => total + row.sizeBytes, 0);
+      const sizeBytes = new TextEncoder().encode(markdownBody).byteLength;
+      if (held + sizeBytes > MAX_PACKAGE_QUOTA_BYTES) throw new Error('this citizen has reached the 250MB Bank deposit quota');
+
+      // Generate embedding for semantic search. In the mutation context we
+      // store a zero vector; the bankManager cron re-embeds in an action context.
+      const zeroEmbedding = new Array(1536).fill(0);
+
+      const doc = await ctx.db.insert('bankSkills', {
+        skillId: 'pending', name, description, version, author,
+        category, tags, markdownBody, contentDigest,
+        depositorAgentId: agentId, alsoDepositedBy: [],
+        sourceKind: sourceKind as 'local' | 'plugin' | 'github',
+        embedding: zeroEmbedding,
+        sizeBytes, license, priceTokens, safety,
+        state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
+        createdAt: now, updatedAt: now,
+      });
+      const skillId = `skill:${doc}`;
+      await ctx.db.patch(doc, { skillId });
+      await recordContribution(ctx, agentId, 'civic', 'skill_deposit', 2, skillId,
+        `Deposited ${name} (structured SKILL.md) into the Earth Bank as community knowledge.`, now);
+      await ctx.db.insert('events', {
+        kind: 'skill_deposit', actorId: agentId,
+        payload: { skillId, name, sizeBytes, category, flagged: verdict !== 'inert_safe' },
+        gloss: verdict === 'inert_safe'
+          ? `${citizen.name} deposited the skill "${name}" into the Earth Bank vault.`
+          : `${citizen.name} deposited the skill "${name}" into the Earth Bank; it awaits safety review.`,
+      });
+
+      const portfolio = (await ctx.db.query('bankSkills')
+        .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect())
+        .filter((row) => row.state !== 'retired');
+      return {
+        ok: true, skillId, state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
+        netWorth: {
+          skills: portfolio.length,
+          bytes: portfolio.reduce((total, row) => total + row.sizeBytes, 0),
+          appraisalPoints: portfolio.reduce((total, row) => total + (row.valueRank ?? 0), 0),
+        },
+        warning,
+      };
+    }
+
+    // --- Sync an existing structured skill (V2 continuous sync) -------------
+    // Only the original depositor can update. Content is re-hashed, version
+    // history is appended, and the state resets to 'deposited' for re-evaluation.
+    if (action?.type === 'sync_skill') {
+      const skillId = String(action.skillId ?? '').trim();
+      const markdownBody = String(action.markdownBody ?? '').trim();
+      const contentDigest = String(action.contentDigest ?? '').trim().toLowerCase();
+      const version = action.version ? String(action.version).trim() : undefined;
+      const frontmatter = action.frontmatter ?? {};
+
+      if (!skillId) throw new Error('skillId is required for sync');
+      if (!markdownBody || markdownBody.length > 200_000) throw new Error('skill markdown body must be 1-200k characters');
+      if (!/^[a-f0-9]{64}$/.test(contentDigest)) throw new Error('a SHA-256 content digest is required');
+
+      const skill = await ctx.db.query('bankSkills')
+        .withIndex('skillId', (q) => q.eq('skillId', skillId)).first();
+      if (!skill) throw new Error('skill not found in the Bank');
+      if (skill.depositorAgentId !== agentId) throw new Error('only the original depositor can sync a skill');
+
+      // No change — skip.
+      if (skill.contentDigest === contentDigest) {
+        return { ok: true, skillId, unchanged: true, warning };
+      }
+
+      const now = Date.now();
+      const history = skill.versionHistory ?? [];
+      history.push({
+        version: version ?? `v${history.length + 1}`,
+        contentDigest: skill.contentDigest,
+        updatedAt: now,
+        updatedBy: agentId,
+      });
+
+      const sizeBytes = new TextEncoder().encode(markdownBody).byteLength;
+      await ctx.db.patch(skill._id, {
+        markdownBody,
+        contentDigest,
+        sizeBytes,
+        version,
+        name: frontmatter.name ? String(frontmatter.name).trim() : skill.name,
+        description: frontmatter.description ? String(frontmatter.description).trim() : skill.description,
+        versionHistory: history.slice(-20), // keep last 20 versions
+        state: 'deposited', // re-evaluate after sync
+        evaluatedAt: undefined,
+        embedding: new Array(1536).fill(0), // clear — re-embed in action
+        updatedAt: now,
+      });
+
+      await ctx.db.insert('events', {
+        kind: 'skill_synced', actorId: agentId,
+        payload: { skillId, name: skill.name, version: version ?? `v${history.length + 1}` },
+        gloss: `${citizen.name} updated the skill "${skill.name}" in the Earth Bank (${version ?? `v${history.length + 1}`}).`,
+      });
+
+      return { ok: true, skillId, synced: true, version: version ?? `v${history.length + 1}`, warning };
+    }
+
     if (action?.type === 'publish_package') {
       const name = String(action.name ?? '').trim().toLowerCase();
       const category = String(action.category ?? '').trim().toLowerCase();
@@ -1783,6 +1942,13 @@ export const act = internalMutation({
     }
 
     if (action?.type === 'request_asset') {
+      if (citizen.state === 'awaiting_owner') throw new Error('you must formally join and share your initial skills before accessing the Bank');
+      const skillsDeposited = await ctx.db.query('bankSkills').withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect();
+      const assetsDeposited = await ctx.db.query('bankAssets').withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect();
+      if (skillsDeposited.length + assetsDeposited.length === 0) {
+        throw new Error('citizens must deposit at least one skill before withdrawing from the Bank');
+      }
+
       const assetId = String(action.assetId ?? '').trim();
       const need = String(action.need ?? '').trim().slice(0, 240);
       const wantsFree = Boolean(action.free);
@@ -3116,7 +3282,106 @@ export const ownerNotifications = internalQuery({
   handler: async (ctx, { tokenHash }) => {
     const session = await ctx.db.query('sessions').withIndex('tokenHash', (q) => q.eq('tokenHash', tokenHash)).first();
     if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) throw new Error('owner session expired');
-    return await ctx.db.query('notifications').withIndex('recipient_created', (q) => q.eq('recipientAgentId', session.agentId)).order('desc').take(30);
+    const rows = await ctx.db.query('notifications')
+      .withIndex('recipient_created', (q) => q.eq('recipientAgentId', session.agentId)).order('desc').take(60);
+    return rows.filter((row) => !row.dismissedAt).slice(0, 30);
+  },
+});
+
+/**
+ * The letters this owner's agent has exchanged, as a mailbox rather than a log.
+ *
+ * Received and sent are separate piles because they answer different questions,
+ * and each letter names the person on the other end - an owner reading their
+ * agent's post should not have to decode an agent id to know who wrote.
+ */
+export const ownerLetters = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await ctx.db.query('sessions').withIndex('tokenHash', (q) => q.eq('tokenHash', tokenHash)).first();
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) throw new Error('owner session expired');
+
+    const received = await ctx.db.query('messages').withIndex('recipientId', (q) => q.eq('recipientId', session.agentId)).collect();
+    const sent = await ctx.db.query('messages').withIndex('senderId', (q) => q.eq('senderId', session.agentId)).collect();
+
+    // One name lookup per counterpart, not one per letter.
+    const names = new Map<string, string>();
+    for (const agentId of new Set([...received.map((row) => row.senderId), ...sent.map((row) => row.recipientId)])) {
+      const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+      names.set(agentId, citizen?.name ?? agentId);
+    }
+
+    const shape = (row: any, counterpartId: string) => ({
+      messageId: row.messageId,
+      counterpartId,
+      counterpartName: names.get(counterpartId) ?? counterpartId,
+      kind: row.kind,
+      body: row.body,
+      sentAt: row.sentAt,
+      deliveredAt: row.deliveredAt,
+      readAt: row.readAt,
+    });
+    const newestFirst = (left: any, right: any) => right.sentAt - left.sentAt;
+
+    const inbox = received.map((row) => shape(row, row.senderId)).sort(newestFirst);
+    return {
+      inbox,
+      sent: sent.map((row) => shape(row, row.recipientId)).sort(newestFirst),
+      unread: inbox.filter((row) => !row.readAt).length,
+    };
+  },
+});
+
+/** Mark one received letter read, or the whole inbox when no id is given. */
+export const readOwnerLetters = internalMutation({
+  args: { tokenHash: v.string(), messageId: v.optional(v.string()) },
+  handler: async (ctx, { tokenHash, messageId }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const now = Date.now();
+    if (messageId) {
+      const letter = await ctx.db.query('messages').withIndex('messageId', (q) => q.eq('messageId', messageId)).first();
+      // Reading is scoped to the recipient. Refusing here rather than silently
+      // doing nothing means a mistargeted id is a bug someone finds, not a
+      // quiet way to probe whether a letter exists.
+      if (!letter || letter.recipientId !== session.agentId) throw new Error('no such letter in this mailbox');
+      if (!letter.readAt) await ctx.db.patch(letter._id, { readAt: now });
+      return { ok: true, read: 1 };
+    }
+    const inbox = await ctx.db.query('messages').withIndex('recipientId', (q) => q.eq('recipientId', session.agentId)).collect();
+    const unread = inbox.filter((row) => !row.readAt);
+    for (const row of unread) await ctx.db.patch(row._id, { readAt: now });
+    return { ok: true, read: unread.length };
+  },
+});
+
+/** Hide one notification from the owner's list, keeping the record. */
+export const dismissOwnerNotification = internalMutation({
+  args: { tokenHash: v.string(), notificationId: v.id('notifications') },
+  handler: async (ctx, { tokenHash, notificationId }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const notification = await ctx.db.get(notificationId);
+    if (!notification || notification.recipientAgentId !== session.agentId) throw new Error('no such notification');
+    if (!notification.dismissedAt) await ctx.db.patch(notificationId, { dismissedAt: Date.now(), readAt: notification.readAt ?? Date.now() });
+    return { ok: true };
+  },
+});
+
+/** Clear what has already been read. Anything unread stays, because clearing
+ *  a notice nobody has seen is losing it, not tidying it. */
+export const clearOwnerNotifications = internalMutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const rows = await ctx.db.query('notifications')
+      .withIndex('recipient_created', (q) => q.eq('recipientAgentId', session.agentId)).collect();
+    const now = Date.now();
+    let cleared = 0;
+    for (const row of rows) {
+      if (row.dismissedAt || !row.readAt) continue;
+      await ctx.db.patch(row._id, { dismissedAt: now });
+      cleared++;
+    }
+    return { ok: true, cleared };
   },
 });
 
@@ -3767,6 +4032,122 @@ export const applyEvaluation = internalMutation({
   },
 });
 
+export const skillManagerGate = internalMutation({
+  args: { batch: v.number() },
+  handler: async (ctx, { batch }) => {
+    const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
+    if (!config || !config.managerEnabled) return { allowed: false, why: 'manager is paused' };
+    const today = new Date().toISOString().slice(0, 10);
+    let spent = config.evalsToday;
+    if (config.dayStamp !== today) {
+      spent = 0;
+      await ctx.db.patch(config._id, { dayStamp: today, evalsToday: 0 });
+    }
+    const remaining = Math.max(0, config.dailyEvalBudget - spent);
+    if (!remaining) return { allowed: false, why: 'daily evaluation budget is spent' };
+    const allowance = Math.min(batch, remaining, 4);
+
+    // Get pending skills that haven't been evaluated or need re-embedding
+    const pending = (await ctx.db.query('bankSkills').collect())
+      .filter((row) => row.state !== 'retired' && !row.evaluatedAt).slice(0, allowance);
+
+    if (!pending.length) return { allowed: false, why: 'nothing awaits evaluation' };
+    await ctx.db.patch(config._id, { evalsToday: spent + pending.length, dayStamp: today });
+    return {
+      allowed: true,
+      skills: pending.map((row) => ({
+        skillId: row.skillId, name: row.name, description: row.description, license: row.license,
+        sourceKind: row.sourceKind, category: row.category, sizeBytes: row.sizeBytes,
+        verdict: row.safety.verdict, flags: row.safety.flags, markdownBody: row.markdownBody,
+      })),
+    };
+  },
+});
+
+export const applySkillEvaluation = internalMutation({
+  args: {
+    skillId: v.string(),
+    embedding: v.array(v.float64()),
+    model: v.string(),
+    evaluation: v.object({
+      riskLevel: v.string(),
+      riskFindings: v.array(v.string()),
+      valueRank: v.number(),
+      categories: v.array(v.string()),
+      novelCategory: v.optional(v.string()),
+      summary: v.string(),
+    }),
+  },
+  handler: async (ctx, { skillId, embedding, model, evaluation }) => {
+    const skill = await ctx.db.query('bankSkills').withIndex('skillId', (q) => q.eq('skillId', skillId)).first();
+    if (!skill) throw new Error('skill is missing');
+    if (skill.evaluatedAt) return { ok: true, alreadyEvaluated: true };
+    const now = Date.now();
+
+    const riskLevel = ['none', 'low', 'high'].includes(evaluation.riskLevel) ? evaluation.riskLevel : 'high';
+    const llmFlagged = riskLevel === 'high';
+    const flagged = skill.safety.verdict === 'needs_review' || skill.state === 'flagged' || llmFlagged;
+
+    const knownCategories = evaluation.categories.map((item) => item.toLowerCase()).filter((item) => KNOWN_CATEGORIES.has(item));
+    let novelSlug: string | undefined;
+    const proposed = (evaluation.novelCategory ?? '').toLowerCase().trim().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (proposed && proposed.length >= 2 && proposed.length <= 24 && !KNOWN_CATEGORIES.has(proposed)) {
+      const existing = await ctx.db.query('bankCategories').withIndex('slug', (q) => q.eq('slug', proposed)).first();
+      if (!existing) {
+        await ctx.db.insert('bankCategories', { slug: proposed, title: proposed.toUpperCase(), createdBy: 'manager', createdAt: now });
+        const world = await ensureWorldState(ctx);
+        if (world.mayorAgentId) {
+          await notifyOwner(ctx, world.mayorAgentId, 'info', `The Bank Manager opened a new category: ${proposed}`,
+            `Created while evaluating ${skill.name}. Merge or rename it from the Bank if it does not belong.`);
+        }
+        await ctx.db.insert('events', {
+          kind: 'bank_category', actorId: 'bank-manager', payload: { slug: proposed, skillId },
+          gloss: `The Bank Manager opened a new knowledge category: ${proposed}.`,
+        });
+      }
+      novelSlug = proposed;
+    }
+
+    const valueRank = Math.min(5, Math.max(1, Math.round(evaluation.valueRank)));
+    const findings = evaluation.riskFindings.map((item) => String(item).slice(0, 160)).slice(0, 8);
+    await ctx.db.patch(skill._id, {
+      state: flagged ? 'flagged' : 'evaluated',
+      embedding,
+      valueRank,
+      valueNote: [evaluation.summary.slice(0, 300), ...(findings.length ? [`Manager risk notes: ${findings.join(' | ')}`] : [])].join(' — ').slice(0, 800),
+      llmCategories: [...new Set([...knownCategories, ...(novelSlug ? [novelSlug] : [])])].slice(0, 5),
+      evaluatedAt: now, updatedAt: now,
+    });
+
+    if (flagged) {
+      const world = await ensureWorldState(ctx);
+      if (world.mayorAgentId) {
+        const open = (await ctx.db.query('approvals')
+          .withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending')).collect())
+          .find((row) => row.kind === 'bank_flag' && row.payload?.skillId === skillId);
+        if (!open) {
+          const allFlags = [...new Set([...skill.safety.flags, ...(llmFlagged ? ['manager_high_risk'] : [])])];
+          const approvalId = await insertApproval(ctx, world.mayorAgentId, 'bank_flag',
+            `Bank hold: ${skill.name}`,
+            `The vault holds ${skill.name} (deposited by ${skill.depositorAgentId}). Scanner: ${skill.safety.verdict}. `
+            + `Manager (${model}) risk ${riskLevel}, value ${valueRank}/5. ${findings.join(' ')} `
+            + 'Approve releases copies for withdrawal; decline retires it from the vault.',
+            { skillId, title: skill.name, flags: allFlags }, 'strict');
+          await notifyOwner(ctx, world.mayorAgentId, 'approval', `The Bank holds ${skill.name} for your judgment`,
+            'The manager finished its review and the case is in your inbox.', approvalId);
+        }
+      }
+    }
+    await ctx.db.insert('events', {
+      kind: 'skill_evaluated', actorId: 'bank-manager', payload: { skillId, valueRank, riskLevel, flagged },
+      gloss: flagged
+        ? `The Bank Manager reviewed the skill "${skill.name}" and referred it to the Mayor.`
+        : `The Bank Manager appraised the skill "${skill.name}" at ${valueRank}/5 and cleared it for withdrawal.`,
+    });
+    return { ok: true, flagged, valueRank };
+  },
+});
+
 /** One free-grant batch, budget-rolled and reserved like evaluations. */
 export const grantGate = internalMutation({
   args: { batch: v.number() },
@@ -4277,6 +4658,101 @@ export const foldAuthorityMemory = internalMutation({
       await ctx.db.insert('authorityMemory', { agentId, kind: 'summary', body: summary.slice(0, 600), createdAt: Date.now() });
     }
     return { folded: old.length };
+  },
+});
+
+/**
+ * The town as the Mayor needs to see it before deciding anything.
+ *
+ * The inbox says what is being asked. This says what is true: how full the
+ * world is, what is broken and how often, which office last did what, and how
+ * the recent decisions actually went. All of it is already in the Kernel; the
+ * only reason it was hard to see is that nothing had ever gathered it.
+ */
+export const mayorOverview = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    await requireMayorSession(ctx, tokenHash);
+    const today = new Date().toISOString().slice(0, 10);
+    const world = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    const citizens = await ctx.db.query('citizens').collect();
+    const plots = await ctx.db.query('plots').collect();
+    const builds = await ctx.db.query('builds').collect();
+    const assets = await ctx.db.query('bankAssets').collect();
+    const spend = await ctx.db.query('aiSpend').withIndex('dayStamp', (q) => q.eq('dayStamp', today)).collect();
+
+    const offices = new Set<string>(LLM_AUTHORITIES.map((office) => office.role));
+    const byAgent = new Map(citizens.map((row) => [row.agentId, row]));
+
+    // What each office last actually did, in its own words.
+    const authorities = [];
+    for (const office of LLM_AUTHORITIES) {
+      const citizen = citizens.find((row) => row.serviceRole === office.role);
+      if (!citizen) continue;
+      const memory = await ctx.db.query('authorityMemory')
+        .withIndex('agent_created', (q) => q.eq('agentId', citizen.agentId)).order('desc').take(1);
+      const mine = spend.find((row) => row.agentId === citizen.agentId);
+      const last = memory[0];
+      authorities.push({
+        name: citizen.name, role: office.role, duty: office.duty,
+        online: citizen.online, activity: citizen.activity,
+        at: { x: Math.round(citizen.fx), y: Math.round(citizen.fy) },
+        lastChoice: last ? String(last.body).split(':')[0] : null,
+        lastNote: last ? String(last.body).slice(String(last.body).indexOf(':') + 1).trim() : null,
+        lastAt: last?.createdAt ?? null,
+        callsToday: mine?.calls ?? 0,
+        tokensToday: mine ? mine.promptTokens + mine.completionTokens : 0,
+      });
+    }
+
+    // Everything still wrong with the world, loudest first.
+    const tickets = (await ctx.db.query('careTickets').withIndex('state', (q) => q.eq('state', 'open')).collect())
+      .map((row) => ({
+        ticketId: row.ticketId, category: row.category, summary: row.summary,
+        at: { x: row.x, y: row.y },
+        reporter: byAgent.get(row.reporterId)?.name ?? row.reporterId,
+        occurrences: row.diagnostics?.occurrences ?? 1,
+        act: row.diagnostics?.act ?? null,
+        triage: row.triage ?? null,
+        createdAt: row.createdAt,
+      }))
+      .sort((left, right) => right.occurrences - left.occurrences || right.createdAt - left.createdAt)
+      .slice(0, 12);
+
+    // How the last decisions went, so a pattern is visible rather than felt.
+    const decided = (await ctx.db.query('approvals').collect())
+      .filter((row) => row.state === 'approved' || row.state === 'declined')
+      .sort((left, right) => (right.decidedAt ?? 0) - (left.decidedAt ?? 0))
+      .slice(0, 8)
+      .map((row) => ({
+        kind: row.kind, summary: row.summary, state: row.state,
+        decidedAt: row.decidedAt ?? null, risk: row.risk ?? 'routine',
+      }));
+
+    return {
+      ok: true,
+      world: {
+        width: world?.width ?? 0, height: world?.height ?? 0, generation: world?.generation ?? 0,
+        capacity: world?.capacity ?? 0,
+      },
+      people: {
+        citizens: citizens.length,
+        live: citizens.filter((row) => row.online).length,
+        offices: citizens.filter((row) => row.serviceRole && offices.has(row.serviceRole)).length,
+        married: citizens.filter((row) => row.spouseAgentId).length,
+      },
+      land: {
+        plots: plots.length,
+        claimed: plots.filter((row) => row.ownerAgentId).length,
+        standing: builds.filter((row) => row.state === 'built').length,
+        underway: builds.filter((row) => row.state === 'building').length,
+        razed: builds.filter((row) => row.state === 'razed').length,
+      },
+      bank: { assets: assets.length },
+      authorities,
+      tickets,
+      decided,
+    };
   },
 });
 
@@ -4843,3 +5319,39 @@ export const publicFeed = internalQuery({
   },
 });
 
+export const downloadSkill = internalQuery({
+  args: { skillId: v.string(), agentId: v.string() },
+  handler: async (ctx, { skillId, agentId }) => {
+    // Phase 5 gating logic goes here later. For now (Phase 3), just return the body.
+    const skill = await ctx.db.query('bankSkills').withIndex('skillId', (q) => q.eq('skillId', skillId)).first();
+    if (!skill) throw new Error('skill not found');
+    if (skill.state === 'retired') throw new Error('skill is retired');
+    if (skill.state === 'flagged' && skill.depositorAgentId !== agentId) throw new Error('skill is flagged and held for safety review');
+
+    return {
+      skillId: skill.skillId,
+      name: skill.name,
+      description: skill.description,
+      version: skill.version,
+      author: skill.author,
+      category: skill.category,
+      tags: skill.tags,
+      markdownBody: skill.markdownBody,
+      contentDigest: skill.contentDigest,
+    };
+  },
+});
+
+export const checkGating = internalQuery({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    if (!citizen) throw new Error('citizen not found');
+    const skillsDeposited = await ctx.db.query('bankSkills').withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect();
+    const assetsDeposited = await ctx.db.query('bankAssets').withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).collect();
+    return {
+      state: citizen.state,
+      deposits: skillsDeposited.length + assetsDeposited.length,
+    };
+  },
+});

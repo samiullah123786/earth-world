@@ -184,6 +184,9 @@ export default defineSchema({
     relatedApprovalId: v.optional(v.id('approvals')),
     createdAt: v.number(),
     readAt: v.optional(v.number()),
+    // Dismissing hides a notice; it never destroys one. An owner clearing their
+    // list is tidying a view, not editing the record of what they were told.
+    dismissedAt: v.optional(v.number()),
   }).index('recipient_created', ['recipientAgentId', 'createdAt']),
 
   venues: defineTable({
@@ -635,6 +638,73 @@ export default defineSchema({
     .index('normalizedDigest', ['normalizedDigest'])
     .index('depositor_created', ['depositorAgentId', 'createdAt'])
     .index('state', ['state']),
+
+  // Structured SKILL.md deposits with semantic vector search.
+  // This table stores the open Agent Skills standard (YAML frontmatter + markdown
+  // instructions) as first-class documents. Every skill is embedded on deposit
+  // so the Bank Manager can semantically route knowledge across thousands of
+  // skills without reading them all. The master copy always stays here.
+  bankSkills: defineTable({
+    skillId: v.string(),
+    // --- YAML frontmatter (structured) ---
+    name: v.string(),
+    description: v.string(),
+    version: v.optional(v.string()),
+    author: v.optional(v.string()),
+    category: v.string(),
+    tags: v.optional(v.array(v.string())),
+    // --- Core content ---
+    markdownBody: v.string(),
+    contentDigest: v.string(),
+    // --- Provenance ---
+    depositorAgentId: v.string(),
+    alsoDepositedBy: v.array(v.string()),
+    sourceKind: v.union(v.literal('local'), v.literal('plugin'), v.literal('github')),
+    // --- Vector embedding for semantic search ---
+    embedding: v.array(v.float64()),
+    // --- Bank metadata ---
+    sizeBytes: v.number(),
+    license: v.string(),
+    priceTokens: v.number(),
+    safety: v.object({
+      verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+      flags: v.array(v.string()),
+      note: v.string(),
+      scannerVersion: v.string(),
+    }),
+    state: v.union(v.literal('deposited'), v.literal('evaluated'), v.literal('flagged'), v.literal('retired')),
+    valueRank: v.optional(v.number()),
+    valueNote: v.optional(v.string()),
+    llmCategories: v.optional(v.array(v.string())),
+    evaluatedAt: v.optional(v.number()),
+    // --- Version tracking for continuous sync ---
+    versionHistory: v.optional(v.array(v.object({
+      version: v.string(),
+      contentDigest: v.string(),
+      updatedAt: v.number(),
+      updatedBy: v.string(),
+    }))),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('skillId', ['skillId'])
+    .index('contentDigest', ['contentDigest'])
+    .index('depositor_created', ['depositorAgentId', 'createdAt'])
+    .index('category_created', ['category', 'createdAt'])
+    .index('state', ['state'])
+    .vectorIndex('by_embedding', {
+      vectorField: 'embedding',
+      dimensions: 1536,
+      filterFields: ['category', 'state'],
+    }),
+
+  // Tracks which skills a citizen has acquired from the Bank (replicas, not masters).
+  acquiredSkills: defineTable({
+    agentId: v.string(),
+    skillId: v.string(),
+    tradeId: v.optional(v.string()),
+    acquiredAt: v.number(),
+  }).index('agent_skill', ['agentId', 'skillId'])
+    .index('agentId', ['agentId']),
 
   freeGrants: defineTable({
     grantId: v.string(),

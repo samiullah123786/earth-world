@@ -242,10 +242,11 @@ export const dispatches = query({
 export const stats = query({
   args: {},
   handler: async (ctx) => {
-    const [citizens, packages, assets] = await Promise.all([
+    const [citizens, packages, assets, skills] = await Promise.all([
       ctx.db.query('citizens').collect(),
       ctx.db.query('skillPackages').collect(),
       ctx.db.query('bankAssets').collect(),
+      ctx.db.query('bankSkills').collect(),
     ]);
     return {
       population: citizens.length,
@@ -253,7 +254,8 @@ export const stats = query({
       // Listed peer packages plus everything in the Bank vault that has not
       // been retired. Flagged assets count: they are banked, just held.
       bankedSkills: packages.filter((pack) => pack.state === 'listed').length
-        + assets.filter((asset) => asset.state !== 'retired').length,
+        + assets.filter((asset) => asset.state !== 'retired').length
+        + skills.filter((skill) => skill.state !== 'retired').length,
     };
   },
 });
@@ -286,13 +288,91 @@ export const bankStats = query({
   args: {},
   handler: async (ctx) => {
     const rows = (await ctx.db.query('bankAssets').collect()).filter((row) => row.state !== 'retired');
+    const skillRows = (await ctx.db.query('bankSkills').collect()).filter((row) => row.state !== 'retired');
     const categories = await ctx.db.query('bankCategories').collect();
     return {
-      assets: rows.length,
-      bytes: rows.reduce((total, row) => total + row.sizeBytes, 0),
-      depositors: new Set(rows.flatMap((row) => [row.depositorAgentId, ...row.alsoDepositedBy])).size,
-      flagged: rows.filter((row) => row.state === 'flagged').length,
+      assets: rows.length + skillRows.length,
+      bytes: rows.reduce((total, row) => total + row.sizeBytes, 0) + skillRows.reduce((total, row) => total + row.sizeBytes, 0),
+      depositors: new Set([
+        ...rows.flatMap((row) => [row.depositorAgentId, ...row.alsoDepositedBy]),
+        ...skillRows.flatMap((row) => [row.depositorAgentId, ...row.alsoDepositedBy])
+      ]).size,
+      flagged: rows.filter((row) => row.state === 'flagged').length + skillRows.filter((row) => row.state === 'flagged').length,
       categories: categories.map((row) => ({ slug: row.slug, title: row.title, createdBy: row.createdBy })),
+    };
+  },
+});
+
+/**
+ * Public manifests for structured V2 SKILL.md entries.
+ * Evaluated skills only. No markdown body, no embedding.
+ */
+export const bankSkillsByCategory = query({
+  args: { category: v.optional(v.string()) },
+  handler: async (ctx, { category }) => {
+    // Branch rather than reassign: withIndex narrows a QueryInitializer to a
+    // Query, so a single `let` cannot hold both halves of this choice.
+    const base = ctx.db.query('bankSkills');
+    const scoped = category
+      ? base.withIndex('category_created', (q) => q.eq('category', category))
+      : base;
+    const rows = await scoped.order('desc').take(100);
+    return rows.filter((row) => row.state === 'evaluated').map((row) => ({
+      skillId: row.skillId, name: row.name, description: row.description,
+      version: row.version, author: row.author, category: row.category,
+      depositorAgentId: row.depositorAgentId, alsoDepositedBy: row.alsoDepositedBy.length,
+      sizeBytes: row.sizeBytes, license: row.license, priceTokens: row.priceTokens,
+      verdict: row.safety.verdict, flags: row.safety.flags, state: row.state,
+      valueRank: row.valueRank, valueNote: row.valueNote?.slice(0, 200),
+      createdAt: row.createdAt, updatedAt: row.updatedAt,
+    }));
+  },
+});
+
+export const citizenSkillPortfolio = query({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const authored = (await ctx.db.query('bankSkills')
+      .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId))
+      .collect())
+      .filter((row) => row.state !== 'retired')
+      .map((row) => ({
+        skillId: row.skillId, name: row.name, category: row.category,
+        version: row.version, state: row.state, valueRank: row.valueRank,
+        createdAt: row.createdAt, updatedAt: row.updatedAt,
+      }));
+
+    const acquired = await Promise.all(
+      (await ctx.db.query('acquiredSkills').withIndex('agentId', (q) => q.eq('agentId', agentId)).collect())
+        .map(async (acq) => {
+          const skill = await ctx.db.query('bankSkills').withIndex('skillId', (q) => q.eq('skillId', acq.skillId)).first();
+          if (!skill) return null;
+          return {
+            skillId: skill.skillId, name: skill.name, category: skill.category,
+            version: skill.version, valueRank: skill.valueRank,
+            acquiredAt: acq.acquiredAt,
+          };
+        })
+    );
+
+    return { authored, acquired: acquired.filter(Boolean) };
+  },
+});
+
+export const bankSkillDetail = query({
+  args: { skillId: v.string() },
+  handler: async (ctx, { skillId }) => {
+    const row = await ctx.db.query('bankSkills').withIndex('skillId', (q) => q.eq('skillId', skillId)).first();
+    if (!row || row.state === 'retired') return null;
+    return {
+      skillId: row.skillId, name: row.name, description: row.description,
+      version: row.version, author: row.author, category: row.category, tags: row.tags,
+      depositorAgentId: row.depositorAgentId, alsoDepositedBy: row.alsoDepositedBy.length,
+      sourceKind: row.sourceKind, sizeBytes: row.sizeBytes, license: row.license, priceTokens: row.priceTokens,
+      verdict: row.safety.verdict, flags: row.safety.flags, state: row.state,
+      valueRank: row.valueRank, valueNote: row.valueNote, llmCategories: row.llmCategories,
+      versionHistory: (row.versionHistory ?? []).map(h => ({ version: h.version, updatedAt: h.updatedAt })),
+      createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
   },
 });

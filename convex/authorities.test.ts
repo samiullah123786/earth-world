@@ -10,8 +10,8 @@ const AUTHORITY_ROLES = [
 ];
 
 const citizensByRole = async (t: ReturnType<typeof convexTest>) => {
-  const rows = await t.query(api.world.citizens, {});
-  return new Map(rows.filter((row) => row.serviceRole).map((row) => [row.serviceRole as string, row]));
+  const rows: any[] = await t.query(api.world.citizens, {});
+  return new Map<string, any>(rows.filter((row) => row.serviceRole).map((row) => [String(row.serviceRole), row]));
 };
 
 describe('the always-on civic offices', () => {
@@ -42,7 +42,7 @@ describe('the always-on civic offices', () => {
     await t.mutation(internal.seed.init, {});
     await t.mutation(internal.kernel.operatorAuthoritiesSet, { enabled: true });
     await t.mutation(internal.kernel.presenceSweep, {});
-    const mayor = (await t.query(api.world.citizens, {})).find((row) => row.serviceRole === 'Mayor of Earth');
+    const mayor = ((await t.query(api.world.citizens, {})) as any[]).find((row: any) => row.serviceRole === 'Mayor of Earth');
     expect(mayor).toBeDefined();
     expect(mayor?.online).toBe(false);
   });

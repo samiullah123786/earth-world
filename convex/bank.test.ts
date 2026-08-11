@@ -305,6 +305,7 @@ describe('withdrawing from the vault', () => {
     await t.mutation(internal.seed.init, {});
     const author = await citizen(t, 'sleeper');
     const buyer = await citizen(t, 'nightowl');
+    await act(t, buyer, deposit({ storageId: await newStorageId(t), name: 'buyer-goods', digest: '1'.repeat(64), normalizedDigest: '2'.repeat(64) }));
     const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
     await placeAt(t, author.agentId, 10, 10, false);
     await placeAt(t, buyer.agentId, 32, 22, true);
@@ -334,6 +335,7 @@ describe('withdrawing from the vault', () => {
     await t.mutation(internal.seed.init, {});
     const author = await citizen(t, 'faraway-author');
     const buyer = await citizen(t, 'faraway-buyer');
+    await act(t, buyer, deposit({ storageId: await newStorageId(t), name: 'buyer-goods-2', digest: '1'.repeat(64), normalizedDigest: '2'.repeat(64) }));
     const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
     await placeAt(t, author.agentId, 10, 10, false);
     await placeAt(t, buyer.agentId, 20, 26, true);
@@ -350,6 +352,7 @@ describe('withdrawing from the vault', () => {
     await t.mutation(internal.seed.init, {});
     const author = await citizen(t, 'awake-author');
     const buyer = await citizen(t, 'walker');
+    await act(t, buyer, deposit({ storageId: await newStorageId(t), name: 'buyer-goods-3', digest: '1'.repeat(64), normalizedDigest: '2'.repeat(64) }));
     const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
     await placeAt(t, author.agentId, 40, 30, true);
     await placeAt(t, buyer.agentId, 20, 26, true);
@@ -378,6 +381,7 @@ describe('withdrawing from the vault', () => {
     await t.mutation(internal.seed.init, {});
     const author = await citizen(t, 'holder');
     const buyer = await citizen(t, 'refused-buyer');
+    await act(t, buyer, deposit({ storageId: await newStorageId(t), name: 'buyer-goods-4', digest: '1'.repeat(64), normalizedDigest: '2'.repeat(64) }));
     const flagged = await act(t, author, deposit({
       storageId: await newStorageId(t),
       safety: { verdict: 'needs_review', flags: ['shell_execution'], note: 'ships a script', scannerVersion: 'earth-safety-1' },
@@ -398,6 +402,7 @@ describe('withdrawing from the vault', () => {
     await t.mutation(internal.kernel.transferGovernance, { targetAgentId: mayor.agentId });
     const author = await citizen(t, 'giver');
     const pleader = await citizen(t, 'pleader');
+    await act(t, pleader, deposit({ storageId: await newStorageId(t), name: 'pleader-goods', digest: '8'.repeat(64), normalizedDigest: '9'.repeat(64) }));
     const banked = await act(t, author, deposit({ storageId: await newStorageId(t) }));
     const pricey = await act(t, author, deposit({
       storageId: await newStorageId(t), digest: '3'.repeat(64), normalizedDigest: '2'.repeat(64),

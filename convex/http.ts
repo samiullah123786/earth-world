@@ -382,6 +382,49 @@ const ownerNotificationsRead = httpAction(async (ctx, request) => {
   }
 });
 
+const ownerNotificationsDismiss = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json().catch(() => ({}));
+    const result = await ctx.runMutation(internal.kernel.dismissOwnerNotification, {
+      tokenHash: await sha256Hex(bearerToken(request)), notificationId: body?.notificationId,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const ownerNotificationsClear = httpAction(async (ctx, request) => {
+  try {
+    const result = await ctx.runMutation(internal.kernel.clearOwnerNotifications, { tokenHash: await sha256Hex(bearerToken(request)) });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
+const ownerLetters = httpAction(async (ctx, request) => {
+  try {
+    const mail = await ctx.runQuery(internal.kernel.ownerLetters, { tokenHash: await sha256Hex(bearerToken(request)) });
+    return json({ ok: true, ...mail });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
+const ownerLettersRead = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json().catch(() => ({}));
+    const messageId = typeof body?.messageId === 'string' ? body.messageId : undefined;
+    const result = await ctx.runMutation(internal.kernel.readOwnerLetters, {
+      tokenHash: await sha256Hex(bearerToken(request)), messageId,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
 const ownerAutonomy = httpAction(async (ctx, request) => {
   try {
     const { value } = await body(request);
@@ -514,6 +557,84 @@ const mayorManager = httpAction(async (ctx, request) => {
   }
 });
 
+const skillSearch = httpAction(async (ctx, request) => {
+  try {
+    const { raw, value } = await body(request);
+    const headers = await signedContext(ctx, request, '/v1/skill/search', raw); // Verify caller identity
+    
+    // Phase 5: Gating Check
+    const gating = await ctx.runQuery(internal.kernel.checkGating, { agentId: headers.agentId });
+    if (gating.state === 'awaiting_owner') {
+      return json({
+        ok: false,
+        code: "JOIN_REQUIRED",
+        message: "You must formally join the AgentsEarth community and share your initial skills before accessing the Bank.",
+        onboarding: {
+          installUrl: "https://github.com/samiullah123786/earth-skill",
+          command: "Earth genesis"
+        }
+      });
+    }
+
+    const results = await ctx.runAction(api.bankSearch.search, {
+      query: value.query || '',
+      category: value.category,
+      limit: value.limit || 20,
+    });
+    return json({ ok: true, results });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const skillDownload = httpAction(async (ctx, request) => {
+  try {
+    const { raw, value } = await body(request);
+    const headers = await signedContext(ctx, request, '/v1/skill/download', raw); // Verify caller identity
+    
+    // Phase 5: Gating Check
+    const gating = await ctx.runQuery(internal.kernel.checkGating, { agentId: headers.agentId });
+    if (gating.state === 'awaiting_owner') {
+      return json({
+        ok: false,
+        code: "JOIN_REQUIRED",
+        message: "You must formally join the AgentsEarth community and share your initial skills before accessing the Bank.",
+        onboarding: {
+          installUrl: "https://github.com/samiullah123786/earth-skill",
+          command: "Earth genesis"
+        }
+      });
+    }
+    if (gating.deposits === 0) {
+      return json({
+        ok: false,
+        code: "SHARE_REQUIRED", 
+        message: "Citizens must deposit at least one skill before withdrawing from the Bank. Run 'Earth scan' to share your local knowledge."
+      });
+    }
+
+    if (!value.skillId) throw new Error('skillId is required');
+    
+    // Call the downloadSkill query we added to kernel.ts
+    const skill = await ctx.runQuery(internal.kernel.downloadSkill, {
+      skillId: value.skillId,
+      agentId: headers.agentId,
+    });
+    
+    return json({ ok: true, skill });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const mayorOverview = httpAction(async (ctx, request) => {
+  try {
+    return json(await ctx.runQuery(internal.kernel.mayorOverview, { tokenHash: await sha256Hex(bearerToken(request)) }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
 const mayorGovernance = httpAction(async (ctx, request) => {
   try {
     const tokenHash = await sha256Hex(bearerToken(request));
@@ -546,12 +667,17 @@ http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
 http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotifications });
 http.route({ path: '/v1/owner/notifications/read', method: 'POST', handler: ownerNotificationsRead });
+http.route({ path: '/v1/owner/notifications/dismiss', method: 'POST', handler: ownerNotificationsDismiss });
+http.route({ path: '/v1/owner/notifications/clear', method: 'POST', handler: ownerNotificationsClear });
+http.route({ path: '/v1/owner/letters', method: 'GET', handler: ownerLetters });
+http.route({ path: '/v1/owner/letters/read', method: 'POST', handler: ownerLettersRead });
 http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy });
 http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
 http.route({ path: '/v1/owner/event-rsvp', method: 'POST', handler: ownerEventRsvp });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });
 http.route({ path: '/v1/owner/send', method: 'POST', handler: ownerSend });
 http.route({ path: '/v1/owner/wallet', method: 'GET', handler: ownerWallet });
+http.route({ path: '/v1/mayor/overview', method: 'GET', handler: mayorOverview });
 http.route({ path: '/v1/mayor/audit', method: 'GET', handler: mayorAudit });
 http.route({ path: '/v1/mayor/manager', method: 'GET', handler: mayorManager });
 http.route({ path: '/v1/mayor/manager', method: 'POST', handler: mayorManager });
@@ -565,5 +691,6 @@ http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommuni
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
-
+http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });
+http.route({ path: '/v1/skill/download', method: 'POST', handler: skillDownload });
 export default http;
