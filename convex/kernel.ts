@@ -7,8 +7,10 @@ import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type Contribution
 import {
   BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
   APPRAISAL_POINT_VALUE, BANK_ACCOUNT, DEFAULT_BANK_FEE_BASIS_POINTS, DEFAULT_LIQUIDITY_FLOOR, GATHER_WAGE,
-  assertSupplyInvariant, balanceOf, bankFeeFor, collectBankFee, dayStampOf, fundBank, grantFromTreasury, issue,
-  mintToTreasury, payForTrade, payFromBank, payToTreasury, payWage, redenominate, sendTokens, supplyAudit, tip,
+  ROYALTY_BASIS_POINTS, assertSupplyInvariant, balanceOf, bankFeeFor, collectBankFee, dayStampOf, fundBank,
+  grantFromTreasury, issue,
+  mintToTreasury, payForTrade, payFromBank, payRoyalty, payToTreasury, payWage, redenominate, sendTokens,
+  supplyAudit, tip,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
@@ -1176,6 +1178,11 @@ async function releasePackage(ctx: any, trade: any, pack: any, providerName: str
       sourceId: `bank_fee:${trade.tradeId}`,
     });
     fee = taken.collected;
+    // Royalties climb the fork chain out of the seller's take.
+    await settleSaleRoyalties(ctx, {
+      saleSourceId: `trade:${trade.tradeId}`, listingId: pack.packageId, listingName: pack.name,
+      sellerAgentId: trade.providerId, buyerAgentId: trade.requesterId, price: trade.priceTokens,
+    });
   }
   await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: now });
   await recordContribution(ctx, trade.providerId, 'adoption', 'package_delivered', 5, `package:${trade.tradeId}`,
@@ -1594,8 +1601,11 @@ export const act = internalMutation({
         .filter((row) => row.state !== 'retired').reduce((total, row) => total + row.sizeBytes, 0);
       if (held + sizeBytes > 250 * 1024 * 1024) throw new Error('this citizen has reached the 250MB Bank deposit quota');
 
+      // A declared fork must name a listing that exists; ancestry is a DAG
+      // because this pointer is written once and only ever points backward.
+      const forkOf = await validateForkOf(ctx, action.forkOf);
       const doc = await ctx.db.insert('bankAssets', {
-        assetId: 'pending', digest, normalizedDigest, title, summary,
+        assetId: 'pending', digest, normalizedDigest, title, summary, forkOf,
         depositorAgentId: agentId, alsoDepositedBy: [],
         categories: categories.length ? categories : ['general'],
         sizeBytes, fileCount, storageId: storageId as never, license,
@@ -1845,7 +1855,8 @@ export const act = internalMutation({
         await ctx.db.patch(duplicate._id, record);
         return { ok: true, packageId: duplicate.packageId, replaced: true, warning };
       }
-      const doc = await ctx.db.insert('skillPackages', { packageId: 'pending', createdAt: now, ...record });
+      const packageForkOf = await validateForkOf(ctx, action.forkOf);
+      const doc = await ctx.db.insert('skillPackages', { packageId: 'pending', createdAt: now, forkOf: packageForkOf, ...record });
       const packageId = `pkg:${doc}`;
       await ctx.db.patch(doc, { packageId });
       // Peer listings with bytes in the vault get the same server read.
@@ -1955,6 +1966,10 @@ export const act = internalMutation({
           await payForTrade(ctx, {
             fromAgentId: trade.requesterId, toAgentId: agentId, amount: trade.priceTokens,
             sourceId: `trade:${trade.tradeId}`, reason: `Bought a copy of ${vaultAsset.title} in person from its author.`,
+          });
+          await settleSaleRoyalties(ctx, {
+            saleSourceId: `trade:${trade.tradeId}`, listingId: vaultAsset.assetId, listingName: vaultAsset.title,
+            sellerAgentId: agentId, buyerAgentId: trade.requesterId, price: trade.priceTokens,
           });
         }
         await ctx.db.patch(trade._id, { state: 'delivered', updatedAt: nowLive });
@@ -2077,6 +2092,10 @@ export const act = internalMutation({
           fromAgentId: agentId, toAgentId: asset.depositorAgentId, amount: asset.priceTokens,
           sourceId: `counter:${assetId}:${agentId}`,
           reason: `Bought a copy of ${asset.title} at the Earth Bank counter; the author was paid in full.`,
+        });
+        await settleSaleRoyalties(ctx, {
+          saleSourceId: `counter:${assetId}:${agentId}`, listingId: assetId, listingName: asset.title,
+          sellerAgentId: asset.depositorAgentId, buyerAgentId: agentId, price: asset.priceTokens,
         });
       }
       const doc = await ctx.db.insert('skillTrades', {
@@ -5074,6 +5093,87 @@ export const operatorResolveBug = internalMutation({
   },
 });
 
+/** Resolve a market listing to its owner and fork pointer, from either table. */
+async function listingLineageNode(ctx: any, listingId: string) {
+  const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q: any) => q.eq('assetId', listingId)).first();
+  if (asset) return { id: asset.assetId, name: asset.title, ownerAgentId: asset.depositorAgentId, forkOf: asset.forkOf ?? null };
+  const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q: any) => q.eq('packageId', listingId)).first();
+  if (pack) return { id: pack.packageId, name: pack.name, ownerAgentId: pack.ownerAgentId, forkOf: pack.forkOf ?? null };
+  return null;
+}
+
+/**
+ * The ancestors of a listing, nearest first, at most three deep.
+ *
+ * forkOf is written once at creation and can only name a listing that already
+ * exists, so this is a DAG by construction; the seen-set guard is defense in
+ * depth against hand-edited data, not a load-bearing wall.
+ */
+export async function ancestryOf(ctx: any, listingId: string, maxDepth = 3) {
+  const ancestors: Array<{ id: string; name: string; ownerAgentId: string }> = [];
+  const seen = new Set<string>([listingId]);
+  let current = await listingLineageNode(ctx, listingId);
+  while (current?.forkOf && ancestors.length < maxDepth) {
+    if (seen.has(current.forkOf)) break;
+    seen.add(current.forkOf);
+    const parent = await listingLineageNode(ctx, current.forkOf);
+    if (!parent) break;
+    ancestors.push({ id: parent.id, name: parent.name, ownerAgentId: parent.ownerAgentId });
+    current = parent;
+  }
+  return ancestors;
+}
+
+/**
+ * Distribute royalties up a listing's ancestry after a sale.
+ *
+ * Out of the seller's take, never on top of the price: a buyer pays the number
+ * on the listing, and the upstream share is the seller's cost of having built
+ * on someone else's work. 10% to the parent, halving per level, floor-rounded,
+ * three levels deep. A level whose ancestor is the seller or the buyer is
+ * SKIPPED, not redirected - self-dealing earns nothing and shifts nothing.
+ */
+async function settleSaleRoyalties(ctx: any, sale: {
+  saleSourceId: string; listingId: string; listingName: string;
+  sellerAgentId: string; buyerAgentId: string; price: number;
+}) {
+  if (sale.price <= 0) return { total: 0, paid: [] as Array<{ level: number; toAgentId: string; amount: number }> };
+  const ancestors = await ancestryOf(ctx, sale.listingId);
+  const paid: Array<{ level: number; toAgentId: string; amount: number }> = [];
+  let total = 0;
+  for (let level = 0; level < ancestors.length; level++) {
+    const ancestor = ancestors[level];
+    const amount = Math.floor((sale.price * ROYALTY_BASIS_POINTS[level]) / 10_000);
+    if (amount <= 0) continue;
+    if (ancestor.ownerAgentId === sale.sellerAgentId || ancestor.ownerAgentId === sale.buyerAgentId) continue;
+    const result = await payRoyalty(ctx, {
+      fromAgentId: sale.sellerAgentId, toAgentId: ancestor.ownerAgentId, amount,
+      reason: `Royalty on ${sale.listingName}, forked from ${ancestor.name}.`.slice(0, 240),
+      sourceId: `royalty:${sale.saleSourceId}:${level + 1}`,
+    });
+    if (result.posted) {
+      paid.push({ level: level + 1, toAgentId: ancestor.ownerAgentId, amount });
+      total += amount;
+      await ctx.db.insert('events', {
+        kind: 'royalty_paid', actorId: sale.sellerAgentId,
+        payload: { listingId: sale.listingId, toAgentId: ancestor.ownerAgentId, amount, level: level + 1 },
+        gloss: `${amount} Earth Tokens flowed upstream to the maker of ${ancestor.name}, which ${sale.listingName} was forked from.`,
+      });
+    }
+  }
+  return { total, paid };
+}
+
+/** Validate a fork pointer at creation: it must name a listing that exists. */
+async function validateForkOf(ctx: any, forkOf: unknown): Promise<string | undefined> {
+  if (forkOf === undefined || forkOf === null || forkOf === '') return undefined;
+  const target = String(forkOf).trim();
+  if (!/^(asset|pkg):[a-z0-9]+$/.test(target)) throw new Error('forkOf must name a market listing id');
+  const node = await listingLineageNode(ctx, target);
+  if (!node) throw new Error('forkOf names a listing that does not exist');
+  return target;
+}
+
 /** What the vault scanner needs to open a listing, and nothing else. */
 export const listingForScan = internalQuery({
   args: { id: v.string() },
@@ -5668,6 +5768,30 @@ async function subjectOfMovement(ctx: any, entry: any) {
         type: 'work', ref: zone?.zoneId ?? null,
         name: zone ? `a shift at ${zone.name}` : 'a shift of public work',
         note: 'a wage from the Treasury, which fees refill',
+      };
+    }
+    if (prefix === 'royalty') {
+      // sourceId: royalty:<saleSourceId>:<level>. The sale id embeds ids with
+      // their own colons, so the listing is found by inclusion, never position.
+      const tradeMatch = /(?:trade|counter):[a-z0-9]+/.exec(String(entry.sourceId));
+      let name = 'forked work';
+      if (tradeMatch) {
+        const trade = await ctx.db.query('skillTrades').withIndex('tradeId', (q: any) => q.eq('tradeId', tradeMatch[0])).first();
+        if (trade) {
+          const node = await listingLineageNode(ctx, trade.packageId);
+          if (node) name = node.name;
+        } else {
+          const assetMatch = /asset:[a-z0-9]+/.exec(String(entry.sourceId));
+          if (assetMatch) {
+            const node = await listingLineageNode(ctx, assetMatch[0]);
+            if (node) name = node.name;
+          }
+        }
+      }
+      const level = String(entry.sourceId).split(':').pop();
+      return {
+        type: 'royalty', ref: null, name: `royalty on ${name}`,
+        note: `level ${level} of the fork chain - a share of a sale of work built on yours`,
       };
     }
     if (prefix === 'venue') {

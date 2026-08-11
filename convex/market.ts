@@ -1,5 +1,6 @@
 import { query } from './_generated/server';
 import { v } from 'convex/values';
+import { ancestryOf } from './kernel';
 
 /**
  * The machine reality of the marketplace.
@@ -104,6 +105,16 @@ export const list = query({
   },
 });
 
+async function lineageView(ctx: any, listingId: string) {
+  const ancestors = await ancestryOf(ctx, listingId);
+  const view = [];
+  for (const ancestor of ancestors) {
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', ancestor.ownerAgentId)).first();
+    view.push({ id: ancestor.id, name: ancestor.name, author: citizen?.name ?? ancestor.ownerAgentId });
+  }
+  return view;
+}
+
 export const detail = query({
   args: { id: v.string() },
   handler: async (ctx, { id }) => {
@@ -134,6 +145,8 @@ export const detail = query({
         source: asset.source,
         createdAt: asset.createdAt,
         pull: `Earth pull ${asset.title}`,
+        // Nearest first, at most three: the ancestors royalties climb.
+        lineage: await lineageView(ctx, asset.assetId),
       };
     }
     const pack = await ctx.db.query('skillPackages').withIndex('packageId', (q: any) => q.eq('packageId', id)).first();
@@ -160,6 +173,7 @@ export const detail = query({
         sourceKind: pack.sourceKind,
         createdAt: pack.createdAt,
         pull: `Earth pull ${pack.name}`,
+        lineage: await lineageView(ctx, pack.packageId),
       };
     }
     return { ok: false, why: 'no such listing' };

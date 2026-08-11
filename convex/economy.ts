@@ -39,6 +39,11 @@ export const APPRAISAL_POINT_VALUE = 50;
 // Treasury; wages recycle it back to whoever does the town's labour. Paced by
 // the gather cooldown, and self-limiting: an empty Treasury pays nothing.
 export const GATHER_WAGE = 15;
+// Royalty schedule for forked knowledge, in basis points of the sale price,
+// nearest ancestor first and halving as the chain climbs: 10%, 5%, 2.5%.
+// Three levels deep and no further - beyond that, attribution is history,
+// not economics.
+export const ROYALTY_BASIS_POINTS = [1_000, 500, 250] as const;
 export const MAX_MINT_PER_CALL = 1_000_000;
 export const TREASURY_KEY = 'earth';
 
@@ -49,7 +54,9 @@ export type LedgerKind =
   // The Bank as an account with a budget, not a mint.
   | 'bank_funding' | 'bank_payout' | 'bank_fee'
   // Public works: Treasury -> citizen, for a shift actually worked.
-  | 'gather_wage';
+  | 'gather_wage'
+  // Creator economy: seller -> ancestor, a share of a sale of forked work.
+  | 'royalty';
 
 /** The day an instant falls on, used to make once-per-day movements idempotent. */
 export function dayStampOf(at: number) {
@@ -485,6 +492,34 @@ export async function payWage(ctx: MutationCtx, movement: {
     authorizedBy: 'kernel', toAgentId: movement.toAgentId,
   });
   return { posted: true, paid };
+}
+
+/**
+ * Seller -> ancestor: one level of royalty on a sale of forked work.
+ *
+ * Paid out of money the seller received in this same transaction, so
+ * insufficiency is unreachable in the sale flow - but if it ever happens the
+ * level is skipped rather than thrown, because a royalty must never unwind a
+ * delivered sale. Idempotent per level on sourceId.
+ */
+export async function payRoyalty(ctx: MutationCtx, movement: {
+  fromAgentId: string; toAgentId: string; amount: number; reason: string; sourceId: string;
+}) {
+  if (!Number.isInteger(movement.amount) || movement.amount <= 0) return { posted: false, paid: 0 };
+  if (movement.fromAgentId === movement.toAgentId) return { posted: false, paid: 0 };
+  const reason = assertReason(movement.reason);
+  const existing = await alreadyPosted(ctx, movement.sourceId);
+  if (existing) return { posted: false, paid: 0 };
+  const available = await balanceOf(ctx, movement.fromAgentId);
+  if (available < movement.amount) return { posted: false, paid: 0 };
+
+  await adjustBalance(ctx, movement.fromAgentId, -movement.amount);
+  await adjustBalance(ctx, movement.toAgentId, movement.amount);
+  await post(ctx, {
+    kind: 'royalty', amount: movement.amount, reason, sourceId: movement.sourceId,
+    authorizedBy: 'kernel', fromAgentId: movement.fromAgentId, toAgentId: movement.toAgentId,
+  });
+  return { posted: true, paid: movement.amount };
 }
 
 /** sum(balances) + treasury.held === minted - burned, or the economy is broken. */

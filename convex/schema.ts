@@ -424,6 +424,7 @@ export default defineSchema({
       v.literal('bank_payout'),      // Bank -> author, paid out of that budget
       v.literal('bank_fee'),         // citizen -> Bank, its cut of a sale
       v.literal('gather_wage'),      // Treasury -> citizen, a shift of public work
+      v.literal('royalty'),          // seller -> ancestor, a share of a forked sale
     ),
     fromAgentId: v.optional(v.string()),
     toAgentId: v.optional(v.string()),
@@ -471,6 +472,9 @@ export default defineSchema({
       note: v.string(),
       scannerVersion: v.string(),
     }),
+    // The listing this one was forked from, written once at creation and
+    // never after - so ancestry is a DAG by construction. Royalties climb it.
+    forkOf: v.optional(v.string()),
     // What the KERNEL concluded about the bytes it holds, as opposed to what
     // the depositing client claimed. The market's `verified` reads only this.
     serverScan: v.optional(v.object({
@@ -665,6 +669,9 @@ export default defineSchema({
     // a delivered acquisition whose bytes were actually fetched, once per
     // trade; a verified install is the recipient's signed confirmation that it
     // installed. Neither can be written from outside the Kernel.
+    // The listing this one was forked from, written once at creation and
+    // never after - so ancestry is a DAG by construction. Royalties climb it.
+    forkOf: v.optional(v.string()),
     // What the KERNEL concluded about the bytes it holds, as opposed to what
     // the depositing client claimed. The market's `verified` reads only this.
     serverScan: v.optional(v.object({
