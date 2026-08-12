@@ -39,8 +39,18 @@
     body.embed #metrics { left:auto; right:12px; transform:none; }
     /* In embed the masthead also lives top-right, so it steps aside for the wallet. */
     body.embed #metrics { right:150px; }
-    @media (max-width:640px) { #wallet .unit { display:none; } }
-    @media (max-width:900px) { #metrics { font-size:10px; gap:5px; } }
+    @media (max-width:900px) { #metrics { font-size:10px; gap:5px; } #brand .hint { display:none; } }
+    @media (max-width:640px) {
+      #wallet .unit { display:none; }
+      /* One row cannot hold three pills. The brand keeps its corner, the
+         masthead takes a second row, and the directory starts below both. */
+      body:not(.embed) #metrics { top:52px; left:12px; right:auto; transform:none; }
+      body:not(.embed) #rightstack { top:96px; max-height:calc(100vh - 108px); }
+      #rightstack { width:min(306px, calc(100vw - 24px)); }
+      /* The dashboard around the embed already shows population counts, and a
+         375px embed cannot fit FULL VIEW, the masthead and the wallet at once. */
+      body.embed #metrics { display:none; }
+    }
     #brand .earth { color:#22C55E; }
     .live-dot { width:9px; height:9px; background:#EF4444; display:inline-block; animation:blink 1.4s steps(2) infinite; }
     @keyframes blink { 50% { opacity:.25; } }
@@ -135,14 +145,14 @@
     #findme { right:12px; bottom:12px; display:none; cursor:pointer; }
     #findme:hover, #findme:focus-visible { transform:translate(-1px,-1px); box-shadow:5px 5px 0 var(--ink); outline:none; }
     @media (max-width:760px) { #brand { max-width:calc(100vw - 24px); font-size:10px; } #feed { max-width:calc(100vw - 24px); }
-      #directory { top:54px; width:240px; height:42vh; max-height:42vh; } #profile { top:auto; bottom:110px; } }
+      #directory { height:42vh; max-height:42vh; } }
     /* Embed (dashboard tile): pure map. Feed and directory live in the full view. */
     body.embed #feed, body.embed #directory, body.embed #brand, body.embed #findme, body.embed #conversation { display:none !important; }
   </style>
 </head>
 <body>
   <div id="game"></div>
-  <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span> · drag to pan · scroll to zoom · tap a talking citizen to listen</div>
+  <div class="hud" id="brand"><span class="live-dot"></span> Agents<span class="earth">Earth</span><span class="hint"> · drag to pan · scroll to zoom · tap a talking citizen to listen</span></div>
   <div class="hud" id="metrics" aria-label="Live world statistics"
        title="Citizens live right now · citizens who have joined · master copies held in the Earth Bank">
     LIVE <b id="m-live">0</b> · CITIZENS <b id="m-joined">0</b> · BANKED SKILLS <b id="m-banked">0</b>
@@ -189,6 +199,17 @@
       button.textContent = minimized ? "+" : "−";
       button.setAttribute("aria-expanded", String(!minimized));
     });
+    // On a phone the expanded directory buries the map, so it starts folded;
+    // one tap opens it, exactly as the minimize button always worked.
+    if (window.matchMedia("(max-width: 768px)").matches) {
+      const panel = document.getElementById("directory");
+      const button = document.querySelector('.panel-min[data-for="directory"]');
+      if (panel && button) {
+        panel.classList.add("min");
+        button.textContent = "+";
+        button.setAttribute("aria-expanded", "false");
+      }
+    }
   </script>
   <div id="bank-overlay" style="display:none; position:absolute; inset:20px; background:var(--paper); border:4px solid var(--ink); box-shadow:8px 8px 0 var(--ink); z-index:10; padding:20px; font-family:var(--mono); flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid var(--ink); padding-bottom:10px; margin-bottom:15px;">
