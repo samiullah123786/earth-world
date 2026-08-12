@@ -406,6 +406,7 @@ export default defineSchema({
     kind: v.union(
       v.literal('genesis_grant'),    // the arrival stipend, once, at registration
       v.literal('gift_reward'),      // earned by verified knowledge given away
+      v.literal('install_reward'),   // earned when a recipient confirms a real install
       v.literal('mint'),             // Mayor -> Treasury only, never to a citizen
       v.literal('treasury_grant'),   // Treasury -> citizen, a separate audited act
       v.literal('trade_payment'),    // escrowed payment inside a delivered trade

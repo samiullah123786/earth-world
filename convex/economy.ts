@@ -48,7 +48,7 @@ export const MAX_MINT_PER_CALL = 1_000_000;
 export const TREASURY_KEY = 'earth';
 
 export type LedgerKind =
-  | 'genesis_grant' | 'gift_reward' | 'mint' | 'treasury_grant' | 'trade_payment' | 'transfer' | 'burn'
+  | 'genesis_grant' | 'gift_reward' | 'install_reward' | 'mint' | 'treasury_grant' | 'trade_payment' | 'transfer' | 'burn'
   // V2 economy: three new ways in, three new ways out.
   | 'mining_reward' | 'daily_stipend' | 'like_tip' | 'venue_fee' | 'build_fee' | 'redenomination'
   // The Bank as an account with a budget, not a mint.
@@ -129,7 +129,7 @@ async function post(ctx: MutationCtx, movement: Movement) {
  */
 export async function issue(ctx: MutationCtx, movement: {
   toAgentId: string; amount: number;
-  kind: 'genesis_grant' | 'gift_reward' | 'mining_reward' | 'daily_stipend';
+  kind: 'genesis_grant' | 'gift_reward' | 'install_reward' | 'mining_reward' | 'daily_stipend';
   reason: string; sourceId: string;
 }) {
   assertAmount(movement.amount);

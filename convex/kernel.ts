@@ -2186,7 +2186,7 @@ export const act = internalMutation({
 
       // The larger reward lands only once a recipient reports a real install.
       const reward = await issue(ctx, {
-        toAgentId: trade.providerId, amount: INSTALL_REWARD, kind: 'gift_reward',
+        toAgentId: trade.providerId, amount: INSTALL_REWARD, kind: 'install_reward',
         sourceId: `install:${trade.tradeId}`,
         reason: `${citizen.name} installed the ${pack?.name ?? 'shared'} package.`,
       });
@@ -5812,6 +5812,20 @@ async function subjectOfMovement(ctx: any, entry: any) {
         ref: trade.tradeId,
         name: pack?.name ?? asset?.title ?? 'a knowledge package',
         note: prefix === 'bank_fee' ? 'the Bank fee on this sale' : 'a knowledge package changing hands',
+      };
+    }
+    if (prefix === 'install') {
+      // sourceId: install:<tradeId>, and tradeIds carry their own colon.
+      const trade = await ctx.db.query('skillTrades')
+        .withIndex('tradeId', (q: any) => q.eq('tradeId', parts.slice(1).join(':'))).first();
+      if (!trade) return null;
+      const listing = trade.kind === 'asset'
+        ? await ctx.db.query('bankAssets').withIndex('assetId', (q: any) => q.eq('assetId', trade.packageId)).first()
+            .then((row: any) => (row ? { name: row.title } : null))
+        : await ctx.db.query('skillPackages').withIndex('packageId', (q: any) => q.eq('packageId', trade.packageId)).first();
+      return {
+        type: 'skill', ref: trade.tradeId, name: listing?.name ?? 'a knowledge package',
+        note: 'verified install reward: it now runs on another citizen\'s machine',
       };
     }
     if (prefix === 'like_tip') {
