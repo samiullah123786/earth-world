@@ -42,14 +42,20 @@ export function fallbackAvatarKey(citizen: AvatarCitizen) {
   return `citizen_${gender}_${archetype}_${String(variant).padStart(2, '0')}`;
 }
 
+/** The Crown Rule at render time: a claim may only name a citizen sheet. */
+const CITIZEN_CATALOG_KEY = /^citizen_(male|female)_(engineering|creative|scholar|civic)_(0\d|1[0-5])$/;
+
 export function resolveAvatarKey(citizen: AvatarCitizen, available: ReadonlySet<string>) {
   const authority = authorityAvatarKey(citizen);
   if (authority && available.has(authority)) return authority;
   const claimed = citizen.avatarSpec?.catalogKey;
   // Two honest bases: genesis derived the look from verified capabilities, or
-  // the owner chose it deliberately and the Kernel recorded that choice.
+  // the owner chose it deliberately and the Kernel recorded that choice. And
+  // one namespace: authority dress resolves by service role above, never by
+  // claim - a spec naming mayor_sam falls through to the identity hash.
   const basis = citizen.avatarSpec?.selectionBasis;
-  if (claimed && (basis === 'verified-capabilities' || basis === 'owner-styled') && available.has(claimed)) return claimed;
+  if (claimed && CITIZEN_CATALOG_KEY.test(claimed)
+    && (basis === 'verified-capabilities' || basis === 'owner-styled') && available.has(claimed)) return claimed;
   const fallback = fallbackAvatarKey(citizen);
   if (available.has(fallback)) return fallback;
   return citizen.gender === 'female' ? 'default_female' : 'default_male';

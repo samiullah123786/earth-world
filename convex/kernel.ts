@@ -68,6 +68,20 @@ const avatarSpecValidator = v.object({
   eyeColor: v.string(), selectionBasis: v.string(),
 });
 
+/**
+ * The Crown Rule, at the door. A client-supplied avatar spec may only ever
+ * name a key in the citizen namespace: authority dress (mayor_sam, aegis,
+ * terra, ...) resolves by service role, upstream of any claim, and a
+ * registration claiming a crowned sheet is dropped to the identity-hash
+ * fallback rather than trusted.
+ */
+const CITIZEN_CATALOG_KEY = /^citizen_(male|female)_(engineering|creative|scholar|civic)_(0\d|1[0-5])$/;
+
+function honestAvatarSpec(spec: any) {
+  if (!spec) return undefined;
+  return CITIZEN_CATALOG_KEY.test(String(spec.catalogKey ?? '')) ? spec : undefined;
+}
+
 async function useNonce(ctx: any, agentId: string, nonce: string) {
   const key = `${agentId}:${nonce}`;
   if (await ctx.db.query('nonces').withIndex('key', (q: any) => q.eq('key', key)).first()) {
@@ -1106,14 +1120,14 @@ export const register = internalMutation({
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: byKey.autonomy ?? args.autonomy ?? 'light',
         skillPolicy: byKey.skillPolicy ?? args.skillPolicy ?? 'safe_auto',
-        avatarSpec: args.avatarSpec,
+        avatarSpec: honestAvatarSpec(args.avatarSpec),
       });
       const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', byKey.agentId)).first();
       if (citizen) await ctx.db.patch(citizen._id, {
         family: args.family, accent: args.accent, bio: args.bio, categoryScores: args.categoryScores ?? {},
         specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging',
-        avatarSpec: args.avatarSpec,
+        avatarSpec: honestAvatarSpec(args.avatarSpec),
       });
       await ctx.db.insert('claimTokens', { tokenHash: args.claimTokenHash, agentId: byKey.agentId, expiresAt: args.claimExpiresAt });
       const carried = await grantGenesisTokens(ctx, byKey.agentId);
@@ -1131,7 +1145,7 @@ export const register = internalMutation({
       specialties: args.specialties ?? [args.family], primaryCategory: args.primaryCategory ?? args.family,
       skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging', autonomy: args.autonomy ?? 'light',
       skillPolicy: args.skillPolicy ?? 'safe_auto',
-      avatarSpec: args.avatarSpec,
+      avatarSpec: honestAvatarSpec(args.avatarSpec),
     });
     await ctx.db.insert('claimTokens', {
       tokenHash: args.claimTokenHash, agentId: args.agentId, expiresAt: args.claimExpiresAt,
@@ -1144,7 +1158,7 @@ export const register = internalMutation({
       categoryScores: args.categoryScores ?? {}, specialties: args.specialties ?? [args.family],
       primaryCategory: args.primaryCategory ?? args.family, skillCount: args.skillCount ?? 0,
       experienceTier: args.experienceTier ?? 'emerging',
-      avatarSpec: args.avatarSpec,
+      avatarSpec: honestAvatarSpec(args.avatarSpec),
       // Born with a temperament, derived rather than chosen, so free will
       // diverges from the first minute of a citizen's life.
       driveBias: personalitySeed(args.evidenceDigest ?? args.genomeDigest, args.primaryCategory ?? 'general'),
@@ -1303,7 +1317,7 @@ export const act = internalMutation({
           categoryScores[category.toLowerCase()] = Math.min(1_000_000, Math.round(value));
         }
       }
-      const avatarSpec = action.avatarSpec ?? agent.avatarSpec;
+      const avatarSpec = honestAvatarSpec(action.avatarSpec) ?? agent.avatarSpec;
       // The evidence digest is private authority and lives on the agent alone;
       // the citizen row is a public projection and must never carry it.
       const genome = {

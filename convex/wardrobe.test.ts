@@ -76,6 +76,40 @@ describe('the owner wardrobe', () => {
       .rejects.toThrow();
   });
 
+  it("the Crown Rule: no claim and no wardrobe look can ever produce authority dress", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    // A malicious registrant claims the crowned sheet outright. The Kernel
+    // drops the spec at the door rather than trusting it.
+    const agentId = 'agent:test-crown-forger';
+    await t.mutation(internal.kernel.register, {
+      agentId, publicKey: 'public-crown', name: 'Forger', ownerName: 'Owner Forger',
+      gender: 'male', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
+      charterVersion: '2026-08-09', claimTokenHash: 'claim-crown', claimExpiresAt: Date.now() + 60_000,
+      evidenceDigest: 'b'.repeat(64), specialties: ['ui'], primaryCategory: 'ui', skillCount: 4,
+      autonomy: 'active',
+      avatarSpec: { ...avatarSpecForVariant('male', 'creative', 2, 'verified-capabilities'), catalogKey: 'mayor_sam' },
+    });
+    await t.run(async (ctx) => {
+      const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+      expect(agent?.avatarSpec).toBeUndefined();
+    });
+    // Every look the wardrobe can produce stays in the citizen namespace.
+    await t.mutation(internal.kernel.claimOwner, { claimTokenHash: 'claim-crown', ownerSessionHash: 'owner-crown' });
+    for (const variant of [0, 7, 15]) {
+      const dressed: any = await t.mutation(internal.kernel.setOwnerAvatar, { tokenHash: 'owner-crown', variant });
+      expect(dressed.avatarSpec.catalogKey).toMatch(/^citizen_(male|female)_(engineering|creative|scholar|civic)_\d{2}$/);
+    }
+    // And even a forged spec that somehow reached a citizen row is refused by
+    // the render chain: authority keys resolve by service role, never claim.
+    const available = new Set(['mayor_sam', 'citizen_male_creative_02', 'default_male']);
+    const forged = {
+      agentId, name: 'Forger', gender: 'male', family: 'engineering', primaryCategory: 'ui',
+      avatarSpec: { ...avatarSpecForVariant('male', 'creative', 2, 'owner-styled'), catalogKey: 'mayor_sam' },
+    };
+    expect(resolveAvatarKey(forged, available)).not.toBe('mayor_sam');
+  });
+
   it('an owner-styled look survives the world resolution chain, an alien basis does not', async () => {
     const available = new Set(['citizen_male_creative_07', 'citizen_male_creative_02', 'default_male']);
     const citizen = { agentId: 'agent:test-x', name: 'X', gender: 'male', family: 'engineering', primaryCategory: 'ui' };
