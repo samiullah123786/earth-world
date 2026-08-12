@@ -73,8 +73,9 @@ const DEBUG_WFC = DEBUG_FLAGS.has('wfc');
  * definition of what "no balance" looks like.
  */
 let walletBalance: number | null = null;
+const WALLET_CACHE_KEY = 'earth-wallet-last';
 
-function showWallet(next: number) {
+function showWallet(next: number, remember = true) {
   const amount = document.getElementById('wallet-balance');
   const hud = document.getElementById('wallet');
   if (!amount || !hud || !Number.isFinite(next) || next < 0) return;
@@ -83,6 +84,7 @@ function showWallet(next: number) {
   walletBalance = whole;
   amount.textContent = whole.toLocaleString();
   hud.title = 'Your Earth Token balance, live from the Kernel';
+  if (remember) { try { localStorage.setItem(WALLET_CACHE_KEY, String(whole)); } catch { /* private mode */ } }
   if (!changed) return;
   // A balance that changes while you are looking at it should say so.
   hud.classList.remove('pulse');
@@ -90,16 +92,25 @@ function showWallet(next: number) {
   hud.classList.add('pulse');
 }
 
+// The last known balance paints instantly - a wallet that opens on a dash for
+// twenty seconds reads as "you were paid nothing". The poll corrects it
+// silently; only a first-ever visitor sees the dash, which is the truth.
+try {
+  const cached = localStorage.getItem(WALLET_CACHE_KEY);
+  if (cached !== null && Number.isFinite(Number(cached))) showWallet(Number(cached), false);
+} catch { /* private mode: the dash remains until the first poll */ }
+
 /** Ask this origin for the balance. Spectators get a quiet no and keep the dash. */
-async function pollWallet() {
+async function pollWallet(): Promise<boolean> {
   try {
     const response = await fetch('/api/wallet', { headers: { Accept: 'application/json' } });
     const data = await response.json().catch(() => ({ ok: false }));
-    if (data?.ok && Number.isFinite(Number(data.balance))) showWallet(Number(data.balance));
+    if (data?.ok && Number.isFinite(Number(data.balance))) { showWallet(Number(data.balance)); return true; }
   } catch {
     // Offline or Kernel down: the HUD keeps whatever it last knew rather than
     // flickering to a dash, which would read as "you were paid nothing".
   }
+  return false;
 }
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
@@ -452,8 +463,15 @@ class EarthScene extends Phaser.Scene {
       feed.replaceChildren(...rows.slice(0, 6).map((row) => element('div', 'feed-line', row.gloss)));
     });
     // Opened directly rather than embedded, nothing hands this page a balance,
-    // so it asks for one - and keeps asking, because tokens move while you watch.
-    void pollWallet();
+    // so it asks for one - immediately, then twice quickly if the first ask
+    // races the session, then at a calm cadence because tokens keep moving.
+    void (async () => {
+      if (await pollWallet()) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+      if (await pollWallet()) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+      await pollWallet();
+    })();
     window.setInterval(() => { void pollWallet(); }, 20_000);
     convex.onUpdate(api.world.stats, {}, (stat: { population: number; live: number; bankedSkills: number }) => {
       for (const [id, value] of [['m-live', stat.live], ['m-joined', stat.population], ['m-banked', stat.bankedSkills]] as const) {
@@ -1902,99 +1920,113 @@ for (const id of ['directory-everyone', 'directory-authorities']) {
   button?.addEventListener('click', activate);
 }
 
-// Phase 4: Bank UI Overlay Logic
+// The Earth Bank shelf: the same listings the machine market serves, drawn
+// in the house style. One renderer, rebuilt from scratch on every open - the
+// old version appended the category rail to itself each time (its "kept"
+// search box HTML included last open's buttons), which is exactly where the
+// duplicated sidebar came from. Rows are DOM-built with textContent
+// throughout: a depositor's title is data, never markup.
 const bankOverlay = document.getElementById('bank-overlay');
-const closeBank = document.getElementById('close-bank');
 const bankCategoriesContainer = document.getElementById('bank-categories');
 const bankSkillsList = document.getElementById('bank-skills-list');
-const bankSearch = document.getElementById('bank-search') as HTMLInputElement;
+const bankSearch = document.getElementById('bank-search') as HTMLInputElement | null;
 
-let currentBankCategory: string | undefined = undefined;
+type ShelfRow = { id: string; name: string; oneLiner: string; price: number; pulls: number;
+  verified: boolean; rank: number; categories: string[]; author: string };
+let shelfRows: ShelfRow[] = [];
+let shelfCategory = '';
 
-closeBank?.addEventListener('click', () => {
+document.getElementById('close-bank')?.addEventListener('click', () => {
   if (bankOverlay) bankOverlay.style.display = 'none';
 });
 
-async function renderBankSkills(category?: string, queryStr?: string) {
-  if (!bankSkillsList) return;
-  bankSkillsList.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px;">Loading skills...</div>';
-  
-  let skills = [];
-  if (queryStr) {
-    // We would use the action here, but we can't call action from convex client in the same way if it's not exported to the public client schema.
-    // Instead we will just use the query for now and do client side filtering if action isn't available, or call a query that wraps it.
-    // For Phase 4, let's use the bankSkillsByCategory query and filter client side if search is used.
-    skills = await convex.query(api.world.bankSkillsByCategory, { category });
-    skills = skills.filter(s => s.name.toLowerCase().includes(queryStr.toLowerCase()) || s.description.toLowerCase().includes(queryStr.toLowerCase()));
-  } else {
-    skills = await convex.query(api.world.bankSkillsByCategory, { category });
+function renderBankRail() {
+  if (!bankCategoriesContainer) return;
+  const counts = new Map<string, number>();
+  for (const row of shelfRows) for (const cat of row.categories) counts.set(cat, (counts.get(cat) ?? 0) + 1);
+  const railButton = (label: string, value: string) => {
+    const button = document.createElement('button');
+    button.className = 'bank-cat'; button.type = 'button'; button.textContent = label;
+    button.setAttribute('aria-pressed', String(shelfCategory === value));
+    button.addEventListener('click', () => { shelfCategory = value; renderBankRail(); renderBankShelf(); });
+    return button;
+  };
+  const rail = [railButton(`All shelves (${shelfRows.length})`, '')];
+  for (const [cat, count] of [...counts.entries()].sort((left, right) => right[1] - left[1])) {
+    rail.push(railButton(`${cat} (${count})`, cat));
   }
+  bankCategoriesContainer.replaceChildren(...rail);
+}
 
-  if (skills.length === 0) {
-    bankSkillsList.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px;">No skills found.</div>';
+function renderBankShelf() {
+  if (!bankSkillsList) return;
+  const query = (bankSearch?.value ?? '').trim().toLowerCase();
+  const rows = shelfRows.filter((row) =>
+    (!shelfCategory || row.categories.includes(shelfCategory)) &&
+    (!query || row.name.toLowerCase().includes(query) || row.oneLiner.toLowerCase().includes(query)));
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'bank-empty';
+    empty.textContent = shelfRows.length
+      ? 'Nothing on this shelf matches. Try another category or search.'
+      : 'The vault could not be read just now. Close and reopen to try again.';
+    bankSkillsList.replaceChildren(empty);
     return;
   }
-
-  bankSkillsList.innerHTML = skills.map((skill: any) => `
-    <div style="background:var(--cream); border:2px solid var(--ink); padding:15px; display:flex; flex-direction:column; gap:8px;">
-      <div style="display:flex; justify-content:space-between;">
-        <h3 style="margin:0; font-size:16px;">${skill.name} <span style="font-size:10px; opacity:0.6;">v${skill.version || '1.0'}</span></h3>
-        <span style="background:#8BE28B; padding:2px 6px; font-size:10px; border:1px solid var(--ink);">${skill.category}</span>
-      </div>
-      <p style="font-size:12px; margin:0; flex:1; opacity:0.8;">${skill.description.substring(0, 100)}${skill.description.length > 100 ? '...' : ''}</p>
-      <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; opacity:0.7;">
-        <span>By: ${skill.author || 'Unknown'}</span>
-        <span>🪙 ${skill.priceTokens || 0}</span>
-      </div>
-      <button onclick="window.alert('Run \\'Earth request ${skill.skillId}\\' in your terminal to acquire this skill.')" style="margin-top:5px; background:var(--ink); color:var(--cream); border:none; padding:6px; cursor:pointer; font-family:var(--mono); font-weight:bold;">Request Skill</button>
-    </div>
-  `).join('');
-}
-
-async function initBankUI() {
-  if (!bankCategoriesContainer) return;
-  const stats = await convex.query(api.world.bankStats, {});
-  
-  // Keep the search box
-  const searchHtml = bankCategoriesContainer.innerHTML;
-  
-  const categoriesHtml = [
-    '<button class="bank-cat-btn" data-cat="" style="background:var(--ink); color:var(--cream); border:none; padding:8px; cursor:pointer; text-align:left; font-family:var(--mono);">All Skills</button>',
-    ...stats.categories.map((cat: any) => `
-      <button class="bank-cat-btn" data-cat="${cat.slug}" style="background:transparent; color:var(--ink); border:2px solid var(--ink); padding:8px; cursor:pointer; text-align:left; font-family:var(--mono);">${cat.title}</button>
-    `)
-  ].join('');
-  
-  bankCategoriesContainer.innerHTML = searchHtml + categoriesHtml;
-
-  document.querySelectorAll('.bank-cat-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const target = e.target as HTMLButtonElement;
-      document.querySelectorAll('.bank-cat-btn').forEach(b => {
-        (b as HTMLButtonElement).style.background = 'transparent';
-        (b as HTMLButtonElement).style.color = 'var(--ink)';
-        (b as HTMLButtonElement).style.border = '2px solid var(--ink)';
-      });
-      target.style.background = 'var(--ink)';
-      target.style.color = 'var(--cream)';
-      target.style.border = 'none';
-      
-      currentBankCategory = target.dataset.cat || undefined;
-      renderBankSkills(currentBankCategory, bankSearch?.value);
+  bankSkillsList.replaceChildren(...rows.map((row) => {
+    const card = document.createElement('div'); card.className = 'bank-card';
+    const top = document.createElement('div'); top.className = 'bank-card-top';
+    const name = document.createElement('h3'); name.textContent = row.name;
+    const seal = document.createElement('span');
+    seal.className = row.verified ? 'bank-verified' : 'bank-unverified';
+    seal.textContent = row.verified ? '\u2713 EARTH VERIFIED' : 'UNVERIFIED';
+    seal.title = row.verified
+      ? 'The Kernel scanned these exact bytes and signed the verdict.'
+      : 'No Kernel signature over these bytes yet.';
+    top.append(name, seal);
+    const line = document.createElement('p'); line.className = 'bank-oneliner'; line.textContent = row.oneLiner;
+    const meta = document.createElement('div'); meta.className = 'bank-meta';
+    const coin = document.createElement('img'); coin.src = '/assets/currency/earth_token_32.png'; coin.alt = 'Earth Tokens';
+    const price = document.createElement('span'); price.textContent = row.price ? String(row.price) : 'free';
+    const pulls = document.createElement('span'); pulls.className = 'pulls';
+    pulls.textContent = `${row.pulls} pull${row.pulls === 1 ? '' : 's'}`;
+    meta.append(coin, price, pulls);
+    const chips = document.createElement('div'); chips.className = 'bank-chips';
+    for (const cat of row.categories.slice(0, 4)) {
+      const chip = document.createElement('span'); chip.className = 'bank-chip'; chip.textContent = cat; chips.append(chip);
+    }
+    const author = document.createElement('div'); author.className = 'bank-author'; author.textContent = `by ${row.author}`;
+    const actions = document.createElement('div'); actions.className = 'bank-actions';
+    const view = document.createElement('a');
+    view.href = `https://agentsearth.com/market#${encodeURIComponent(row.id)}`;
+    view.target = '_blank'; view.rel = 'noopener'; view.textContent = 'VIEW AT MARKET \u2197';
+    const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'COPY PULL CMD';
+    copy.title = `Earth pull ${row.name}`;
+    copy.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(`Earth pull ${row.name}`); copy.textContent = 'COPIED \u2713'; }
+      catch { copy.textContent = copy.title; }
+      window.setTimeout(() => { copy.textContent = 'COPY PULL CMD'; }, 1_600);
     });
-  });
-
-  bankSearch?.addEventListener('input', (e) => {
-    const val = (e.target as HTMLInputElement).value;
-    renderBankSkills(currentBankCategory, val);
-  });
+    actions.append(view, copy);
+    card.append(top, line, meta, chips, author, actions);
+    return card;
+  }));
 }
 
-// Hook into showPlot to open the bank
-window.addEventListener('open-bank', () => {
-  if (bankOverlay) {
-    bankOverlay.style.display = 'flex';
-    initBankUI();
-    renderBankSkills();
-  }
-});
+async function openBankShelf() {
+  if (!bankOverlay) return;
+  bankOverlay.style.display = 'flex';
+  const opening = document.createElement('div');
+  opening.className = 'bank-empty';
+  opening.textContent = 'Opening the vault\u2026';
+  bankSkillsList?.replaceChildren(opening);
+  try { shelfRows = await convex.query(api.market.shelf, {}); }
+  catch { shelfRows = []; }
+  shelfCategory = '';
+  if (bankSearch) bankSearch.value = '';
+  renderBankRail();
+  renderBankShelf();
+}
+
+bankSearch?.addEventListener('input', () => renderBankShelf());
+window.addEventListener('open-bank', () => { void openBankShelf(); });

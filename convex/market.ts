@@ -105,6 +105,36 @@ export const list = query({
   },
 });
 
+/**
+ * The world's Bank shelf: the same listings the machine market serves, plus
+ * the category chips and author names a browsing human wants. The 8-field
+ * machine rows stay byte-budgeted and untouched; this surface is for the
+ * world page's Earth Bank overlay.
+ */
+export const shelf = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await allListings(ctx);
+    const assets = new Map((await ctx.db.query('bankAssets').collect()).map((row: any) => [row.assetId, row]));
+    const packs = new Map((await ctx.db.query('skillPackages').collect()).map((row: any) => [row.packageId, row]));
+    const names = new Map((await ctx.db.query('citizens').collect()).map((row: any) => [row.agentId, row.name]));
+    return rows.map((row) => {
+      const source: any = assets.get(row.id) ?? packs.get(row.id);
+      const authorId = source?.depositorAgentId ?? source?.ownerAgentId ?? '';
+      const categories: string[] = Array.isArray(source?.categories)
+        ? source.categories
+        : [source?.category].filter(Boolean);
+      return {
+        id: row.id, name: row.name, oneLiner: row.oneLiner, price: row.price,
+        pulls: row.pulls, verified: row.verified, rank: row.rank,
+        // 'omit' is the Manager's uncategorizable bucket: listed, not chipped.
+        categories: categories.filter((cat: string) => cat && cat !== 'omit'),
+        author: names.get(authorId) ?? 'a citizen',
+      };
+    });
+  },
+});
+
 async function lineageView(ctx: any, listingId: string) {
   const ancestors = await ancestryOf(ctx, listingId);
   const view = [];
