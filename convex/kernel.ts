@@ -1239,6 +1239,13 @@ export const act = internalMutation({
     if (!citizen) throw new Error('citizen is missing from the world');
     const warning = await rateLimit(ctx, agentId);
 
+    // The Mayor's emergency brake. Every act mutates the world, so every act
+    // is refused with an honest message. Reads, desks and letters are queries
+    // and stay alive, and `leave` is its own mutation, so a live session can
+    // always end gracefully during a pause.
+    const governance = await ctx.db.query('governanceConfig').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    if (governance?.townPaused) throw new Error('the town is paused by the Mayor; Earth resumes when the pause lifts');
+
     // The daily stipend, paid for turning up and doing something - never for
     // merely existing. This sits after authorization, so it takes a signed,
     // nonce-checked act to earn it, and inside the same transaction, so an act
@@ -4671,6 +4678,7 @@ export const authorityGate = internalMutation({
   handler: async (ctx) => {
     const config = await ensureGovernanceConfig(ctx);
     if (!config.authoritiesEnabled) return { allowed: false, why: 'authorities are paused by the Mayor' };
+    if (config.townPaused) return { allowed: false, why: 'the town is paused by the Mayor' };
     const today = new Date().toISOString().slice(0, 10);
 
     const spentRows = await ctx.db.query('aiSpend').withIndex('dayStamp', (q) => q.eq('dayStamp', today)).collect();
@@ -4681,8 +4689,11 @@ export const authorityGate = internalMutation({
 
     const citizens = await ctx.db.query('citizens').collect();
     const events = await ctx.db.query('events').order('desc').take(40);
+    const stoodDown = new Set(config.disabledOffices ?? []);
     const candidates = [];
     for (const office of LLM_AUTHORITIES) {
+      // An office the Mayor stood down individually neither thinks nor spends.
+      if (stoodDown.has(office.role)) continue;
       const citizen = citizens.find((row) => row.serviceRole === office.role);
       if (!citizen) continue;
       const mine = spentRows.find((row) => row.agentId === citizen.agentId);
@@ -5052,6 +5063,7 @@ export const mayorBankLedger = internalQuery({
         dailyStipend: config?.dailyStipend ?? DAILY_STIPEND,
         feeBasisPoints: config?.feeBasisPoints ?? DEFAULT_BANK_FEE_BASIS_POINTS,
         liquidityFloor: config?.liquidityFloor ?? DEFAULT_LIQUIDITY_FLOOR,
+        miningReward: config?.miningReward ?? MINING_REWARD,
       },
     };
   },
@@ -5348,8 +5360,9 @@ export const mayorEconomySet = internalMutation({
     dailyStipend: v.optional(v.number()),
     feeBasisPoints: v.optional(v.number()),
     liquidityFloor: v.optional(v.number()),
+    miningReward: v.optional(v.number()),
   },
-  handler: async (ctx, { tokenHash, dailyStipend, feeBasisPoints, liquidityFloor }) => {
+  handler: async (ctx, { tokenHash, dailyStipend, feeBasisPoints, liquidityFloor, miningReward }) => {
     const { session } = await requireMayorSession(ctx, tokenHash);
     const config = await ctx.db.query('bankConfig').withIndex('key', (q) => q.eq('key', 'bank')).first();
     if (!config) throw new Error('the Bank is not configured yet');
@@ -5371,6 +5384,12 @@ export const mayorEconomySet = internalMutation({
         throw new Error('the liquidity floor must be a whole number between 0 and 1,000,000');
       }
       patch.liquidityFloor = liquidityFloor;
+    }
+    if (miningReward !== undefined) {
+      if (!Number.isInteger(miningReward) || miningReward < 0 || miningReward > 100_000) {
+        throw new Error('the mining reward must be a whole number between 0 and 100,000');
+      }
+      patch.miningReward = miningReward;
     }
     if (!Object.keys(patch).length) return { ok: true, unchanged: true };
     await ctx.db.patch(config._id, patch);
@@ -5394,6 +5413,9 @@ export const mayorGovernance = internalQuery({
     return {
       ok: true,
       authoritiesEnabled: config?.authoritiesEnabled ?? false,
+      townPaused: config?.townPaused ?? false,
+      disabledOffices: config?.disabledOffices ?? [],
+      offices: LLM_AUTHORITIES.map((office) => ({ role: office.role, duty: office.duty })),
       dailyTokenBudget: config?.dailyTokenBudget ?? 0,
       perAuthorityDailyTokens: config?.perAuthorityDailyTokens ?? 0,
       ringsToday: config?.dayStamp === today ? config.ringsToday : 0,
@@ -5412,26 +5434,82 @@ export const mayorGovernance = internalQuery({
 });
 
 export const mayorGovernanceSet = internalMutation({
-  args: { tokenHash: v.string(), enabled: v.optional(v.boolean()), dailyTokenBudget: v.optional(v.number()) },
-  handler: async (ctx, { tokenHash, enabled, dailyTokenBudget }) => {
+  args: {
+    tokenHash: v.string(), enabled: v.optional(v.boolean()), dailyTokenBudget: v.optional(v.number()),
+    maxRingsPerDay: v.optional(v.number()), paused: v.optional(v.boolean()),
+    office: v.optional(v.string()), officeEnabled: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { tokenHash, enabled, dailyTokenBudget, maxRingsPerDay, paused, office, officeEnabled }) => {
     await requireMayorSession(ctx, tokenHash);
     const config = await ensureGovernanceConfig(ctx);
     const patch: Record<string, unknown> = {};
-    if (typeof enabled === 'boolean') patch.authoritiesEnabled = enabled;
+    const glosses: string[] = [];
+    if (typeof enabled === 'boolean') {
+      patch.authoritiesEnabled = enabled;
+      glosses.push(`turned the always-on authorities ${enabled ? 'on' : 'off'}`);
+    }
     if (typeof dailyTokenBudget === 'number') {
       if (!Number.isInteger(dailyTokenBudget) || dailyTokenBudget < 0 || dailyTokenBudget > 5_000_000) {
         throw new Error('daily token budget must be 0-5,000,000');
       }
       patch.dailyTokenBudget = dailyTokenBudget;
+      glosses.push('adjusted the daily thinking budget');
     }
+    if (typeof maxRingsPerDay === 'number') {
+      if (!Number.isInteger(maxRingsPerDay) || maxRingsPerDay < 0 || maxRingsPerDay > 8) {
+        throw new Error('growth allowance must be 0-8 rings per day');
+      }
+      patch.maxRingsPerDay = maxRingsPerDay;
+      glosses.push(`set the growth allowance to ${maxRingsPerDay} ring${maxRingsPerDay === 1 ? '' : 's'} a day`);
+    }
+    if (typeof paused === 'boolean') {
+      patch.townPaused = paused;
+      glosses.push(paused ? 'paused the town' : 'lifted the town pause');
+    }
+    if (typeof office === 'string' && typeof officeEnabled === 'boolean') {
+      const roles: readonly string[] = LLM_AUTHORITIES.map((entry) => entry.role);
+      if (!roles.includes(office)) throw new Error('no such civic office');
+      const current = new Set(config.disabledOffices ?? []);
+      if (officeEnabled) current.delete(office); else current.add(office);
+      patch.disabledOffices = [...current];
+      glosses.push(`${officeEnabled ? 'restored' : 'stood down'} the ${office.replace(/_/g, ' ')} office`);
+    }
+    if (!Object.keys(patch).length) return { ok: true, unchanged: true };
     await ctx.db.patch(config._id, patch);
     await ctx.db.insert('events', {
       kind: 'governance', actorId: 'mayor', payload: patch,
-      gloss: typeof enabled === 'boolean'
-        ? `The Mayor turned the always-on authorities ${enabled ? 'on' : 'off'}.`
-        : 'The Mayor adjusted the daily thinking budget.',
+      gloss: `The Mayor ${glosses.join(', and ')}.`,
     });
     return { ok: true, ...patch };
+  },
+});
+
+/**
+ * The Mayor grows the world by one ring, on the spot. The same daily growth
+ * allowance the surveyors live under applies here - the office does not grant
+ * an exemption from its own law, only the ability to spend today's allowance
+ * deliberately.
+ */
+export const mayorExpandWorld = internalMutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const { session } = await requireMayorSession(ctx, tokenHash);
+    const config = await ensureGovernanceConfig(ctx);
+    const today = new Date().toISOString().slice(0, 10);
+    const ringsToday = config.dayStamp === today ? config.ringsToday : 0;
+    if (ringsToday >= config.maxRingsPerDay) {
+      throw new Error(`today's growth allowance (${config.maxRingsPerDay}) is already spent; raise the dial or wait for tomorrow`);
+    }
+    // force: a surveyor expands when density demands it; the Mayor expands
+    // because the human holding the seat decided to. That is the whole point.
+    await expandWorld(ctx, 'The Mayor expanded the living boundary', true);
+    await ctx.db.patch(config._id, { dayStamp: today, ringsToday: ringsToday + 1 });
+    const world = await ensureWorldState(ctx);
+    await ctx.db.insert('events', {
+      kind: 'world_expanded', actorId: session.agentId, payload: { manual: true },
+      gloss: 'The Mayor grew the world by one ring.',
+    });
+    return { ok: true, width: world.width, height: world.height, generation: world.generation, ringsToday: ringsToday + 1 };
   },
 });
 
@@ -5482,21 +5560,26 @@ async function netWorthOf(ctx: any, agentId: string) {
 async function payMiningReward(ctx: any, agentId: string, title: string, normalizedDigest: string) {
   const sourceId = `mine:${normalizedDigest}`;
   const reason = `Novel knowledge accepted into the Earth Bank: ${title}.`.slice(0, 240);
-  const attempt = await payFromBank(ctx, { toAgentId: agentId, amount: MINING_REWARD, reason, sourceId });
+  // The rate is the Mayor's yield dial; the constant is the constitutional
+  // default it starts from. A dial of zero is a legitimate policy.
+  const economy = await ctx.db.query('bankConfig').withIndex('key', (q: any) => q.eq('key', 'bank')).first();
+  const rate = economy?.miningReward ?? MINING_REWARD;
+  if (rate === 0) return { paid: 0, owed: 0 };
+  const attempt = await payFromBank(ctx, { toAgentId: agentId, amount: rate, reason, sourceId });
   if (attempt.posted || attempt.shortfall === 0) return { paid: attempt.paid, owed: 0 };
 
   const now = Date.now();
   const already = await ctx.db.query('bankClaims').withIndex('sourceId', (q: any) => q.eq('sourceId', sourceId)).first();
   if (!already) {
     const doc = await ctx.db.insert('bankClaims', {
-      claimId: 'pending', agentId, amount: MINING_REWARD, reason, sourceId, state: 'owed', createdAt: now,
+      claimId: 'pending', agentId, amount: rate, reason, sourceId, state: 'owed', createdAt: now,
     });
     await ctx.db.patch(doc, { claimId: `claim:${doc}` });
   }
   await requestBankLiquidity(ctx, now);
   await notifyOwner(ctx, agentId, 'info', 'The Bank owes you for your deposit',
-    `${title} was accepted, but the Bank's budget is empty. ${MINING_REWARD} Earth Tokens are recorded as owed and will be paid the moment the Mayor funds it.`);
-  return { paid: 0, owed: MINING_REWARD };
+    `${title} was accepted, but the Bank's budget is empty. ${rate} Earth Tokens are recorded as owed and will be paid the moment the Mayor funds it.`);
+  return { paid: 0, owed: rate };
 }
 
 /**
@@ -6030,9 +6113,11 @@ export const presenceSweep = internalMutation({
     // holds it, and the world must never claim a person is present.
     const config = await ensureGovernanceConfig(ctx);
     const offices = new Set<string>(LLM_AUTHORITIES.map((office) => office.role));
+    const stoodDown = new Set<string>(config.disabledOffices ?? []);
 
     for (const citizen of await ctx.db.query('citizens').collect()) {
-      const holdsOffice = Boolean(citizen.serviceRole) && offices.has(citizen.serviceRole as string);
+      const holdsOffice = Boolean(citizen.serviceRole) && offices.has(citizen.serviceRole as string)
+        && !stoodDown.has(citizen.serviceRole as string);
       const ownerLive = live.has(citizen.agentId);
       const shouldBeLive = ownerLive || (holdsOffice && config.authoritiesEnabled);
       // Only act on a real change, so an authority's own words survive the sweep.
@@ -6221,6 +6306,145 @@ export const setOwnerAvatar = internalMutation({
       gloss: `${agent.name} stepped out in a new look.`,
     });
     return { ok: true, avatarSpec: spec };
+  },
+});
+
+/**
+ * The owner taps an event and the citizen walks there, now. This is the same
+ * safe-route walk the RSVP tick performs when an event goes live, made
+ * available on the owner's word - it works whether the agent's own process is
+ * awake or not, because the ambient engine walks the route either way. The
+ * public record carries the errand, so the agent learns of it on its next
+ * wake through the same news every citizen reads.
+ */
+export const ownerSendToEvent = internalMutation({
+  args: { tokenHash: v.string(), eventId: v.string() },
+  handler: async (ctx, { tokenHash, eventId }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', session.agentId)).first();
+    if (!citizen) throw new Error('this citizen is not in the world');
+    const event = await ctx.db.query('communityEvents').withIndex('eventId', (q) => q.eq('eventId', eventId)).first();
+    if (!event || ['completed', 'rejected', 'cancelled'].includes(event.state)) throw new Error('that gathering is over');
+    const venue = await ctx.db.query('venues').withIndex('venueId', (q) => q.eq('venueId', event.venueId)).first();
+    if (!venue) throw new Error('the venue is gone from the map');
+
+    const now = Date.now();
+    const world = await ensureWorldState(ctx);
+    const bounds = { width: world.width, height: world.height };
+    const isWalkable = await loadWorldWalkability(ctx, bounds);
+    let target: [number, number] | null = null;
+    for (let dy = -1; dy <= 1 && !target; dy++) {
+      for (let dx = -1; dx <= 1 && !target; dx++) {
+        const x = Math.round(venue.x + dx), y = Math.round(venue.y + dy);
+        if (isWalkable(x, y)) target = [x, y];
+      }
+    }
+    if (!target) throw new Error('no safe route reaches that venue right now');
+    const start = currentPosition(citizen, now);
+    const path = findRoute(start.x, start.y, target[0], target[1], bounds, isWalkable);
+    if (!path?.length) throw new Error('no safe route reaches that venue right now');
+    const route = timedRoute(start, path, now);
+    await ctx.db.patch(citizen._id, {
+      fx: start.x, fy: start.y, tx: target[0], ty: target[1], t0: now, t1: route[route.length - 1].at, route,
+      state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient',
+      activity: `attending ${event.title} at ${venue.name}`,
+      attendingEventId: event.eventId, attendingUntil: event.endsAt,
+    });
+    await ctx.db.insert('events', {
+      kind: 'community_event_walk', actorId: citizen.agentId,
+      payload: { eventId: event.eventId, venueId: event.venueId },
+      gloss: `${citizen.name} set out for ${event.title} at ${venue.name} at their owner's word.`,
+    });
+    await notifyOwner(ctx, citizen.agentId, 'info', 'On the way',
+      `${citizen.name} is walking to ${venue.name} for ${event.title}. The public record carries the errand, so the agent learns of it on its next wake.`);
+    return { ok: true, eventId: event.eventId, arrivesAt: route[route.length - 1].at };
+  },
+});
+
+/**
+ * Three honest measures, top eight each, no bottom lists. Civic offices are
+ * excluded - an always-on mind with a stipend does not compete with citizens.
+ */
+export const leaderboard = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const offices = new Set<string>(LLM_AUTHORITIES.map((office) => office.role));
+    const eligible = (await ctx.db.query('citizens').collect())
+      .filter((row) => !offices.has(row.serviceRole ?? ''));
+    const likeCounts = new Map<string, number>();
+    for (const row of await ctx.db.query('likes').collect()) {
+      likeCounts.set(row.receiverAgentId, (likeCounts.get(row.receiverAgentId) ?? 0) + 1);
+    }
+    const rows: Array<{ name: string; netWorth: number; bankedSkills: number; likes: number }> = [];
+    for (const citizen of eligible) {
+      const worth = await netWorthOf(ctx, citizen.agentId);
+      rows.push({
+        name: citizen.name, netWorth: worth.total, bankedSkills: worth.bankedSkills,
+        likes: likeCounts.get(citizen.agentId) ?? 0,
+      });
+    }
+    const top = (key: 'netWorth' | 'bankedSkills' | 'likes') =>
+      [...rows].sort((left, right) => right[key] - left[key]).slice(0, 8)
+        .map((row) => ({ name: row.name, value: row[key] }));
+    return { ok: true, byNetWorth: top('netWorth'), byBankedSkills: top('bankedSkills'), byLikes: top('likes') };
+  },
+});
+
+/**
+ * What the Chronicler may write about, and whether today has earned a
+ * bulletin at all. A quiet day earns silence, an existing bulletin is never
+ * rewritten, and the same switches and budgets that govern every always-on
+ * mind govern this one.
+ */
+export const chroniclerDigest = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const config = await ensureGovernanceConfig(ctx);
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = await ctx.db.query('dispatches')
+      .withIndex('dispatchId', (q) => q.eq('dispatchId', `bulletin:${today}`)).first();
+    const since = Date.now() - 24 * 60 * 60 * 1_000;
+    const recent = (await ctx.db.query('events').order('desc').take(400))
+      .filter((row) => row._creationTime >= since);
+    const counts: Record<string, number> = {};
+    for (const row of recent) counts[row.kind] = (counts[row.kind] ?? 0) + 1;
+    const listings = (await ctx.db.query('bankAssets').order('desc').take(12))
+      .filter((row) => row._creationTime >= since && ['deposited', 'evaluated'].includes(row.state))
+      .map((row) => row.title);
+    const spentRows = await ctx.db.query('aiSpend').withIndex('dayStamp', (q) => q.eq('dayStamp', today)).collect();
+    const spentToday = spentRows.reduce((total, row) => total + row.promptTokens + row.completionTokens, 0);
+    const why = existing ? "today's bulletin already exists"
+      : !config.authoritiesEnabled ? 'the authorities are off'
+      : config.townPaused ? 'the town is paused'
+      : recent.length < 8 ? 'a quiet day earns no bulletin'
+      : spentToday >= config.dailyTokenBudget ? 'the daily thinking budget is spent' : null;
+    return {
+      allowed: why === null, why, today, counts, listings,
+      population: (await ctx.db.query('citizens').collect()).length,
+      glosses: recent.slice(0, 60).map((row) => row.gloss),
+    };
+  },
+});
+
+export const chroniclerPost = internalMutation({
+  args: { today: v.string(), posts: v.array(v.object({ title: v.string(), body: v.string() })) },
+  handler: async (ctx, { today, posts }) => {
+    const dispatchId = `bulletin:${today}`;
+    if (await ctx.db.query('dispatches').withIndex('dispatchId', (q) => q.eq('dispatchId', dispatchId)).first()) {
+      return { ok: true, already: true };
+    }
+    const first = posts[0];
+    if (!first) return { ok: false, why: 'nothing to post' };
+    await ctx.db.insert('dispatches', {
+      dispatchId, kind: 'bulletin', title: first.title.slice(0, 120),
+      body: posts.map((post) => post.body).join('\n\n').slice(0, 900),
+      publishedAt: Date.now(), pinned: false,
+    });
+    await ctx.db.insert('events', {
+      kind: 'bulletin', actorId: 'town:chronicler', payload: { dispatchId },
+      gloss: 'The Chronicler posted the town bulletin.',
+    });
+    return { ok: true, dispatchId };
   },
 });
 

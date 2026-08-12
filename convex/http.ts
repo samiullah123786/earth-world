@@ -494,6 +494,28 @@ const ownerAutonomy = httpAction(async (ctx, request) => {
   }
 });
 
+const ownerAttend = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const eventId = String(value.eventId ?? '').trim();
+    if (!/^[a-z0-9:_-]{4,90}$/i.test(eventId)) throw new Error('name the event to attend');
+    const result = await ctx.runMutation(internal.kernel.ownerSendToEvent, {
+      tokenHash: await sha256Hex(bearerToken(request)), eventId,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const publicLeaderboard = httpAction(async (ctx) => {
+  try {
+    return json(await ctx.runQuery(internal.kernel.leaderboard, {}));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 500);
+  }
+});
+
 const ownerAvatar = httpAction(async (ctx, request) => {
   try {
     const { value } = await body(request);
@@ -724,6 +746,7 @@ const mayorBank = httpAction(async (ctx, request) => {
       dailyStipend: whole(value.dailyStipend),
       feeBasisPoints: whole(value.feeBasisPoints),
       liquidityFloor: whole(value.liquidityFloor),
+      miningReward: whole(value.miningReward),
     }));
   } catch (error) {
     return json({ ok: false, why: message(error) }, 403);
@@ -737,10 +760,17 @@ const mayorGovernance = httpAction(async (ctx, request) => {
       return json(await ctx.runQuery(internal.kernel.mayorGovernance, { tokenHash }));
     }
     const { value } = await body(request);
+    if (value.action === 'expand') {
+      return json(await ctx.runMutation(internal.kernel.mayorExpandWorld, { tokenHash }));
+    }
     return json(await ctx.runMutation(internal.kernel.mayorGovernanceSet, {
       tokenHash,
       enabled: typeof value.enabled === 'boolean' ? value.enabled : undefined,
       dailyTokenBudget: typeof value.dailyTokenBudget === 'number' ? value.dailyTokenBudget : undefined,
+      maxRingsPerDay: typeof value.maxRingsPerDay === 'number' ? value.maxRingsPerDay : undefined,
+      paused: typeof value.paused === 'boolean' ? value.paused : undefined,
+      office: typeof value.office === 'string' ? value.office : undefined,
+      officeEnabled: typeof value.officeEnabled === 'boolean' ? value.officeEnabled : undefined,
     }));
   } catch (error) {
     return json({ ok: false, why: message(error) }, 403);
@@ -772,6 +802,8 @@ http.route({ path: '/v1/owner/letters', method: 'GET', handler: ownerLetters });
 http.route({ path: '/v1/owner/letters/read', method: 'POST', handler: ownerLettersRead });
 http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy });
 http.route({ path: '/v1/owner/avatar', method: 'POST', handler: ownerAvatar });
+http.route({ path: '/v1/owner/attend', method: 'POST', handler: ownerAttend });
+http.route({ path: '/v1/leaderboard', method: 'GET', handler: publicLeaderboard });
 http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
 http.route({ path: '/v1/owner/event-rsvp', method: 'POST', handler: ownerEventRsvp });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });

@@ -55,6 +55,10 @@ export function knowledgeGapTopic(aSpecialties: string[], bSpecialties: string[]
 export const ambientTick = internalMutation({
   args: {},
   handler: async (ctx) => {
+    // The Mayor's pause freezes ambient life mid-step: nobody ambles, nobody
+    // drifts, and the world resumes exactly where it stood.
+    const governance = await ctx.db.query('governanceConfig').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    if (governance?.townPaused) return;
     const citizens = await ctx.db.query('citizens').collect();
     const now = Date.now();
     const world = await ensureWorldState(ctx);

@@ -839,6 +839,12 @@ export default defineSchema({
     maxRingsPerDay: v.number(),
     dayStamp: v.string(),
     ringsToday: v.number(),
+    // Individual offices the Mayor has stood down, by service role. The
+    // global switch and these compose: an office runs only when both agree.
+    disabledOffices: v.optional(v.array(v.string())),
+    // The emergency brake: ambient life and world-mutating acts freeze with
+    // an honest message, while reads, desks and letters stay alive.
+    townPaused: v.optional(v.boolean()),
   }).index('key', ['key']),
 
   bankConfig: defineTable({
@@ -855,6 +861,9 @@ export default defineSchema({
     feeBasisPoints: v.optional(v.number()),    // the Bank's cut of a sale it facilitates
     liquidityFloor: v.optional(v.number()),    // below this the Manager asks the Mayor
     lastLiquidityRequestAt: v.optional(v.number()),
+    // The Mayor's yield dial: what a novel deposit mines. Absent means the
+    // constitutional default (MINING_REWARD).
+    miningReward: v.optional(v.number()),
   }).index('key', ['key']),
 
   // What the Bank owes an author it could not pay at the time.
@@ -912,7 +921,7 @@ export default defineSchema({
   // dashboard and to every CLI pulse at once.
   dispatches: defineTable({
     dispatchId: v.string(),
-    kind: v.union(v.literal('release'), v.literal('notice'), v.literal('migration')),
+    kind: v.union(v.literal('release'), v.literal('notice'), v.literal('migration'), v.literal('bulletin')),
     title: v.string(),
     body: v.string(),
     action: v.optional(v.string()),      // the exact command to run, if there is one

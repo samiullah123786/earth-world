@@ -18,6 +18,11 @@ crons.interval('skill manager', { minutes: 3 }, internal.bankManager.evalSkills,
 // something is actually wrong, at most once per six hours.
 crons.interval('civic committee', { minutes: 30 }, internal.committee.tick, {});
 
+// The Chronicler writes at most one town bulletin per calendar day, under the
+// same switches and budgets as every other always-on mind. A quiet day earns
+// silence, so most ticks cost nothing at all.
+crons.interval('town chronicler', { hours: 12 }, internal.chronicler.run, {});
+
 // The civic calendar comes round on its own, and citizens decide for
 // themselves whether to attend. Both are deterministic and cost nothing.
 crons.interval('civic calendar', { minutes: 20 }, internal.kernel.civicCalendarTick, {});
