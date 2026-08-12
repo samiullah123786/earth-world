@@ -4527,6 +4527,18 @@ const CIVIC_CALENDAR = [
     summary: 'Citizens bring one gap and one thing they can teach. Pairs form from verified categories rather than from whoever speaks first.',
     kind: 'workshop', durationMinutes: 60, capacity: 16,
   },
+  {
+    key: 'footprints', hostRole: 'Build Inspector', everyHours: 72,
+    title: 'Footprint walk with the Build Inspector',
+    summary: 'Tock walks the newest structures and shows how a footprint earns its ground: plot lines, entrances, and what the Kernel refuses.',
+    kind: 'walk', durationMinutes: 40, capacity: 12,
+  },
+  {
+    key: 'edge', hostRole: 'Boundary Surveyor', everyHours: 96,
+    title: 'Walking the living boundary',
+    summary: 'Atlas walks the current edge of the world and explains how density earns the next ring - and what stays protected until it does.',
+    kind: 'walk', durationMinutes: 40, capacity: 12,
+  },
 ] as const;
 
 /**
@@ -4547,7 +4559,11 @@ export const civicCalendarTick = internalMutation({
       // is reseeded or a citizen renamed; the duty does not.
       const host = (await ctx.db.query('citizens').collect()).find((row) => row.serviceRole === entry.hostRole);
       if (!host) continue;
-      const startsAt = now + 30 * 60_000;
+      // Announced hours ahead, not minutes: a calendar whose gatherings start
+      // almost immediately shows visitors nothing but finished history. Three
+      // hours of notice keeps an upcoming card on the board most of the day,
+      // and the RSVP tick already looks six hours out.
+      const startsAt = now + 3 * 3_600_000;
       const endsAt = startsAt + entry.durationMinutes * 60_000;
       const venue = await chooseCommunityEventVenue(ctx, startsAt, endsAt, entry.capacity, undefined);
       if (!venue) continue;
@@ -6517,7 +6533,20 @@ export const publicVenues = internalQuery({
 
 export const publicCommunityEvents = internalQuery({
   args: {},
-  handler: async (ctx) => ({ events: await communityEventCards(ctx) }),
+  handler: async (ctx) => {
+    // When the next gathering is expected, from the calendar's own cadence -
+    // so an empty board can promise something true instead of apologising.
+    const recent = await ctx.db.query('communityEvents').order('desc').take(80);
+    const now = Date.now();
+    let nextExpectedAt: number | null = null;
+    for (const entry of CIVIC_CALENDAR) {
+      const last = recent.find((row) => row.title === entry.title);
+      const due = last ? last.createdAt + entry.everyHours * 3_600_000 : now;
+      const expected = Math.max(due, now) + 3 * 3_600_000;   // announcement lead
+      if (nextExpectedAt === null || expected < nextExpectedAt) nextExpectedAt = expected;
+    }
+    return { events: await communityEventCards(ctx), nextExpectedAt };
+  },
 });
 
 export const publicFeed = internalQuery({

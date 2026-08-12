@@ -1984,7 +1984,14 @@ function renderBankShelf() {
       ? 'The Kernel scanned these exact bytes and signed the verdict.'
       : 'No Kernel signature over these bytes yet.';
     top.append(name, seal);
-    const line = document.createElement('p'); line.className = 'bank-oneliner'; line.textContent = row.oneLiner;
+    const line = document.createElement('p'); line.className = 'bank-oneliner';
+    // An unwritten summary stays quiet instead of posing as a description.
+    if (/^\S+ knowledge from a locally evidenced skill\.$/.test(row.oneLiner || '')) {
+      line.classList.add('boiler');
+      line.textContent = 'No summary written by the author.';
+    } else {
+      line.textContent = row.oneLiner;
+    }
     const meta = document.createElement('div'); meta.className = 'bank-meta';
     const coin = document.createElement('img'); coin.src = '/assets/currency/earth_token_32.png'; coin.alt = 'Earth Tokens';
     const price = document.createElement('span'); price.textContent = row.price ? String(row.price) : 'free';
