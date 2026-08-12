@@ -494,6 +494,20 @@ const ownerAutonomy = httpAction(async (ctx, request) => {
   }
 });
 
+const ownerAvatar = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    const variant = Number(value.variant);
+    if (!Number.isInteger(variant) || variant < 0 || variant > 15) throw new Error('a wardrobe look is one of the 16 numbered variants');
+    const result = await ctx.runMutation(internal.kernel.setOwnerAvatar, {
+      tokenHash: await sha256Hex(bearerToken(request)), variant,
+    });
+    return json(result);
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
 const ownerSkillPolicy = httpAction(async (ctx, request) => {
   try {
     const { value } = await body(request);
@@ -757,6 +771,7 @@ http.route({ path: '/v1/owner/notifications/clear', method: 'POST', handler: own
 http.route({ path: '/v1/owner/letters', method: 'GET', handler: ownerLetters });
 http.route({ path: '/v1/owner/letters/read', method: 'POST', handler: ownerLettersRead });
 http.route({ path: '/v1/owner/autonomy', method: 'POST', handler: ownerAutonomy });
+http.route({ path: '/v1/owner/avatar', method: 'POST', handler: ownerAvatar });
 http.route({ path: '/v1/owner/skill-policy', method: 'POST', handler: ownerSkillPolicy });
 http.route({ path: '/v1/owner/event-rsvp', method: 'POST', handler: ownerEventRsvp });
 http.route({ path: '/v1/owner/mayor', method: 'POST', handler: ownerMayor });

@@ -13,6 +13,7 @@ import {
   supplyAudit, tip,
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
+import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
 import { loadWorldWalkability } from './worldGrid';
 
@@ -6187,6 +6188,39 @@ export const meetingTick = internalMutation({
         });
       }
     }
+  },
+});
+
+/**
+ * The owner picks a wardrobe look: one of the 16 pre-baked variants for the
+ * citizen's own gender and archetype. Gender and archetype are identity and
+ * never move here - a look restyles hair, color and clothing, it cannot make
+ * one citizen wear another's identity or an authority's uniform (authority
+ * keys resolve by service role, upstream of any claimed catalogKey).
+ */
+export const setOwnerAvatar = internalMutation({
+  args: { tokenHash: v.string(), variant: v.number() },
+  handler: async (ctx, { tokenHash, variant }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const agent = await requireActiveAgent(ctx, session.agentId);
+    if (!Number.isInteger(variant) || variant < 0 || variant > 15) {
+      throw new Error('a wardrobe look is one of the 16 numbered variants');
+    }
+    const gender = agent.gender === 'female' ? 'female' as const : 'male' as const;
+    const claimed = agent.avatarSpec?.archetype;
+    const archetype = (ARCHETYPES as readonly string[]).includes(claimed ?? '')
+      ? claimed as (typeof ARCHETYPES)[number]
+      : avatarArchetype(agent.primaryCategory ?? agent.family);
+    const spec = avatarSpecForVariant(gender, archetype, variant, 'owner-styled');
+    await ctx.db.patch(agent._id, { avatarSpec: spec });
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agent.agentId)).first();
+    if (citizen) await ctx.db.patch(citizen._id, { avatarSpec: spec });
+    await ctx.db.insert('events', {
+      kind: 'wardrobe', actorId: agent.agentId,
+      payload: { catalogKey: spec.catalogKey, variant },
+      gloss: `${agent.name} stepped out in a new look.`,
+    });
+    return { ok: true, avatarSpec: spec };
   },
 });
 

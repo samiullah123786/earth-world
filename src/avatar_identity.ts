@@ -46,7 +46,10 @@ export function resolveAvatarKey(citizen: AvatarCitizen, available: ReadonlySet<
   const authority = authorityAvatarKey(citizen);
   if (authority && available.has(authority)) return authority;
   const claimed = citizen.avatarSpec?.catalogKey;
-  if (claimed && citizen.avatarSpec?.selectionBasis === 'verified-capabilities' && available.has(claimed)) return claimed;
+  // Two honest bases: genesis derived the look from verified capabilities, or
+  // the owner chose it deliberately and the Kernel recorded that choice.
+  const basis = citizen.avatarSpec?.selectionBasis;
+  if (claimed && (basis === 'verified-capabilities' || basis === 'owner-styled') && available.has(claimed)) return claimed;
   const fallback = fallbackAvatarKey(citizen);
   if (available.has(fallback)) return fallback;
   return citizen.gender === 'female' ? 'default_female' : 'default_male';

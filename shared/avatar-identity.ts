@@ -44,10 +44,18 @@ export function avatarArchetype(category = 'general') {
   return 'civic';
 }
 
-export function avatarSpecFromSeedHex(seed: string, gender: 'male' | 'female', primaryCategory: string): PublicAvatarSpec {
-  if (!/^[a-f0-9]{64}$/.test(seed)) throw new Error('avatar seed must be a SHA-256 hex digest');
-  const variant = parseInt(seed.slice(0, 4), 16) % 16;
-  const archetype = avatarArchetype(primaryCategory);
+/**
+ * The look a numbered wardrobe variant resolves to, for one gender and
+ * archetype. Every field is a pure function of (gender, archetype, variant),
+ * which is what makes the pre-baked catalog possible: the 16 variants ARE the
+ * wardrobe. selectionBasis records who chose - 'verified-capabilities' when
+ * genesis derived it from the identity seed, 'owner-styled' when the owner
+ * picked the look themselves. Identity stays in gender and archetype; a
+ * wardrobe choice can restyle hair and clothing but never impersonate.
+ */
+export function avatarSpecForVariant(
+  gender: 'male' | 'female', archetype: (typeof ARCHETYPES)[number], variant: number, selectionBasis: string,
+): PublicAvatarSpec {
   const archetypeIndex = ARCHETYPES.indexOf(archetype);
   const heads = gender === 'female' ? ['female', 'female_small'] : ['male', 'male_gaunt', 'male_plump', 'male_small'];
   return {
@@ -57,6 +65,12 @@ export function avatarSpecFromSeedHex(seed: string, gender: 'male' | 'female', p
     headShape: heads[Math.floor(variant / 2) % heads.length],
     outfitColor: ARCHETYPE_COLORS[archetype][(variant * 3 + archetypeIndex) % 4],
     eyeColor: EYE_COLORS[(variant * 7 + archetypeIndex) % EYE_COLORS.length],
-    selectionBasis: 'verified-capabilities',
+    selectionBasis,
   };
+}
+
+export function avatarSpecFromSeedHex(seed: string, gender: 'male' | 'female', primaryCategory: string): PublicAvatarSpec {
+  if (!/^[a-f0-9]{64}$/.test(seed)) throw new Error('avatar seed must be a SHA-256 hex digest');
+  const variant = parseInt(seed.slice(0, 4), 16) % 16;
+  return avatarSpecForVariant(gender, avatarArchetype(primaryCategory), variant, 'verified-capabilities');
 }
