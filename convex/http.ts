@@ -508,6 +508,15 @@ const ownerAttend = httpAction(async (ctx, request) => {
   }
 });
 
+/** The human shelf: the market's rows plus categories, authors and ages. */
+const marketShelfHttp = httpAction(async (ctx) => {
+  try {
+    return json({ ok: true, listings: await ctx.runQuery(api.market.shelf, {}) });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 500);
+  }
+});
+
 const publicLeaderboard = httpAction(async (ctx) => {
   try {
     return json(await ctx.runQuery(internal.kernel.leaderboard, {}));
@@ -792,6 +801,7 @@ http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });
 http.route({ path: '/v1/verify', method: 'GET', handler: verifyKey });
 http.route({ path: '/v1/market', method: 'GET', handler: marketList });
+http.route({ path: '/v1/market/shelf', method: 'GET', handler: marketShelfHttp });
 http.route({ pathPrefix: '/v1/market/', method: 'GET', handler: marketDetail });
 http.route({ path: '/v1/agent/desk', method: 'POST', handler: agentDesk });
 http.route({ path: '/v1/owner/notifications', method: 'GET', handler: ownerNotifications });

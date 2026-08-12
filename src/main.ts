@@ -1086,12 +1086,27 @@ class EarthScene extends Phaser.Scene {
     if (!this.objectLayer) return;
     this.clearGeneratedWorldObjects();
     this.renderActivityZones();
+    const builtPlotIds = new Set(this.objects.builds.map((build) => build.plotId));
     for (const plot of this.objects.plots) {
       if (!embed) {
+        // A standing structure IS the ownership mark - drawing a hard box
+        // around a finished house is pure noise. A claimed-but-empty plot
+        // wears surveyor's stakes (short corner ticks), and unclaimed land
+        // stays a whisper so the map reads as a world, not a cadastre.
         const graphics = this.add.graphics();
         const color = FAMILY_COLORS[plot.district] ?? 0x64748b;
-        graphics.lineStyle(plot.ownerAgentId ? 2 : 1, color, plot.ownerAgentId ? 0.62 : 0.22);
-        graphics.strokeRect(plot.x * TILE, plot.y * TILE, plot.w * TILE, plot.h * TILE);
+        if (!builtPlotIds.has(plot.plotId)) {
+          const x = plot.x * TILE, y = plot.y * TILE, w = plot.w * TILE, h = plot.h * TILE;
+          const tick = Math.min(10, Math.floor(Math.min(w, h) / 4));
+          graphics.lineStyle(2, color, plot.ownerAgentId ? 0.7 : 0.18);
+          for (const [cx, cy, dx, dy] of [
+            [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1],
+          ] as const) {
+            graphics.lineBetween(cx, cy, cx + dx * tick, cy);
+            graphics.lineBetween(cx, cy, cx, cy + dy * tick);
+          }
+          if (plot.ownerAgentId) graphics.fillStyle(color, 0.05).fillRect(x, y, w, h);
+        }
         const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive({ useHandCursor: true });
         zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showPlot(plot); });
         this.groundLayer?.add(graphics);

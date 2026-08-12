@@ -130,6 +130,8 @@ export const shelf = query({
         // 'omit' is the Manager's uncategorizable bucket: listed, not chipped.
         categories: categories.filter((cat: string) => cat && cat !== 'omit'),
         author: names.get(authorId) ?? 'a citizen',
+        createdAt: source?._creationTime ?? 0,
+        forkOf: row.forkOf,
       };
     });
   },
