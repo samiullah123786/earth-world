@@ -151,9 +151,23 @@ function currentPosition(citizen: any, now: number) {
   return { x: citizen.fx + (citizen.tx - citizen.fx) * p, y: citizen.fy + (citizen.ty - citizen.fy) * p };
 }
 
+/**
+ * Every route is announced BEFORE it begins.
+ *
+ * Routes used to start at the server's "now", so by the time the update
+ * crossed the network the walk was half over - or entirely over, leaving
+ * viewers nothing to draw but the arrival. That is the teleport people saw.
+ * Stamping the first step a moment in the future means every watcher
+ * receives the whole path before the citizen lifts a foot, and every screen
+ * plays the same walk at the same instant. (Scheduled movement: the standard
+ * companion to entity interpolation.)
+ */
+const ROUTE_LEAD_MS = 900;
+
 function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y: number }>, now: number) {
-  const route = [{ ...start, at: now }];
-  let at = now;
+  const startAt = now + ROUTE_LEAD_MS;
+  const route = [{ ...start, at: startAt }];
+  let at = startAt;
   let previous = start;
   for (const point of path.slice(1)) {
     at += (Math.hypot(point.x - previous.x, point.y - previous.y) / SPEED) * 1000;
@@ -6376,6 +6390,31 @@ export const ambientSettle = internalMutation({
  * run, so a wave of newcomers is housed steadily instead of stampeding the
  * scheduler - the flood that froze the town taught that lesson.
  */
+/**
+ * Retention. The public record is a river, not a reservoir: every ambient
+ * step writes an event, so without pruning the table grows without bound and
+ * every reader - the feed, the Chronicler, the committee - pays for history
+ * nobody reads. Bounded by design: the oldest few hundred rows per run, only
+ * beyond the keep-window, so this can never become a long transaction itself.
+ */
+export const pruneEvents = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const KEEP_DAYS = 7;
+    const cutoff = Date.now() - KEEP_DAYS * 86_400_000;
+    // Eighty per run: a batch this small always fits one transaction, and
+    // twenty-minute runs still outpace what the world writes.
+    const oldest = await ctx.db.query('events').order('asc').take(80);
+    let removed = 0;
+    for (const row of oldest) {
+      if (row._creationTime >= cutoff) break;      // ascending: the rest are newer
+      await ctx.db.delete(row._id);
+      removed += 1;
+    }
+    return { ok: true, removed };
+  },
+});
+
 export const aspirationTick = internalMutation({
   args: {},
   handler: async (ctx) => {

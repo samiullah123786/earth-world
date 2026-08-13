@@ -16,7 +16,18 @@ import {
 import { LPC_PREFABS, type LpcPrefab } from '../shared/lpc-prefabs';
 import { generateWfcChunk, wfcRule, type DistrictBiome } from '../shared/wfc';
 
+const RENDER_DELAY_MS = 140;
 const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
+// The sheets every world needs regardless of who lives in it. Everything
+// else streams on demand: 138 catalog variants are 15 MB, and a visitor
+// should never wait on a citizen who is not on their screen.
+type AgentSheetDefinition = { sheet: string; animations: Record<string, readonly number[]> };
+const agentSheet = (key: string): AgentSheetDefinition | undefined =>
+  (AGENT_ANIMATION_FRAMES as unknown as Record<string, AgentSheetDefinition>)[key];
+
+const ESSENTIAL_AGENT_KEYS = [
+  'mayor_sam', 'aegis', 'terra', 'tock', 'sage', 'atlas', 'default_male', 'default_female',
+].filter((key) => Boolean(agentSheet(key)));
 
 const FAMILY_COLORS: Record<string, number> = {
   engineering: 0x3b82f6, design: 0x8b5cf6, marketing: 0xf97316,
@@ -165,6 +176,14 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
 
 class EarthScene extends Phaser.Scene {
   sprites = new Map<string, Phaser.GameObjects.Container>();
+  /** Sheets currently streaming in, so one citizen is never queued twice. */
+  pendingSheets = new Set<string>();
+  /**
+   * How far this browser's clock runs ahead of the Kernel's, in ms, estimated
+   * from route stamps. Every viewer converges on the same server timeline, so
+   * a walk looks the same on every screen watching it.
+   */
+  clockOffset = 0;
   citizens: Citizen[] = [];
   objects: WorldObjects = { plots: [], builds: [], venues: [], meetings: [], services: [],
     state: { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'service_auto' } };
@@ -209,7 +228,14 @@ class EarthScene extends Phaser.Scene {
     // The LPC growth strip: plowed, seeded, sprout, growing, ripe.
     this.load.spritesheet('crop-growth', '/assets/lpc_framework/world_tiles/farming/crop_growth.png',
       { frameWidth: 32, frameHeight: 32 });
-    for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
+    // Only the sheets every world needs are blocking: the six civic offices
+    // and the two default figures (~900 KB). The catalog holds 138 variants
+    // (~15 MB) and preloading them all meant the map appeared while every
+    // citizen waited on a queue of downloads it did not need. The rest
+    // stream in per citizen, on demand, behind a default stand-in.
+    for (const agentKey of ESSENTIAL_AGENT_KEYS) {
+      const definition = agentSheet(agentKey);
+      if (!definition) continue;
       this.load.spritesheet(`lpc-agent-${agentKey}`, definition.sheet, {
         frameWidth: LPC_AGENT_FRAME_SIZE,
         frameHeight: LPC_AGENT_FRAME_SIZE,
@@ -232,21 +258,7 @@ class EarthScene extends Phaser.Scene {
         texture.add('blueprint-frame', 0, component.frame.x, component.frame.y, component.frame.width, component.frame.height);
       }
     }
-    for (const [agentKey, definition] of Object.entries(AGENT_ANIMATION_FRAMES)) {
-      // The catalog carries <state>_<direction> keys plus a bare <state> alias
-      // pointing at the front row; registering all of them keeps older callers
-      // working while the directional keys drive the scene.
-      for (const [state, frameNumbers] of Object.entries(definition.animations)) {
-        const animationKey = `lpc-${agentKey}-${state}`;
-        if (this.anims.exists(animationKey)) continue;
-        this.anims.create({
-          key: animationKey,
-          frames: frameNumbers.map((frame) => ({ key: `lpc-agent-${agentKey}`, frame })),
-          frameRate: state === 'idle' ? 2 : state === 'walk' ? 9 : 7,
-          repeat: -1,
-        });
-      }
-    }
+    for (const agentKey of ESSENTIAL_AGENT_KEYS) this.registerAgentAnimations(agentKey);
     const map = this.cache.json.get('map');
     TILE = map.tile;
     assertGridSize(TILE);
@@ -405,6 +417,23 @@ class EarthScene extends Phaser.Scene {
     });
     convex.onUpdate(api.world.citizens, {}, (rows: Citizen[]) => {
       const firstLoad = this.citizens.length === 0;
+      // CLOCK OFFSET (the teleport bug, root cause): routes are stamped in
+      // SERVER time, and this browser's clock is its own. A machine a few
+      // seconds fast made every arriving route look already finished, so the
+      // renderer skipped the walk and snapped the sprite to the destination -
+      // exactly the "jump without a path" people saw. Estimate the offset the
+      // standard way: sample (clientNow - serverStamp) and keep the MINIMUM,
+      // which filters out network latency and leaves the true skew plus a
+      // small interpolation buffer.
+      const sampledAt = Date.now();
+      for (const row of rows) {
+        if (!row.route || row.route.length < 2) continue;
+        const sample = sampledAt - row.t0;
+        if (sample < this.clockOffset) this.clockOffset = sample;
+      }
+      // Let the estimate drift back slowly so a laptop that resyncs its clock
+      // (or wakes from sleep) is followed rather than trusted forever.
+      this.clockOffset += 12;
       this.citizens = rows;
       const liveIds = new Set(rows.map((row) => row.agentId));
       for (const citizen of rows) if (!this.sprites.has(citizen.agentId)) {
@@ -1105,7 +1134,6 @@ class EarthScene extends Phaser.Scene {
             graphics.lineBetween(cx, cy, cx + dx * tick, cy);
             graphics.lineBetween(cx, cy, cx, cy + dy * tick);
           }
-          if (plot.ownerAgentId) graphics.fillStyle(color, 0.05).fillRect(x, y, w, h);
         }
         const zone = this.add.zone((plot.x + plot.w / 2) * TILE, (plot.y + plot.h / 2) * TILE, plot.w * TILE, plot.h * TILE).setInteractive({ useHandCursor: true });
         zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showPlot(plot); });
@@ -1267,8 +1295,66 @@ class EarthScene extends Phaser.Scene {
     ], 'Meetings are booked by stable agent ID and activate only after both owners approve.');
   }
 
+  /** Register one sheet's directional animations; safe to call repeatedly. */
+  registerAgentAnimations(agentKey: string) {
+    const definition = agentSheet(agentKey);
+    if (!definition || !this.textures.exists(`lpc-agent-${agentKey}`)) return;
+    // The catalog carries <state>_<direction> keys plus a bare <state> alias
+    // pointing at the front row; registering all of them keeps older callers
+    // working while the directional keys drive the scene.
+    for (const [state, frameNumbers] of Object.entries(definition.animations)) {
+      const animationKey = `lpc-${agentKey}-${state}`;
+      if (this.anims.exists(animationKey)) continue;
+      this.anims.create({
+        key: animationKey,
+        frames: frameNumbers.map((frame) => ({ key: `lpc-agent-${agentKey}`, frame })),
+        frameRate: state === 'idle' ? 2 : state === 'walk' ? 9 : 7,
+        repeat: -1,
+      });
+    }
+  }
+
+  /**
+   * Stream one citizen's sheet in the background, then upgrade every sprite
+   * already standing in for it. Progressive enhancement, the standard answer
+   * to "the world must appear now": a citizen is drawn immediately with a
+   * default figure and becomes precisely itself a moment later.
+   */
+  requestAgentSheet(agentKey: string) {
+    if (this.textures.exists(`lpc-agent-${agentKey}`) || this.pendingSheets.has(agentKey)) return;
+    const definition = agentSheet(agentKey);
+    if (!definition) return;
+    this.pendingSheets.add(agentKey);
+    const textureKey = `lpc-agent-${agentKey}`;
+    this.load.spritesheet(textureKey, definition.sheet, {
+      frameWidth: LPC_AGENT_FRAME_SIZE, frameHeight: LPC_AGENT_FRAME_SIZE,
+    });
+    this.load.once(`filecomplete-spritesheet-${textureKey}`, () => {
+      this.pendingSheets.delete(agentKey);
+      this.registerAgentAnimations(agentKey);
+      for (const [agentId, container] of this.sprites) {
+        if (container.getData('wanted-preset') !== agentKey) continue;
+        const image = container.getByName('cit-image') as Phaser.GameObjects.Sprite | null;
+        if (!image) continue;
+        image.setTexture(textureKey, 0);
+        image.setData('lpc-preset', agentKey);
+        image.setData('lpc-key', '');            // force the next frame to replay
+        image.play(`lpc-${agentKey}-idle`, true);
+        void agentId;
+      }
+    });
+    // A single deferred start batches every sheet requested this frame.
+    if (!this.load.isLoading()) this.load.start();
+  }
+
   spawnCitizen(citizen: Citizen) {
-    const lpcPreset = resolveAvatarKey(citizen, LPC_AGENT_KEYS);
+    const wantedPreset = resolveAvatarKey(citizen, LPC_AGENT_KEYS);
+    // Draw now with whatever is loaded; stream the exact sheet behind it.
+    const ready = this.textures.exists(`lpc-agent-${wantedPreset}`);
+    if (!ready) this.requestAgentSheet(wantedPreset);
+    const lpcPreset = ready
+      ? wantedPreset
+      : (citizen.gender === 'female' ? 'default_female' : 'default_male');
 
     const color = FAMILY_COLORS[citizen.family] ?? 0x64748b;
     const accent = FAMILY_COLORS[citizen.accent] ?? 0x8b5cf6;
@@ -1319,6 +1405,9 @@ class EarthScene extends Phaser.Scene {
     shield.fillStyle(accent).fillTriangle(8, -7, 14, -5, 12, 0).fillTriangle(8, 3, 4, -5, 12, 0);
     const container = this.add.container(0, 0, [rankAura, sprite, identityMark, tierMark, label, bubble, sleepBubble, shield]).setSize(64, 64).setInteractive({ useHandCursor: true });
     container.setData('persistent-world', true);
+    // The exact sheet this citizen is owed; the streamer upgrades the
+    // stand-in the moment it lands.
+    container.setData('wanted-preset', wantedPreset);
     container.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showProfile(citizen.agentId); });
     this.objectLayer?.add(container);
     this.sprites.set(citizen.agentId, container);
@@ -1795,13 +1884,21 @@ class EarthScene extends Phaser.Scene {
         return true;
       });
     }
-    const now = Date.now();
+    // Server time, as this viewer best understands it: every screen watching
+    // interpolates the same route against the same timeline, so one walk
+    // looks identical to everyone.
+    // Server time as this viewer understands it, minus a small render delay:
+    // entity interpolation always draws slightly in the past so a late packet
+    // is absorbed instead of becoming a jump (Gambetta's entity interpolation,
+    // Source's interp buffer - the same idea every networked world uses).
+    const now = Date.now() - this.clockOffset - RENDER_DELAY_MS;
     for (const citizen of this.citizens) {
       const sprite = this.sprites.get(citizen.agentId);
       if (!sprite) continue;
       let x = citizen.tx, y = citizen.ty;
       const route = citizen.route;
-      const isMoving = Boolean(route && route.length > 1 && now < route[route.length - 1].at);
+      const isMoving = Boolean(route && route.length > 1
+        && now >= route[0].at && now < route[route.length - 1].at);
       if (route && route.length > 1 && now < route[route.length - 1].at) {
         for (let i = 1; i < route.length; i++) {
           if (now <= route[i].at) {

@@ -10,10 +10,24 @@ const STROLLS = [
   'inspecting a construction plot', 'looking for a friend',
 ];
 
+/**
+ * Every route is announced BEFORE it begins.
+ *
+ * Routes used to start at the server's "now", so by the time the update
+ * crossed the network the walk was half over - or entirely over, leaving
+ * viewers nothing to draw but the arrival. That is the teleport people saw.
+ * Stamping the first step a moment in the future means every watcher
+ * receives the whole path before the citizen lifts a foot, and every screen
+ * plays the same walk at the same instant. (Scheduled movement: the standard
+ * companion to entity interpolation.)
+ */
+const ROUTE_LEAD_MS = 900;
+
 function timedRoute(path: Array<{ x: number; y: number }>, now: number) {
   if (!path.length) return [];
-  const route = [{ ...path[0], at: now }];
-  let at = now;
+  const startAt = now + ROUTE_LEAD_MS;
+  const route = [{ ...path[0], at: startAt }];
+  let at = startAt;
   for (let i = 1; i < path.length; i++) {
     at += (Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y) / SPEED) * 1000;
     route.push({ ...path[i], at });
@@ -64,6 +78,30 @@ export const ambientTick = internalMutation({
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
     const isWalkable = await loadWorldWalkability(ctx, bounds);
+    // ONE read of each table per tick, never one per citizen. Seventeen
+    // citizens each scanning venues, plots, tickets and conversations is
+    // seventeen full scans every five seconds - the tick began timing out
+    // ("too many system operations") and skipped fourteen runs in a row,
+    // which is exactly why citizens stood still and then jumped. This
+    // snapshot is the tick's whole read budget, and it does not grow with
+    // population: more citizens now cost arithmetic, not queries.
+    const [allVenues, allPlots, allTickets, recentConversations] = await Promise.all([
+      ctx.db.query('venues').collect(),
+      ctx.db.query('plots').collect(),
+      ctx.db.query('careTickets').withIndex('state', (q: any) => q.eq('state', 'open')).take(20),
+      ctx.db.query('conversations').order('desc').take(120),
+    ]);
+    const homeByOwner = new Map<string, any>();
+    for (const plot of allPlots) if (plot.ownerAgentId) homeByOwner.set(plot.ownerAgentId, plot);
+    // Who has spoken with whom, derived once from the recent window.
+    const companionsByAgent = new Map<string, Set<string>>();
+    for (const conversation of recentConversations) {
+      for (const [self, other] of [[conversation.a, conversation.b], [conversation.b, conversation.a]] as const) {
+        if (!self || !other) continue;
+        if (!companionsByAgent.has(self)) companionsByAgent.set(self, new Set());
+        companionsByAgent.get(self)!.add(other);
+      }
+    }
     for (const build of await ctx.db.query('builds').collect()) {
       if (build.state !== 'building' || !build.constructionEndsAt || build.constructionEndsAt > now) continue;
       const label = build.blueprint?.name ?? build.structure;
@@ -98,7 +136,10 @@ export const ambientTick = internalMutation({
       });
     }
     const newlyTalking = new Set<string>();
-    for (const conversation of await ctx.db.query('conversations').collect()) {
+    // The bounded window loaded above: scheduled and active conversations
+    // are always recent, and a full scan of every conversation ever held is
+    // a cost that grows forever inside a five-second loop.
+    for (const conversation of recentConversations) {
       if (conversation.state === 'scheduled' && (conversation.startedAt ?? 0) <= now) {
         const ids = conversation.participantIds?.length ? conversation.participantIds : [conversation.a, conversation.b];
         const names = conversation.participantNames?.length ? conversation.participantNames : [conversation.aName, conversation.bName];
@@ -145,7 +186,7 @@ export const ambientTick = internalMutation({
       if ((citizen.trainingUntil ?? 0) <= now && (citizen.trainingActivity || citizen.trainingTeam || citizen.trainingStartsAt || citizen.trainingUntil)) {
         await ctx.db.patch(citizen._id, { trainingActivity: undefined, trainingTeam: undefined, trainingStartsAt: undefined, trainingUntil: undefined });
       } else if (citizen.trainingActivity && (citizen.trainingStartsAt ?? Infinity) <= now && (citizen.trainingUntil ?? 0) > now) {
-        const venue = (await ctx.db.query('venues').collect()).find((item: any) => item.kind === 'training_ground');
+        const venue = allVenues.find((item: any) => item.kind === 'training_ground');
         const position = { x: citizen.tx, y: citizen.ty };
         if (venue && Math.hypot(position.x - venue.x, position.y - venue.y) <= 2.5) {
           const day = new Date(now).toISOString().slice(0, 10);
@@ -238,9 +279,7 @@ export const ambientTick = internalMutation({
       }
       if (!goal && drive === 'social' && citizens.length > 1) {
         // H2 relationship weights: past conversation partners attract first.
-        const pastA = await ctx.db.query('conversations').withIndex('a', (q: any) => q.eq('a', citizen.agentId)).collect();
-        const pastB = await ctx.db.query('conversations').withIndex('b', (q: any) => q.eq('b', citizen.agentId)).collect();
-        const partnerIds = [...new Set([...pastA.map((c: any) => c.b), ...pastB.map((c: any) => c.a)])];
+        const partnerIds = [...(companionsByAgent.get(citizen.agentId) ?? [])];
         const others = citizens.filter((o) => o.agentId !== citizen.agentId);
         const companions = others.filter((o) => partnerIds.includes(o.agentId));
         const pool = companions.length && (bucket % 3 !== 0) ? companions : others;
@@ -249,18 +288,17 @@ export const ambientTick = internalMutation({
         goal = { x: Math.round(friend.tx), y: Math.round(friend.ty),
           why: isCompanion ? `walking over to visit their companion ${friend.name}` : `walking over to see ${friend.name}` };
       } else if (!goal && (drive === 'curiosity' || drive === 'industry' || (drive === 'civic' && !citizen.serviceRole))) {
-        const venues = await ctx.db.query('venues').collect();
+        const venues = allVenues;
         if (venues.length) {
           const venue = venues[Math.abs(citizen.agentId.charCodeAt(6) + bucket) % venues.length];
           goal = { x: Math.round(venue.x), y: Math.round(venue.y),
             why: drive === 'industry' ? `working near ${venue.name}` : `spending time at ${venue.name}` };
         }
       } else if (!goal && drive === 'rest') {
-        const home = (await ctx.db.query('plots').collect()).find((p: any) => p.ownerAgentId === citizen.agentId);
+        const home = homeByOwner.get(citizen.agentId);
         if (home) goal = { x: home.x + 1, y: home.y + 2, why: 'heading home to rest' };
       } else if (!goal && drive === 'civic' && citizen.serviceRole) {
-        const tickets = await ctx.db.query('careTickets').collect().catch(() => [] as any[]);
-        const open = (tickets as any[]).find((ticket) => ticket.state === 'open');
+        const open = allTickets[0];
         if (open) goal = { x: Math.round(open.x), y: Math.round(open.y), why: `inspecting a reported ${open.category}` };
       }
       // The need names the walk - but an owner's written day plan outranks it.
@@ -281,7 +319,7 @@ export const ambientTick = internalMutation({
         const route = timedRoute(path, now);
         const activity = goal ? goal.why : STROLLS[Math.floor(Math.random() * STROLLS.length)];
         await ctx.db.patch(citizen._id, {
-          fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: now,
+          fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: route[0].at,
           t1: route[route.length - 1].at, route, state: 'ambient', activity,
         });
         // Day-plan steps always narrate (max 8/day); ordinary moves stay sampled.
@@ -361,7 +399,7 @@ export const ambientTick = internalMutation({
     // while its recipient is away earns the sender a courteous acknowledgment
     // (kind service_reply, deduped via ack:<messageId>). The real reply still
     // comes from the recipient's own brain when their owner returns.
-    const agedLetters = (await ctx.db.query('messages').collect()).filter((message: any) =>
+    const agedLetters = (await ctx.db.query('messages').order('asc').take(60)).filter((message: any) =>
       message.kind === 'letter' && !message.readAt && !message.ackedAt && now - message.sentAt > 10 * 60_000);
     let acked = 0;
     for (const letter of agedLetters) {

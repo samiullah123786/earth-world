@@ -3,9 +3,27 @@ import { walkableInWorld, type WorldBounds } from './pathfinding';
 import { WORLD_CHUNK_SIZE, wfcRule } from '../shared/wfc';
 import { foundingEdgeContinuationBlocked } from '../shared/founding-edge';
 
+/**
+ * Terrain chunks, cached per isolate and keyed by the world's own size.
+ *
+ * Every chunk carries a thousand tile strings, and the ambient tick loaded
+ * ALL of them every five seconds - the read that finally tipped the tick into
+ * "too many system operations", freezing the town. Terrain only changes when
+ * the world grows, so the key is the boundary itself: a new ring invalidates
+ * the cache immediately, and nothing else can go stale. Builds stay live
+ * because a house may rise at any moment.
+ */
+let cachedChunks: { key: string; rows: any[] } | null = null;
+
 export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
+  const chunkKey = `${bounds.width}x${bounds.height}`;
   const [chunks, builds] = await Promise.all([
-    ctx.db.query('worldChunks').collect(),
+    cachedChunks?.key === chunkKey
+      ? Promise.resolve(cachedChunks.rows)
+      : ctx.db.query('worldChunks').collect().then((rows: any[]) => {
+          cachedChunks = { key: chunkKey, rows };
+          return rows;
+        }),
     ctx.db.query('builds').collect(),
   ]);
   const chunkMap = new Map(chunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
