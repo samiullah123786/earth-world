@@ -6400,11 +6400,14 @@ export const ambientSettle = internalMutation({
 export const pruneEvents = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const KEEP_DAYS = 7;
-    const cutoff = Date.now() - KEEP_DAYS * 86_400_000;
-    // Eighty per run: a batch this small always fits one transaction, and
-    // twenty-minute runs still outpace what the world writes.
-    const oldest = await ctx.db.query('events').order('asc').take(80);
+    // Twenty-four hours, not seven days. The first version kept a week on a
+    // world three days old, so it deleted nothing while the database grew to
+    // 687MB and the backend ate the droplet's memory. Everything that needs
+    // history keeps its own: the feed shows twelve, the Chronicler reads a
+    // day, and each agent's memory stream lives on its owner's machine.
+    const KEEP_HOURS = 24;
+    const cutoff = Date.now() - KEEP_HOURS * 3_600_000;
+    const oldest = await ctx.db.query('events').order('asc').take(200);
     let removed = 0;
     for (const row of oldest) {
       if (row._creationTime >= cutoff) break;      // ascending: the rest are newer

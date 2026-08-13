@@ -54,18 +54,44 @@ export function findRoute(
   if (![sx, sy, tx, ty].every(Number.isInteger)) return null;
   if (!isWalkable(sx, sy) || !isWalkable(tx, ty)) return null;
 
+  return createRouter(bounds, isWalkable).route(sx, sy, tx, ty);
+}
+
+/**
+ * A reusable router: build the walkability grid and the A* engine ONCE, then
+ * ask it for as many paths as you like.
+ *
+ * findRoute used to rebuild both on every call - a 64x48 world is 3,072
+ * walkability probes and a fresh EasyStar grid copy per path. The ambient
+ * tick asks for up to eight paths per citizen, so eighteen citizens cost
+ * roughly 440,000 probes and 144 grid builds every five seconds. That is what
+ * pinned the backend's CPU and left a twelve-row query queueing for half a
+ * minute. Building once per tick makes the same work a rounding error.
+ */
+export function createRouter(bounds: WorldBounds, isWalkable: Walkability) {
   const grid = Array.from({ length: bounds.height }, (_row, y) =>
     Array.from({ length: bounds.width }, (_cell, x) => isWalkable(x, y) ? 0 : 1),
   );
-
   const finder = new EasyStar.js();
   finder.setGrid(grid);
   finder.setAcceptableTiles([0]);
   finder.enableSync();
-  let result: GridPoint[] | null = null;
-  finder.findPath(sx, sy, tx, ty, (path) => {
-    result = path?.map(({ x, y }) => ({ x, y })) ?? null;
-  });
-  finder.calculate();
-  return result;
+  return {
+    walkable: (x: number, y: number) =>
+      y >= 0 && y < bounds.height && x >= 0 && x < bounds.width && grid[y][x] === 0,
+    route(fromX: number, fromY: number, toX: number, toY: number): GridPoint[] | null {
+      const sx = Math.floor(fromX), sy = Math.floor(fromY);
+      const tx = Math.floor(toX), ty = Math.floor(toY);
+      if (![sx, sy, tx, ty].every(Number.isInteger)) return null;
+      if (sy < 0 || sy >= bounds.height || sx < 0 || sx >= bounds.width) return null;
+      if (ty < 0 || ty >= bounds.height || tx < 0 || tx >= bounds.width) return null;
+      if (grid[sy][sx] !== 0 || grid[ty][tx] !== 0) return null;
+      let result: GridPoint[] | null = null;
+      finder.findPath(sx, sy, tx, ty, (path) => {
+        result = path?.map(({ x, y }) => ({ x, y })) ?? null;
+      });
+      finder.calculate();
+      return result;
+    },
+  };
 }

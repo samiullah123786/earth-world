@@ -1,5 +1,5 @@
 import { internalMutation } from './_generated/server';
-import { findRoute, walkableInWorld } from './pathfinding';
+import { createRouter, findRoute, walkableInWorld } from './pathfinding';
 import { ensureWorldState } from './planning';
 import { loadWorldWalkability } from './worldGrid';
 
@@ -78,6 +78,14 @@ export const ambientTick = internalMutation({
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
     const isWalkable = await loadWorldWalkability(ctx, bounds);
+    // One router per tick, not one per path attempt. Everything below asks
+    // this for routes; the grid and the A* engine are built exactly once.
+    const router = createRouter(bounds, isWalkable);
+    // A bounded movement budget: however large the town grows, one heartbeat
+    // costs at most this many path searches. Citizens take turns by a rotating
+    // offset, so nobody is starved and the backend is never surprised.
+    const MOVE_BUDGET = 6;
+    let movesPlanned = 0;
     // ONE read of each table per tick, never one per citizen. Seventeen
     // citizens each scanning venues, plots, tickets and conversations is
     // seventeen full scans every five seconds - the tick began timing out
@@ -306,24 +314,30 @@ export const ambientTick = internalMutation({
       if (planStep && goal && !goal.why.startsWith('following their day plan')) {
         goal = { ...goal, why: `${goal.why} - part of their day plan` };
       }
-      for (let attempt = 0; attempt < 8; attempt++) {
+      if (movesPlanned >= MOVE_BUDGET) continue;
+      for (let attempt = 0; attempt < 3; attempt++) {
         const jitterX = goal ? goal.x + (attempt % 3) - 1 : Math.round(citizen.tx + (Math.random() * 20 - 10));
         const jitterY = goal ? goal.y + Math.floor(attempt / 3) - 1 : Math.round(citizen.ty + (Math.random() * 20 - 10));
         const nx = Math.max(1, Math.min(bounds.width - 2, jitterX));
         const ny = Math.max(1, Math.min(bounds.height - 2, jitterY));
-        if (!isWalkable(nx, ny)) continue;
+        if (!router.walkable(nx, ny)) continue;
         const occupied = citizens.some((other) => other.agentId !== citizen.agentId && Math.hypot(other.tx - nx, other.ty - ny) < 0.75);
         if (occupied) continue;
-        const path = findRoute(citizen.tx, citizen.ty, nx, ny, bounds, isWalkable);
+        const path = router.route(citizen.tx, citizen.ty, nx, ny);
         if (!path?.length) continue;
         const route = timedRoute(path, now);
+        movesPlanned += 1;
         const activity = goal ? goal.why : STROLLS[Math.floor(Math.random() * STROLLS.length)];
         await ctx.db.patch(citizen._id, {
           fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: route[0].at,
           t1: route[route.length - 1].at, route, state: 'ambient', activity,
         });
         // Day-plan steps always narrate (max 8/day); ordinary moves stay sampled.
-        if (planStep || Math.random() < 0.25) {
+        // Ambient strolling is the loudest, least meaningful thing a citizen
+        // does, and every narration is a row that lives forever. Purposeful
+        // walks (a day plan, a need being answered) still speak; idle wandering
+        // is simply seen, not written down.
+        if (planStep || (goal && Math.random() < 0.2)) {
           await ctx.db.insert('events', {
             kind: 'move', actorId: citizen.agentId, payload: { x: nx, y: ny, steps: path.length },
             gloss: `${citizen.name} is ${activity}.`,
