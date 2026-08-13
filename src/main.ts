@@ -1692,16 +1692,9 @@ class EarthScene extends Phaser.Scene {
   /** Community grounds and whatever is currently growing on them. */
   renderActivityZones() {
     if (!this.objectLayer || !this.groundLayer) return;
-    const ZONE_TINTS: Record<string, number> = {
-      farm: 0x88c04d, orchard: 0x52a35a, forest: 0x3e7d43, quarry: 0x9aa0a8,
-    };
     for (const zone of this.objects.activityZones ?? []) {
-      const ground = this.add.graphics();
-      ground.fillStyle(ZONE_TINTS[zone.kind] ?? 0x88c04d, 0.22)
-        .fillRect(zone.x * TILE, zone.y * TILE, zone.w * TILE, zone.h * TILE);
-      ground.lineStyle(2, INK, 0.55)
-        .strokeRect(zone.x * TILE, zone.y * TILE, zone.w * TILE, zone.h * TILE);
-      this.groundLayer.add(ground);
+      // No glassy overlay: a working ground is its crops, trees and stone,
+      // not a tinted rectangle floating over them. The plaque alone names it.
       const sign = this.add.text(zone.x * TILE + 4, zone.y * TILE + 4,
         `${zone.name.toUpperCase()} · ${zone.tool.replace('_', ' ')}`, {
         fontFamily: 'Consolas, monospace', fontSize: '9px', color: CREAM,
@@ -1820,8 +1813,19 @@ class EarthScene extends Phaser.Scene {
         }
       }
       const rendered = renderRoutePoint({ x, y });
-      sprite.x = rendered.x;
-      sprite.y = rendered.y;
+      // Correction smoothing (standard server-authoritative practice): when a
+      // late update disagrees with the drawn position by more than a stride,
+      // glide to the authoritative point instead of teleporting. Under normal
+      // latency this branch never fires; under a stall it turns snaps into a
+      // short visible walk-correction every viewer sees the same way.
+      const jump = Math.hypot(sprite.x - rendered.x, sprite.y - rendered.y);
+      if (sprite.x !== 0 && jump > TILE * 1.6 && jump < TILE * 30) {
+        sprite.x += (rendered.x - sprite.x) * 0.18;
+        sprite.y += (rendered.y - sprite.y) * 0.18;
+      } else {
+        sprite.x = rendered.x;
+        sprite.y = rendered.y;
+      }
       sprite.setDepth(citizenDepth(rendered.y));
 
       const tierMark = sprite.getByName('tier-insignia') as Phaser.GameObjects.Graphics | null;

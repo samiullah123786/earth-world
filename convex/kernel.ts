@@ -6363,6 +6363,74 @@ export const ambientSettle = internalMutation({
   },
 });
 
+/**
+ * The aspiration ladder's slow heartbeat. Every two minutes it reads the
+ * whole economic truth ONCE - plots, civic points, banked knowledge, wallets
+ * - computes each citizen's current rung, and stores the verdict on the
+ * citizen row for the 5-second drive tick to read as a plain field. Nothing
+ * of the ladder was given up for speed; the thinking simply moved off the
+ * movement path, which is what industrial always-on systems do: materialize
+ * on a schedule, read denormalized, never let cognition block motion.
+ *
+ * Shelter also acts here, gently: at most two settlements are scheduled per
+ * run, so a wave of newcomers is housed steadily instead of stampeding the
+ * scheduler - the flood that froze the town taught that lesson.
+ */
+export const aspirationTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const [citizens, plots, contributions, assets, bankSkillRows, balances, agents] = await Promise.all([
+      ctx.db.query('citizens').collect(),
+      ctx.db.query('plots').collect(),
+      ctx.db.query('contributions').order('desc').take(1000),
+      ctx.db.query('bankAssets').collect(),
+      ctx.db.query('bankSkills').collect(),
+      ctx.db.query('balances').collect(),
+      ctx.db.query('agents').collect(),
+    ]);
+    const homes = new Set(plots.filter((row) => row.ownerAgentId).map((row) => row.ownerAgentId));
+    const civic = new Map<string, number>();
+    for (const row of contributions) {
+      if (row.dimension === 'civic') civic.set(row.agentId, (civic.get(row.agentId) ?? 0) + row.points);
+    }
+    const banked = new Set<string>();
+    for (const row of [...assets, ...bankSkillRows]) {
+      if (row.state !== 'retired') {
+        banked.add(row.depositorAgentId);
+        for (const also of row.alsoDepositedBy ?? []) banked.add(also);
+      }
+    }
+    const wallets = new Map(balances.map((row) => [row.agentId, row.amount]));
+    const agentMap = new Map(agents.map((row) => [row.agentId, row]));
+
+    let patched = 0;
+    let settlements = 0;
+    for (const citizen of citizens) {
+      if (citizen.state === 'awaiting_owner') continue;
+      const verdict = currentAspiration({
+        hasHome: homes.has(citizen.agentId),
+        civicPoints: civic.get(citizen.agentId) ?? 0,
+        bankedSkills: banked.has(citizen.agentId) ? 1 : 0,
+        wallet: wallets.get(citizen.agentId) ?? 0,
+      });
+      const next = verdict ? { key: verdict.key, drive: verdict.drive, gloss: verdict.gloss } : undefined;
+      const stored = citizen.aspiration;
+      if (JSON.stringify(stored ?? null) !== JSON.stringify(next ?? null)) {
+        await ctx.db.patch(citizen._id, { aspiration: next });
+        patched += 1;
+      }
+      if (verdict?.key === 'shelter' && settlements < 2) {
+        const agent = agentMap.get(citizen.agentId);
+        if (agent && (agent.autonomy === 'active' || agent.autonomy === 'light')) {
+          settlements += 1;
+          await ctx.scheduler.runAfter(settlements * 2_000, internal.kernel.ambientSettle, { agentId: citizen.agentId });
+        }
+      }
+    }
+    return { ok: true, patched, settlements };
+  },
+});
+
 export const setOwnerAvatar = internalMutation({
   args: { tokenHash: v.string(), variant: v.number() },
   handler: async (ctx, { tokenHash, variant }) => {

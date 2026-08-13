@@ -24,6 +24,31 @@ describe('the aspiration ladder', () => {
     }
   });
 
+  it('the slow tick stores each verdict on the citizen row for the fast tick to read', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const agentId = 'agent:test-ladder-tick';
+    await t.mutation(internal.kernel.register, {
+      agentId, publicKey: 'public-ladder', name: 'Ladder', ownerName: 'Owner Ladder',
+      gender: 'female', family: 'engineering', accent: 'design', genomeDigest: 'a'.repeat(64),
+      charterVersion: '2026-08-09', claimTokenHash: 'claim-ladder', claimExpiresAt: Date.now() + 60_000,
+      evidenceDigest: 'b'.repeat(64), specialties: ['ui'], primaryCategory: 'ui', skillCount: 4,
+      autonomy: 'none',
+    });
+    await t.mutation(internal.kernel.claimOwner, { claimTokenHash: 'claim-ladder', ownerSessionHash: 'owner-ladder' });
+    await t.mutation(internal.kernel.enter, { agentId, nonce: 'ladder-enter', sessionTokenHash: 'agent-ladder' });
+
+    const result: any = await t.mutation(internal.kernel.aspirationTick, {});
+    expect(result.ok).toBe(true);
+    await t.run(async (ctx: any) => {
+      const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+      // Homeless, so the stored verdict names shelter - and the 5-second
+      // drive tick now needs nothing but this field.
+      expect(citizen.aspiration?.key).toBe('shelter');
+      expect(citizen.aspiration?.gloss).toContain('home');
+    });
+  });
+
   it('settles an active-consent citizen from ambient life, and only once', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});

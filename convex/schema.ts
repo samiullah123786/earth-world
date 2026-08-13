@@ -38,6 +38,11 @@ export default defineSchema({
     skillCount: v.optional(v.number()),
     experienceTier: v.optional(experienceTier),
     avatarSpec: v.optional(avatarSpec),
+    // The aspiration ladder's verdict, computed on a slow cron and merely
+    // READ by the 5-second drive tick - needs may never slow the world down.
+    aspiration: v.optional(v.object({
+      key: v.string(), drive: v.string(), gloss: v.string(),
+    })),
     serviceRole: v.optional(v.string()),
     welcomedAt: v.optional(v.number()),
     talkingWith: v.optional(v.string()),

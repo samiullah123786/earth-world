@@ -5,6 +5,9 @@ const crons = cronJobs();
 
 // The heartbeat of ambient life is cheap, uses no LLM, and keeps Earth visibly alive.
 crons.interval('ambient life', { seconds: 5 }, internal.act.ambientTick, {});
+// The needs ladder thinks on its own slow clock and stores verdicts on the
+// citizen rows; the 5-second heartbeat reads a field, never the economy.
+crons.interval('aspiration ladder', { minutes: 2 }, internal.kernel.aspirationTick, {});
 crons.interval('security cleanup', { minutes: 5 }, internal.kernel.cleanup, {});
 crons.interval('presence sweep', { minutes: 1 }, internal.kernel.presenceSweep, {});
 crons.interval('meeting scheduler', { seconds: 30 }, internal.kernel.meetingTick, {});
