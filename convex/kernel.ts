@@ -3803,7 +3803,14 @@ export const decideApproval = internalMutation({
       landHandled = true;
     }
     if (approval.kind === 'world_expand') {
-      landResult = { expansion: await expandWorld(ctx, `founder request from ${session.agentId}`, true) };
+      // Growing the world generates terrain - seconds of work. Doing it on
+      // the approval's own request meant the browser's proxy timed out before
+      // the Kernel could answer, so the Mayor could never say yes. The
+      // decision is recorded now; the ground arrives a moment later.
+      await ctx.scheduler.runAfter(0, internal.kernel.runWorldExpansion, {
+        reason: `founder request from ${session.agentId}`,
+      });
+      landResult = { expansion: { scheduled: true } };
       landHandled = true;
     }
     if (approval.kind === 'plot_expansion') {
@@ -6415,6 +6422,20 @@ export const pruneEvents = internalMutation({
       removed += 1;
     }
     return { ok: true, removed };
+  },
+});
+
+/** The heavy half of an approved expansion, run off the request path. */
+export const runWorldExpansion = internalMutation({
+  args: { reason: v.string() },
+  handler: async (ctx, { reason }) => {
+    const expansion = await expandWorld(ctx, reason, true);
+    const world = await ensureWorldState(ctx);
+    await ctx.db.insert('events', {
+      kind: 'world_expanded', actorId: 'mayor', payload: { reason },
+      gloss: `The living boundary grew to ${world.width} by ${world.height} tiles.`,
+    });
+    return { ok: true, expansion };
   },
 });
 
