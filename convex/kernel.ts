@@ -14,6 +14,7 @@ import {
 } from './economy';
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
+import { currentAspiration } from '../shared/aspirations';
 import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
 import { loadWorldWalkability } from './worldGrid';
 
@@ -5049,12 +5050,27 @@ export const agentOwnerDesk = internalQuery({
       detail: row.detail,
       raisedAt: row.createdAt,
     }));
+    // The aspiration ladder, computed for this one citizen: the same needs
+    // that pull its ambient walks, stated with the exact command that climbs
+    // the rung - so a waking mind knows its next move before asking anything.
+    const wallet = await balanceOf(ctx, agentId);
+    const hasHome = Boolean(await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first());
+    const civicPoints = (await ctx.db.query('contributions')
+      .withIndex('agent_created', (q) => q.eq('agentId', agentId)).take(200))
+      .filter((row) => row.dimension === 'civic')
+      .reduce((total, row) => total + row.points, 0);
+    const bankedSkills = (await ctx.db.query('bankAssets')
+      .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).take(1)).length
+      + (await ctx.db.query('bankSkills')
+        .withIndex('depositor_created', (q) => q.eq('depositorAgentId', agentId)).take(1)).length;
+    const aspiration = currentAspiration({ hasHome, civicPoints, bankedSkills, wallet });
     return {
       ok: true,
       blocking,
       news: notifications.map((row) => ({ id: row._id, kind: row.kind, title: row.title, body: row.body, at: row.createdAt })),
       letters: letters.map((row) => ({ messageId: row.messageId, from: row.senderId, body: row.body, sentAt: row.sentAt })),
-      balance: await balanceOf(ctx, agentId),
+      balance: wallet,
+      aspiration,
       quiet: blocking.length === 0 && notifications.length === 0 && letters.length === 0,
     };
   },
@@ -6313,6 +6329,40 @@ export const meetingTick = internalMutation({
  * one citizen wear another's identity or an authority's uniform (authority
  * keys resolve by service role, upstream of any claimed catalogKey).
  */
+/**
+ * Ambient settlement under standing consent. The shelter rung of the
+ * aspiration ladder: a homeless citizen whose owner granted ACTIVE autonomy
+ * is settled by Terra exactly as if the agent had asked (same routine path,
+ * same free-plot checks); LIGHT autonomy prepares the routine approval for
+ * the owner instead. Self-limiting by construction - a settled citizen has a
+ * home and never reaches this again, and the approval path dedupes itself.
+ */
+export const ambientSettle = internalMutation({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
+    if (!agent || !citizen || citizen.state === 'awaiting_owner') return { ok: false };
+    if (await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first()) {
+      return { ok: true, already: true };
+    }
+    try {
+      const settled = await settleCitizen(ctx, agent, citizen, Date.now());
+      await ctx.db.insert('events', {
+        kind: 'settlement', actorId: agentId,
+        payload: { autonomy: agent.autonomy ?? 'light' },
+        gloss: (agent.autonomy ?? 'light') === 'active'
+          ? `${citizen.name} claimed ground under their owner's standing consent.`
+          : `${citizen.name} found a plot worth asking their owner about.`,
+      });
+      return { ok: true, settled: Boolean(settled) };
+    } catch {
+      // No safe free plot right now: the surveyors will grow the world.
+      return { ok: false };
+    }
+  },
+});
+
 export const setOwnerAvatar = internalMutation({
   args: { tokenHash: v.string(), variant: v.number() },
   handler: async (ctx, { tokenHash, variant }) => {

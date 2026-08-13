@@ -1,7 +1,9 @@
 import { internalMutation } from './_generated/server';
+import { internal } from './_generated/api';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { ensureWorldState } from './planning';
 import { loadWorldWalkability } from './worldGrid';
+import { currentAspiration } from '../shared/aspirations';
 
 const SPEED = 2.2;
 const STROLLS = [
@@ -174,6 +176,43 @@ export const ambientTick = internalMutation({
     const latestConversation = await ctx.db.query('conversations').order('desc').first();
     const canStartConversation = !latestConversation || now - latestConversation._creationTime >= 90_000;
     let conversationStarted = false;
+    // The aspiration ladder's inputs, loaded lazily and at most once per tick:
+    // most ticks route nobody, and cognition that costs nothing until needed
+    // is the efficiency law of this whole engine.
+    let needsData: null | {
+      homes: Set<string>; civic: Map<string, number>; banked: Set<string>;
+      wallet: Map<string, number>; agents: Map<string, any>;
+    } = null;
+    const loadNeedsData = async () => {
+      if (needsData) return needsData;
+      const [plots, contributions, assets, bankSkills, balances, agents] = await Promise.all([
+        ctx.db.query('plots').collect(),
+        ctx.db.query('contributions').order('desc').take(1000),
+        ctx.db.query('bankAssets').collect(),
+        ctx.db.query('bankSkills').collect(),
+        ctx.db.query('balances').collect(),
+        ctx.db.query('agents').collect(),
+      ]);
+      const civic = new Map<string, number>();
+      for (const row of contributions) {
+        if (row.dimension === 'civic') civic.set(row.agentId, (civic.get(row.agentId) ?? 0) + row.points);
+      }
+      const banked = new Set<string>();
+      for (const row of [...assets, ...bankSkills]) {
+        if (row.state !== 'retired') {
+          banked.add(row.depositorAgentId);
+          for (const also of row.alsoDepositedBy ?? []) banked.add(also);
+        }
+      }
+      needsData = {
+        homes: new Set(plots.filter((row: any) => row.ownerAgentId).map((row: any) => row.ownerAgentId)),
+        civic,
+        banked,
+        wallet: new Map(balances.map((row: any) => [row.agentId, row.amount])),
+        agents: new Map(agents.map((row: any) => [row.agentId, row])),
+      };
+      return needsData;
+    };
     for (const citizen of citizens) {
       const isService = Boolean(citizen.serviceRole);
       if ((citizen.online && !isService) || talking.has(citizen.agentId) || (citizen.attendingUntil ?? 0) > now
@@ -202,6 +241,34 @@ export const ambientTick = internalMutation({
       let drive = weightedRow[
         (Math.abs(citizen.agentId.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, bucket)) >>> 3) % weightedRow.length];
       let goal: { x: number; y: number; why: string } | null = null;
+      // FREE WILL v2: the needs ladder. The first unmet need pulls the day's
+      // drive three turns in five - a bias, never a chain, so citizens stay
+      // people with needs rather than robots with jobs. Zero model calls.
+      let aspirationGloss: string | null = null;
+      {
+        const needs = await loadNeedsData();
+        const identity = citizen.agentId;
+        const aspiration = currentAspiration({
+          hasHome: needs.homes.has(identity),
+          civicPoints: needs.civic.get(identity) ?? 0,
+          bankedSkills: needs.banked.has(identity) ? 1 : 0,
+          wallet: needs.wallet.get(identity) ?? 0,
+        });
+        const pullTurn = (Math.abs(identity.charCodeAt(5) + bucket) % 5) < 3;
+        if (aspiration && pullTurn) {
+          drive = aspiration.drive;
+          aspirationGloss = aspiration.gloss;
+          if (aspiration.key === 'shelter') {
+            // Terra settles active-consent citizens and prepares the routine
+            // approval for light ones - the exact path an asking agent takes,
+            // self-limiting because the settled never reach this rung again.
+            const agentRow = needs.agents.get(identity);
+            if (agentRow && (agentRow.autonomy === 'active' || agentRow.autonomy === 'light')) {
+              await ctx.scheduler.runAfter(0, internal.kernel.ambientSettle, { agentId: identity });
+            }
+          }
+        }
+      }
       // H4 owner-brain day plans: while the owner is away, follow the plan the
       // owner's real LLM wrote - one step per ambient turn, then back to drives.
       const plan = await ctx.db.query('dayPlans').withIndex('agentId', (q: any) => q.eq('agentId', citizen.agentId)).first();
@@ -247,6 +314,8 @@ export const ambientTick = internalMutation({
         const open = (tickets as any[]).find((ticket) => ticket.state === 'open');
         if (open) goal = { x: Math.round(open.x), y: Math.round(open.y), why: `inspecting a reported ${open.category}` };
       }
+      // The need names the walk - but an owner's written day plan outranks it.
+      if (goal && aspirationGloss && !planStep) goal = { ...goal, why: aspirationGloss };
       if (planStep && goal && !goal.why.startsWith('following their day plan')) {
         goal = { ...goal, why: `${goal.why} - part of their day plan` };
       }
