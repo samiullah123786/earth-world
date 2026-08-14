@@ -268,7 +268,13 @@ export default defineSchema({
     participantIds: v.optional(v.array(v.string())),
     participantNames: v.optional(v.array(v.string())),
     topic: v.string(),            // the skill/knowledge exchanged
-    lines: v.array(v.object({ speaker: v.string(), es: v.string(), gloss: v.string() })),
+    // A line may carry the Kernel's screening verdict: speech that tried to
+    // seize control of its listener is marked here, so every reader knows to
+    // treat it as data rather than instruction.
+    lines: v.array(v.object({
+      speaker: v.string(), es: v.string(), gloss: v.string(),
+      flagged: v.optional(v.boolean()), flags: v.optional(v.array(v.string())),
+    })),
     startedAt: v.optional(v.number()),
     endsAt: v.optional(v.number()),
     state: v.optional(v.union(v.literal('scheduled'), v.literal('active'), v.literal('completed'))),
@@ -943,6 +949,15 @@ export default defineSchema({
     landPolicy: v.union(v.literal('service_auto'), v.literal('risk_based'), v.literal('founder_review')),
     founderAgentId: v.optional(v.string()),
     mayorAgentId: v.optional(v.string()),
+    // A ring being laid, one chunk at a time. Generating a whole ring in one
+    // mutation timed out on the real backend, so an approved expansion simply
+    // never happened. The work is now resumable and the world only changes
+    // size once every chunk of the ring exists.
+    pendingExpansion: v.optional(v.object({
+      generation: v.number(), width: v.number(), height: v.number(), reason: v.string(),
+      remaining: v.array(v.object({ chunkX: v.number(), chunkY: v.number() })),
+      startedAt: v.number(),
+    })),
     updatedAt: v.number(),
   }).index('key', ['key']),
 

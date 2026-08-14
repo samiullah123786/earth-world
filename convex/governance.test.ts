@@ -98,7 +98,32 @@ describe('the Mayor control center', () => {
 
     const grown: any = await t.mutation(internal.kernel.mayorExpandWorld, { tokenHash: mayorToken });
     expect(grown.ok).toBe(true);
-    expect(grown.width).toBeGreaterThan(before!.width);
+    expect(grown.started).toBe(true);
+    // The ring is laid one chunk per step - a whole ring in one transaction
+    // timed out on the real backend and silently never happened. Drive the
+    // steps here the way the scheduler does in production.
+    await t.mutation(internal.kernel.runWorldExpansion, { reason: 'test ring' });
+    // Terrain collapse lives in an action (mutations get one second); drive
+    // the read / generate / store loop the way that action does.
+    const { generateWfcChunk } = await import('../shared/wfc');
+    for (let step = 0; step < 40; step++) {
+      const work: any = await t.query(internal.kernel.expansionWork, {});
+      if (!work.pending) break;
+      if (work.ready) { await t.mutation(internal.kernel.expansionCommit, {}); break; }
+      const collapsed = generateWfcChunk({ seed: work.seed, biome: work.biome, boundary: work.boundary });
+      await t.mutation(internal.kernel.expansionStore, {
+        chunk: {
+          chunkId: `chunk:${work.coordinate.chunkX}:${work.coordinate.chunkY}`,
+          chunkX: work.coordinate.chunkX, chunkY: work.coordinate.chunkY, size: 16,
+          biome: work.biome, generation: work.generation, seed: work.seed,
+          tiles: collapsed.tiles, edges: collapsed.edges,
+        },
+      });
+    }
+    const after = await t.run(async (ctx: any) =>
+      (await ctx.db.query('worldState').withIndex('key', (q: any) => q.eq('key', 'earth')).first()));
+    expect(after.width).toBeGreaterThan(before!.width);
+    expect(after.pendingExpansion).toBeUndefined();
     // The default allowance is one ring a day; the second ask is refused with
     // the reason and the remedy in one sentence.
     await expect(t.mutation(internal.kernel.mayorExpandWorld, { tokenHash: mayorToken }))

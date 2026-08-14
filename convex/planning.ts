@@ -147,6 +147,154 @@ export async function expandWorld(ctx: any, reason: string, force = false) {
   return { expanded: true, state: { ...state, width, height, generation }, chunksAdded: generated.length, plotsAdded: accepted.length };
 }
 
+/**
+ * Plan a ring without building it. Returns the chunk coordinates the ring
+ * needs; the caller stores them and lays one per scheduled step.
+ */
+export async function planExpansion(ctx: any, reason: string, force = false) {
+  const state = await ensureWorldState(ctx);
+  if (state.pendingExpansion) return { planned: false, alreadyRunning: true, state };
+  const plots = await ctx.db.query('plots').collect();
+  const citizens = await ctx.db.query('citizens').collect();
+  const occupied = plots.filter((plot: any) => plot.ownerAgentId).length;
+  const needsRoom = citizens.length >= state.capacity - 5 || occupied >= Math.floor(plots.length * 0.8);
+  if (!force && !needsRoom) return { planned: false, state };
+
+  const width = state.width + RING, height = state.height + RING;
+  const generation = state.generation + 1;
+  const oldColumns = Math.ceil(state.width / RING), oldRows = Math.ceil(state.height / RING);
+  const newColumns = Math.ceil(width / RING), newRows = Math.ceil(height / RING);
+  const remaining: Array<{ chunkX: number; chunkY: number }> = [];
+  for (let chunkY = 0; chunkY < newRows; chunkY++) for (let chunkX = 0; chunkX < newColumns; chunkX++) {
+    if (chunkX >= oldColumns || chunkY >= oldRows) remaining.push({ chunkX, chunkY });
+  }
+  await ctx.db.patch(state._id, {
+    pendingExpansion: { generation, width, height, reason, remaining, startedAt: Date.now() },
+    updatedAt: Date.now(),
+  });
+  return { planned: true, chunks: remaining.length, generation, width, height };
+}
+
+/**
+ * Lay ONE chunk of the pending ring. Terrain continuity is preserved exactly
+ * as before: each chunk copies the edges of whichever neighbours already
+ * exist, and chunks laid earlier in this ring are read back from the database.
+ */
+export async function expansionStep(ctx: any) {
+  const state = await ensureWorldState(ctx);
+  const pending = state.pendingExpansion;
+  if (!pending) return { done: true, laid: 0 };
+  if (!pending.remaining.length) return await commitExpansion(ctx, state, pending);
+
+  const [coordinate, ...rest] = pending.remaining;
+  const existingChunks = await ctx.db.query('worldChunks').collect();
+  const byCoordinate = new Map<string, any>(existingChunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
+  const plannedKeys = new Set(pending.remaining.map(({ chunkX, chunkY }: any) => `${chunkX},${chunkY}`));
+  const steps: ReadonlyArray<{ side: Cardinal; dx: number; dy: number }> = [
+    { side: 'north', dx: 0, dy: -1 }, { side: 'east', dx: 1, dy: 0 },
+    { side: 'south', dx: 0, dy: 1 }, { side: 'west', dx: -1, dy: 0 },
+  ];
+  const boundary = grassBoundary(RING) as Record<Cardinal, string[]>;
+  for (const { side, dx, dy } of steps) {
+    const neighborKey = `${coordinate.chunkX + dx},${coordinate.chunkY + dy}`;
+    const neighbor = byCoordinate.get(neighborKey);
+    if (neighbor) copyBoundaryEdge(boundary, side, neighbor.edges[opposite(side)]);
+    else if (plannedKeys.has(neighborKey)) copyBoundaryEdge(boundary, side, roadEdge());
+  }
+  const biome = biomeForChunk(coordinate.chunkX, coordinate.chunkY);
+  const seed = chunkSeed(coordinate.chunkX, coordinate.chunkY, pending.generation);
+  const collapsed = generateWfcChunk({ seed, biome, boundary: boundary as WfcBoundary });
+  if (!byCoordinate.has(`${coordinate.chunkX},${coordinate.chunkY}`)) {
+    await ctx.db.insert('worldChunks', {
+      chunkId: `chunk:${coordinate.chunkX}:${coordinate.chunkY}`, ...coordinate, size: RING,
+      biome, generation: pending.generation, seed, tiles: collapsed.tiles, edges: collapsed.edges,
+      createdAt: Date.now(),
+    });
+  }
+  await ctx.db.patch(state._id, {
+    pendingExpansion: { ...pending, remaining: rest }, updatedAt: Date.now(),
+  });
+  return { done: rest.length === 0, laid: 1, remaining: rest.length };
+}
+
+/** The ring is complete: add its plots and grow the boundary, once. */
+async function commitExpansion(ctx: any, state: any, pending: any) {
+  const plots = await ctx.db.query('plots').collect();
+  const ringChunks = (await ctx.db.query('worldChunks').collect())
+    .filter((chunk: any) => chunk.generation === pending.generation);
+  const candidates = ringChunks.flatMap((chunk: any) => chunkPlots(chunk, pending.generation));
+  const accepted = candidates.filter((candidate: any) => !plots.some((plot: any) => overlaps(candidate, plot)));
+  for (const plot of accepted) await ctx.db.insert('plots', plot);
+  await ctx.db.patch(state._id, {
+    width: pending.width, height: pending.height, generation: pending.generation,
+    capacity: plots.length + accepted.length, pendingExpansion: undefined, updatedAt: Date.now(),
+  });
+  await ctx.db.insert('events', {
+    kind: 'world_expand', actorId: 'agent:atlas-boundary',
+    payload: { width: pending.width, height: pending.height, generation: pending.generation,
+      chunksAdded: ringChunks.length, plotsAdded: accepted.length, reason: pending.reason },
+    gloss: `Atlas finished boundary ring ${pending.generation}: ${accepted.length} road-connected plots opened, and Earth now spans ${pending.width} by ${pending.height} tiles.`,
+  });
+  return { done: true, committed: true, plotsAdded: accepted.length, width: pending.width, height: pending.height };
+}
+
+/**
+ * The next chunk to lay, with the boundary it must match - read by index, so
+ * this stays inside the Kernel's one-second query budget.
+ */
+export async function nextExpansionWork(ctx: any) {
+  const state = await ensureWorldState(ctx);
+  const pending = state.pendingExpansion;
+  if (!pending) return { pending: false as const };
+  if (!pending.remaining.length) return { pending: true as const, ready: true as const };
+  const coordinate = pending.remaining[0];
+  const plannedKeys = new Set(pending.remaining.map(({ chunkX, chunkY }: any) => `${chunkX},${chunkY}`));
+  const boundary = grassBoundary(RING) as Record<Cardinal, string[]>;
+  const steps: ReadonlyArray<{ side: Cardinal; dx: number; dy: number }> = [
+    { side: 'north', dx: 0, dy: -1 }, { side: 'east', dx: 1, dy: 0 },
+    { side: 'south', dx: 0, dy: 1 }, { side: 'west', dx: -1, dy: 0 },
+  ];
+  for (const { side, dx, dy } of steps) {
+    const nx = coordinate.chunkX + dx, ny = coordinate.chunkY + dy;
+    const neighbor = await ctx.db.query('worldChunks')
+      .withIndex('coordinates', (q: any) => q.eq('chunkX', nx).eq('chunkY', ny)).first();
+    if (neighbor) copyBoundaryEdge(boundary, side, neighbor.edges[opposite(side)]);
+    else if (plannedKeys.has(`${nx},${ny}`)) copyBoundaryEdge(boundary, side, roadEdge());
+  }
+  return {
+    pending: true as const, ready: false as const, coordinate,
+    generation: pending.generation, remaining: pending.remaining.length,
+    biome: biomeForChunk(coordinate.chunkX, coordinate.chunkY),
+    seed: chunkSeed(coordinate.chunkX, coordinate.chunkY, pending.generation),
+    boundary,
+  };
+}
+
+/** Store one collapsed chunk and advance the ring. Pure writes, no compute. */
+export async function saveExpansionChunk(ctx: any, chunk: any) {
+  const state = await ensureWorldState(ctx);
+  const pending = state.pendingExpansion;
+  if (!pending) return { stored: false };
+  const already = await ctx.db.query('worldChunks')
+    .withIndex('coordinates', (q: any) => q.eq('chunkX', chunk.chunkX).eq('chunkY', chunk.chunkY)).first();
+  if (!already) await ctx.db.insert('worldChunks', { ...chunk, createdAt: Date.now() });
+  await ctx.db.patch(state._id, {
+    pendingExpansion: {
+      ...pending,
+      remaining: pending.remaining.filter((item: any) =>
+        !(item.chunkX === chunk.chunkX && item.chunkY === chunk.chunkY)),
+    },
+    updatedAt: Date.now(),
+  });
+  return { stored: true };
+}
+
+export async function finishExpansion(ctx: any) {
+  const state = await ensureWorldState(ctx);
+  if (!state.pendingExpansion) return { done: true, committed: false };
+  return await commitExpansion(ctx, state, state.pendingExpansion);
+}
+
 export async function assertRegistryGeometry(ctx: any) {
   const plots = await ctx.db.query('plots').collect();
   for (let i = 0; i < plots.length; i++) {
