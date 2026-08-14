@@ -183,15 +183,39 @@ export const latestConversation = query({
   },
 });
 
+/**
+ * What the live panel shows: talk that is happening, or happened recently.
+ *
+ * This used to hand back the last twenty-four conversations whatever their
+ * age, whole transcripts included. On a busy day that is a wall of yesterday's
+ * words in a panel labelled LIVE, downloaded by every viewer of the world.
+ * A conversation drops out of the panel twelve hours after it ends, and only
+ * the tail of a long one is sent - the panel is for reading what is being
+ * said, and the citizens who were there keep the rest in their own memory.
+ */
+const CHAT_PANEL_WINDOW_MS = 12 * 3_600_000;
+const CHAT_PANEL_LINES = 14;
+
 export const recentConversations = query({
   args: {},
-  handler: async (ctx) => (await ctx.db.query('conversations').order('desc').take(24)).map((conversation) => ({
-    id: conversation._id, a: conversation.a, b: conversation.b,
-    aName: conversation.aName, bName: conversation.bName, topic: conversation.topic,
-    participantIds: conversation.participantIds, participantNames: conversation.participantNames,
-    at: conversation.startedAt ?? conversation._creationTime, endsAt: conversation.endsAt,
-    state: conversation.state ?? 'completed', lines: conversation.lines,
-  })),
+  handler: async (ctx) => {
+    const now = Date.now();
+    return (await ctx.db.query('conversations').order('desc').take(40))
+      .filter((conversation) => {
+        const ended = conversation.endsAt ?? conversation.startedAt ?? conversation._creationTime;
+        return conversation.state !== 'completed' || ended > now - CHAT_PANEL_WINDOW_MS;
+      })
+      .slice(0, 24)
+      .map((conversation) => ({
+        id: conversation._id, a: conversation.a, b: conversation.b,
+        aName: conversation.aName, bName: conversation.bName, topic: conversation.topic,
+        participantIds: conversation.participantIds, participantNames: conversation.participantNames,
+        at: conversation.startedAt ?? conversation._creationTime, endsAt: conversation.endsAt,
+        state: conversation.state ?? 'completed',
+        lines: conversation.lines.slice(-CHAT_PANEL_LINES),
+        trimmed: Math.max(0, conversation.lines.length - CHAT_PANEL_LINES),
+      }));
+  },
 });
 
 export const communityProgress = query({

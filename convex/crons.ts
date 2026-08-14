@@ -11,6 +11,10 @@ crons.interval('aspiration ladder', { minutes: 2 }, internal.kernel.aspirationTi
 crons.interval('security cleanup', { minutes: 5 }, internal.kernel.cleanup, {});
 // Retention: the public record keeps a week, in bounded batches.
 crons.interval('event retention', { minutes: 20 }, internal.kernel.pruneEvents, {});
+// Live chat is live: finished conversations stop being shown after twelve
+// hours and are deleted after a day and a half. What mattered is already in
+// each citizen's own memory by then.
+crons.interval('conversation retention', { minutes: 10 }, internal.kernel.conversationTick, {});
 crons.interval('presence sweep', { minutes: 1 }, internal.kernel.presenceSweep, {});
 crons.interval('meeting scheduler', { seconds: 30 }, internal.kernel.meetingTick, {});
 

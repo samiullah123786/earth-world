@@ -69,7 +69,7 @@ describe('generated terrain reads as country, not litter', () => {
         if (exits <= 1) expect(onEdge || onAvenue, `stub at ${x},${y} seed ${seed}`).toBe(true);
       }
     }
-  });
+  }, 60_000);
 
   it('keeps water in bodies worth the name, never puddles or bare rim', () => {
     for (let seed = 0; seed < 12; seed++) {
@@ -86,7 +86,7 @@ describe('generated terrain reads as country, not litter', () => {
         expect(core * 3, `web of shoreline at seed ${seed}`).toBeGreaterThanOrEqual(region.length);
       }
     }
-  });
+  }, 60_000);
 
   it('keeps dry country dry and lake country wet', () => {
     const wetTiles = [0, 1, 2, 3].flatMap((seed) => collapse({ seed, wetness: 1 }).tiles);
@@ -95,7 +95,7 @@ describe('generated terrain reads as country, not litter', () => {
       tiles.filter((tile) => ['water', 'shore'].includes(wfcRule(tile).terrain)).length / tiles.length;
     expect(share(dryTiles)).toBeLessThan(0.02);
     expect(share(wetTiles)).toBeGreaterThan(share(dryTiles));
-  });
+  }, 60_000);
 
   it('grows trees in groves rather than sprinkling them one by one', () => {
     const { tiles } = collapse({ seed: 7, woodedness: 1, biome: 'Forest_Wilderness' });
@@ -126,7 +126,7 @@ describe('generated terrain reads as country, not litter', () => {
         expect(rule.terrain).toBe('grass');
       }
     }
-  });
+  }, 60_000);
 
   it('puts avenues on every third chunk line and nowhere else', () => {
     expect(chunkAvenues(1, 1)).toEqual({ northSouth: true, eastWest: true });

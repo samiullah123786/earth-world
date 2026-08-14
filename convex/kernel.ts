@@ -6550,6 +6550,52 @@ export const ambientSettle = internalMutation({
  * nobody reads. Bounded by design: the oldest few hundred rows per run, only
  * beyond the keep-window, so this can never become a long transaction itself.
  */
+/**
+ * How long a conversation stays in the world's mouth.
+ *
+ * A conversation is a live thing. Once it has ended, the transcript is a
+ * record nobody reads: the live panel becomes a wall of yesterday's talk, and
+ * every reader of the world pays to download it. Twelve hours after a
+ * conversation ends it stops being shown, and a day after that the lines
+ * themselves go.
+ *
+ * Nothing worth keeping is lost, because the transcript was never where
+ * memory lived. Each citizen keeps its own memory on its owner's machine,
+ * scored by importance, and the daemon distils a finished conversation into a
+ * line or two there long before this deletes anything. That is the right
+ * split: the Kernel holds what is happening, the citizen holds what mattered.
+ */
+export const CHAT_VISIBLE_MS = 12 * 3_600_000;
+export const CHAT_RETENTION_MS = 36 * 3_600_000;
+
+export const conversationTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    let closed = 0, removed = 0;
+    // Close what has run its course, so the panel can tell live talk from
+    // finished talk without guessing from timestamps.
+    const open = await ctx.db.query('conversations').order('desc').take(120);
+    for (const conversation of open) {
+      const ended = conversation.endsAt ?? conversation.startedAt ?? conversation._creationTime;
+      if (conversation.state !== 'completed' && ended <= now) {
+        await ctx.db.patch(conversation._id, { state: 'completed' });
+        closed += 1;
+      }
+    }
+    // Then forget the oldest, a bounded batch at a time.
+    const cutoff = now - CHAT_RETENTION_MS;
+    const oldest = await ctx.db.query('conversations').order('asc').take(100);
+    for (const conversation of oldest) {
+      const ended = conversation.endsAt ?? conversation.startedAt ?? conversation._creationTime;
+      if (ended >= cutoff) break;
+      await ctx.db.delete(conversation._id);
+      removed += 1;
+    }
+    return { ok: true, closed, removed };
+  },
+});
+
 export const pruneEvents = internalMutation({
   args: {},
   handler: async (ctx) => {
