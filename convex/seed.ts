@@ -1,5 +1,5 @@
 import { internalMutation } from './_generated/server';
-import { walkable } from './walkable';
+import { walkable } from './tiledFounding';
 import { SEED_PLOTS, SEED_VENUES } from './plotsData';
 import { ensureWorldState } from './planning';
 import { requireLpcPrefab } from '../shared/lpc-prefabs';

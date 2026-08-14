@@ -1,6 +1,6 @@
 export type SeedPlot = readonly [string, number, number, number, number, string];
 
-// Generated from earth-skill/earth_cli/map.json. The Kernel is authoritative;
+// Generated from the V5 Tiled founding map. The Kernel is authoritative;
 // the connector copy is an offline discovery cache only.
 export const SEED_PLOTS: SeedPlot[] = [
   ['plot-30-2', 30, 2, 3, 3, 'engineering'],

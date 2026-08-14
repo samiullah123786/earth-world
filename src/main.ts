@@ -1,21 +1,15 @@
 import Phaser from 'phaser';
 import { ConvexClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
-import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 import lpcManifest from './data/lpc_manifest.json';
 import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_animations';
 import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSpec } from './avatar_identity';
 import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, tileCenter, tileOrigin } from './world/grid';
 import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
-import {
-  FOUNDING_GROUND_ACCENT_FRAMES,
-  FOUNDING_GROUND_FLOWER_FRAMES,
-  FOUNDING_GROUND_TUFT_FRAMES,
-  foundingDecorationLayer,
-} from './world/foundingLayers';
-import { autotileFrame, autotileMask, TRAIL_AUTOTILE, WATER_AUTOTILE } from './world/autotile';
-import { LPC_PREFABS, type LpcPrefab } from '../shared/lpc-prefabs';
-import { generateWfcChunk, wfcRule, type DistrictBiome } from '../shared/wfc';
+import { LPC_PREFABS, prefabForStructure, type LpcPrefab } from '../shared/lpc-prefabs';
+import type { DistrictBiome } from '../shared/wfc';
+import { normalizeTiledChunk, tiledLayerMatrix, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
+import { DynamicNavigationGrid } from './world/navigation';
 
 const RENDER_DELAY_MS = 140;
 const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
@@ -45,7 +39,6 @@ const OWNER_DASHBOARD_ORIGINS = new Set([
 ]);
 const embed = new URLSearchParams(location.search).has('embed');
 const lpcRenderPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('lpc-preview');
-const groundLayerPreview = import.meta.env.DEV && new URLSearchParams(location.search).has('ground-layer-preview');
 if (embed) document.body.classList.add('embed');
 // Speech-bubble geometry, shared by creation AND animation so the two can
 // never disagree again. Derived from the citizen composition: a 64px LPC frame
@@ -151,13 +144,15 @@ type Build = { buildId: string; plotId: string; ownerAgentId: string; structure:
     placements?: Array<{ assetId: string; kind: 'tile' | 'prop'; layer?: WorldRenderLayer; xOffset: number; yOffset: number }> };
   x?: number; y?: number; w?: number; h?: number; constructionStartsAt?: number; constructionEndsAt?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
-type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string };
+type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string;
+  mapFormat?: string; mapVersion?: number; tileSize?: number; mapLayers?: string[] };
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
 type CareTicket = { ticketId: string; reporterId: string; category: string; x: number; y: number; state: string; assignedAgentId?: string };
 type ActivityZone = { zoneId: string; kind: string; name: string; x: number; y: number; w: number; h: number; tool: string };
 type FarmField = { fieldId: string; zoneId: string; x: number; y: number; crop: string; stage: number; readyAt: number; tenders: number };
 type WorldChunk = { chunkId: string; chunkX: number; chunkY: number; size: number; biome: DistrictBiome;
   generation: number; seed: number; tiles: string[];
+  tiled?: TiledChunkPayload;
   edges: Readonly<Record<'north' | 'east' | 'south' | 'west', ReadonlyArray<string>>> };
 type WorldObjects = { plots: Plot[]; builds: Build[]; venues: Venue[]; meetings: Meeting[];
   services: Array<{ agentId: string; role: string }>; careTickets?: CareTicket[];
@@ -191,10 +186,13 @@ class EarthScene extends Phaser.Scene {
   groundLayer?: Phaser.GameObjects.Layer;
   objectLayer?: Phaser.GameObjects.Layer;
   overheadLayer?: Phaser.GameObjects.Layer;
-  expansionLayer?: Phaser.GameObjects.Graphics;
-  expansionRT?: Phaser.GameObjects.RenderTexture;
-  expansionOverheadRT?: Phaser.GameObjects.RenderTexture;
-  grassFrames?: number[];
+  tilemap?: Phaser.Tilemaps.Tilemap;
+  groundTileLayer?: Phaser.Tilemaps.TilemapLayer;
+  collisionTileLayer?: Phaser.Tilemaps.TilemapLayer;
+  overheadTileLayer?: Phaser.Tilemaps.TilemapLayer;
+  navigation = new DynamicNavigationGrid();
+  renderedChunks = new Map<string, string>();
+  tiledZones = new Map<string, Phaser.GameObjects.Zone>();
   baseWidth = 64;
   baseHeight = 48;
   pendingGoto = new URLSearchParams(location.search).get('goto');
@@ -223,8 +221,14 @@ class EarthScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.json('map', '/assets/map.json');
-    this.load.spritesheet('tiles', '/assets/gentle-obj.png', { frameWidth: 32, frameHeight: 32 });
+    this.load.tilemapTiledJSON('world-map', '/assets/maps/agentsearth-v5.tmj');
+    this.load.image('lpc-grass', '/assets/lpc_framework/world_tiles/terrain/grass.png');
+    this.load.image('lpc-dirt', '/assets/lpc_framework/world_tiles/terrain/dirt.png');
+    this.load.image('lpc-water', '/assets/lpc_framework/world_tiles/terrain/water.png');
+    this.load.image('lpc-cobble', '/assets/lpc_framework/world_tiles/terrain/castlefloors_outside.png');
+    this.load.image('lpc-trees', '/assets/lpc_framework/world_tiles/props_outdoor/treetop.png');
+    this.load.image('lpc-house', '/assets/lpc_framework/world_tiles/architecture/house.png');
+    this.load.image('lpc-farming', '/assets/lpc_framework/world_tiles/farming/crop_growth.png');
     this.load.spritesheet('earth-token', '/assets/currency/earth_token_spin.png', { frameWidth: 32, frameHeight: 32 });
     // The LPC growth strip: plowed, seeded, sprout, growing, ripe.
     this.load.spritesheet('crop-growth', '/assets/lpc_framework/world_tiles/farming/crop_growth.png',
@@ -260,16 +264,43 @@ class EarthScene extends Phaser.Scene {
       }
     }
     for (const agentKey of ESSENTIAL_AGENT_KEYS) this.registerAgentAnimations(agentKey);
-    const map = this.cache.json.get('map');
-    TILE = map.tile;
+    const map = this.make.tilemap({ key: 'world-map' });
+    this.tilemap = map;
+    TILE = map.tileWidth;
     assertGridSize(TILE);
     assertGridSize(Number(lpcManifest.gridSize));
-    this.baseWidth = map.width;
-    this.baseHeight = map.height;
+    const rawProperties = map.properties as unknown;
+    const mapProperties: Record<string, unknown> = Array.isArray(rawProperties)
+      ? Object.fromEntries((rawProperties as Array<{ name: string; value: unknown }>).map((property) => [property.name, property.value]))
+      : (rawProperties && typeof rawProperties === 'object' ? rawProperties as Record<string, unknown> : {});
+    if (mapProperties.mapFormat !== TILED_MAP_FORMAT) throw new Error('world map must use the tiled-v1 contract');
+    this.baseWidth = Number(mapProperties.foundingWidth ?? 64);
+    this.baseHeight = Number(mapProperties.foundingHeight ?? 48);
+
+    const tilesets = [
+      ['lpc-grass', 'lpc-grass'], ['lpc-dirt', 'lpc-dirt'], ['lpc-water', 'lpc-water'],
+      ['lpc-cobble', 'lpc-cobble'], ['lpc-trees', 'lpc-trees'], ['lpc-house', 'lpc-house'],
+      ['lpc-farming', 'lpc-farming'],
+    ].map(([tiledName, textureKey]) => map.addTilesetImage(tiledName, textureKey))
+      .filter((tileset): tileset is Phaser.Tilemaps.Tileset => Boolean(tileset));
+    if (tilesets.length !== 7) throw new Error('every Tiled LPC tileset must be loaded');
+
+    this.groundTileLayer = map.createLayer('GroundLayer', tilesets, 0, 0) ?? undefined;
+    this.collisionTileLayer = map.createLayer('CollisionLayer', tilesets, 0, 0) ?? undefined;
+    this.overheadTileLayer = map.createLayer('OverheadLayer', tilesets, 0, 0) ?? undefined;
+    if (!this.groundTileLayer || !this.collisionTileLayer || !this.overheadTileLayer) {
+      throw new Error(`Tiled map must contain ${TILED_LAYER_NAMES.join(', ')}`);
+    }
+    this.groundTileLayer.setDepth(WORLD_LAYER_DEPTH.ground).setData('persistent-world', true);
+    this.collisionTileLayer.setDepth(WORLD_LAYER_DEPTH.midground).setVisible(false).setData('persistent-world', true);
+    this.collisionTileLayer.setCollisionByProperty({ collides: true });
+    this.overheadTileLayer.setDepth(WORLD_LAYER_DEPTH.overhead).setData('persistent-world', true);
+
     this.groundLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.ground);
     this.objectLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.midground);
     this.overheadLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.overhead);
-    document.documentElement.dataset.worldLayers = 'ground,midground,overhead';
+    document.documentElement.dataset.worldLayers = TILED_LAYER_NAMES.join(',');
+    document.documentElement.dataset.mapFormat = TILED_MAP_FORMAT;
     if (import.meta.env.DEV || DEBUG_FLAGS.size > 0) {
       const debugWindow = window as unknown as Record<string, unknown>;
       debugWindow.earthGame = this.game;
@@ -279,61 +310,15 @@ class EarthScene extends Phaser.Scene {
       // exercised in QA without faking an owner session.
       debugWindow.__earthWallet = (balance: number) => showWallet(balance);
     }
-    this.expansionLayer = this.add.graphics();
-    this.expansionLayer.setData('persistent-world', true);
-    this.groundLayer.add(this.expansionLayer);
-    const ground = this.add.renderTexture(0, 0, map.width * TILE, map.height * TILE).setOrigin(0);
-    for (let x = 0; x < map.width; x++) {
-      for (let y = 0; y < map.height; y++) {
-        const tile = map.bgtiles[0][x][y];
-        if (tile !== -1 && tile !== undefined) ground.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
-        const decoration = map.bgtiles[1][x][y];
-        if (decoration !== -1 && decoration !== undefined
-          && foundingDecorationLayer(map.objmap, map.bgtiles[1], x, y) === 'ground') {
-          ground.drawFrame('tiles', decoration, tileOrigin(x), tileOrigin(y));
-        }
-      }
-    }
-    ground.setData('persistent-world', true);
-    this.groundLayer.add(ground);
+    this.registerTiledObjectZones(map);
+    this.navigation.rebuild(this.objects.state.width, this.objects.state.height,
+      (x, y) => this.collisionTileLayer?.getTileAt(x, y)?.index !== -1
+        && Boolean(this.collisionTileLayer?.getTileAt(x, y)));
 
-    // Founding-map collision/object tiles enter the same sortable plane as
-    // citizens. This is deliberately not a flattened RenderTexture: each row
-    // keeps a foot anchor that an agent can move behind or in front of.
-    for (const layer of map.objmap as number[][][]) {
-      for (let x = 0; x < map.width; x++) {
-        for (let y = 0; y < map.height; y++) {
-          const tile = layer[x][y];
-          if (tile === -1 || tile === undefined) continue;
-          const image = this.add.image(tileOrigin(x), tileOrigin(y), 'tiles', tile)
-            .setOrigin(0)
-            .setDepth(structureSortAnchor(y));
-          image.setData('persistent-world', true);
-          this.objectLayer.add(image);
-        }
-      }
-    }
-
-    // The legacy decoration plane mixes roofs/canopy with low grass and
-    // flowers. Ground details were extracted into `ground` above; only what
-    // actually stands on collision remains isolated above citizens here.
-    const overhead = this.add.renderTexture(0, 0, map.width * TILE, map.height * TILE).setOrigin(0);
-    for (let x = 0; x < map.width; x++) {
-      for (let y = 0; y < map.height; y++) {
-        const tile = map.bgtiles[1][x][y];
-        if (tile !== -1 && tile !== undefined
-          && foundingDecorationLayer(map.objmap, map.bgtiles[1], x, y) === 'overhead') {
-          overhead.drawFrame('tiles', tile, tileOrigin(x), tileOrigin(y));
-        }
-      }
-    }
-    overhead.setData('persistent-world', true);
-    this.overheadLayer.add(overhead);
-
-    this.cameras.main.setBounds(0, 0, map.width * TILE, map.height * TILE);
+    this.cameras.main.setBounds(0, 0, this.baseWidth * TILE, this.baseHeight * TILE);
     this.cameras.main.setBackgroundColor(CREAM);
-    this.cameras.main.centerOn((map.width * TILE) / 2, (map.height * TILE) / 2);
-    this.cameras.main.setZoom(Math.max(embed ? 1.15 : 1.4, this.minimumZoom(map.width, map.height)));
+    this.cameras.main.centerOn((this.baseWidth * TILE) / 2, (this.baseHeight * TILE) / 2);
+    this.cameras.main.setZoom(Math.max(embed ? 1.15 : 1.4, this.minimumZoom(this.baseWidth, this.baseHeight)));
     // Cursor grammar: open hand over draggable ground, closed fist while
     // actually dragging, pointer over anything clickable (Phaser handles the
     // pointer via useHandCursor on each interactive object).
@@ -543,104 +528,77 @@ class EarthScene extends Phaser.Scene {
     this.cameras.main.setZoom(Math.max(this.cameras.main.zoom, this.minimumZoom(width, height)));
   }
 
+  registerTiledObjectZones(map: Phaser.Tilemaps.Tilemap) {
+    const layer = map.getObjectLayer('InteractiveZones');
+    for (const object of layer?.objects ?? []) {
+      const properties = Object.fromEntries(((object.properties ?? []) as Array<{ name: string; value: unknown }>)
+        .map((property) => [property.name, property.value]));
+      const zoneId = String(properties.zoneId ?? object.name ?? `zone:${object.id}`);
+      const width = Math.max(TILE, Number(object.width ?? TILE));
+      const height = Math.max(TILE, Number(object.height ?? TILE));
+      const zone = this.add.zone(Number(object.x ?? 0) + width / 2, Number(object.y ?? 0) + height / 2, width, height);
+      zone.setData('persistent-world', true);
+      zone.setData('zone-id', zoneId);
+      zone.setData('zone-kind', String(properties.kind ?? 'venue'));
+      this.objectLayer?.add(zone);
+      this.tiledZones.set(zoneId, zone);
+    }
+    document.documentElement.dataset.spatialZones = String(this.tiledZones.size);
+  }
+
   renderExpansion() {
     const { width, height, generation } = this.objects.state;
-    const map = this.cache.json.get('map');
-    if (!map) return;
-    this.expansionLayer?.clear();
-    if (!this.grassFrames) {
-      const count = new Map<number, number>();
-      for (let x = 0; x < map.width; x++) for (let y = 0; y < map.height; y++) {
-        const g = map.bgtiles[0][x][y];
-        if (g !== -1 && g !== undefined) count.set(g, (count.get(g) ?? 0) + 1);
-      }
-      this.grassFrames = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map((entry) => entry[0]);
+    if (!this.tilemap || !this.groundTileLayer || !this.collisionTileLayer || !this.overheadTileLayer) return;
+    if (this.objects.state.mapFormat && this.objects.state.mapFormat !== TILED_MAP_FORMAT) {
+      throw new Error(`unsupported map format ${this.objects.state.mapFormat}`);
     }
-    if (!this.expansionRT || this.expansionRT.width !== width * TILE || this.expansionRT.height !== height * TILE) {
-      this.expansionRT?.destroy();
-      this.expansionOverheadRT?.destroy();
-      this.expansionRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0);
-      this.expansionRT.setData('persistent-world', true);
-      this.groundLayer?.add(this.expansionRT);
-      this.expansionOverheadRT = this.add.renderTexture(0, 0, width * TILE, height * TILE).setOrigin(0);
-      this.expansionOverheadRT.setData('persistent-world', true);
-      this.overheadLayer?.add(this.expansionOverheadRT);
-      // Wilderness: IDENTICAL math to convex/pathfinding.ts (wildHash/isGroveCell/
-      // isEdgeForest/isTreeAnchor). Complete 4x3 trees, forest continues at borders.
-      const hash = (hx: number, hy: number, salt: number) => {
-        let h = (hx * 374761393 + hy * 668265263 + salt * 2246822519) | 0;
-        h = (h ^ (h >>> 13)) * 1274126177;
-        return (h ^ (h >>> 16)) >>> 0;
-      };
-      const W0 = this.baseWidth, H0 = this.baseHeight;
-      const foundingBlocked = (bx: number, by: number) =>
-        map.objmap.some((layer: number[][]) => layer[bx]?.[by] !== -1 && layer[bx]?.[by] !== undefined);
-      const grove = (gx: number, gy: number) => hash(Math.floor(gx / 6), Math.floor(gy / 6), 7) % 100 < 30;
-      const treeAnchor = (gx: number, gy: number) => {
-        if (gx < W0 && gy < H0) return false;
-        const d = Math.max(Math.max(0, gx - (W0 - 1)), Math.max(0, gy - (H0 - 1)));
-        if (d <= 6) return false;
-        return grove(gx, gy) && hash(gx, gy, 11) % 23 === 0;
-      };
-      const GRASS = 271, GRASS_ALT = 962;
-      // The one verified grass-native tree: the lush 4x4 river-side tree.
-      // (Close-up QA killed the other candidates: (20,23) is a mossy boulder,
-      // and frames 941/850 are crystals/mushrooms, not flowers.)
-      const BIG = { x: 15, y: 24, w: 4, h: 4 };
-      const decor = map.bgtiles[1];
-      for (let x = 0; x < width; x++) {
-        for (let y = 0; y < height; y++) {
-          if (x < W0 && y < H0) continue;
-          this.expansionRT.drawFrame('tiles', hash(x, y, 3) % 97 === 0 ? GRASS_ALT : GRASS, tileOrigin(x), tileOrigin(y));
-        }
-      }
-      for (let x = 0; x < width; x++) {
-        for (let y = 0; y < height; y++) {
-          const edgeFrame = foundingEdgeContinuationFrame(x, y);
-          if (edgeFrame !== undefined) this.expansionRT.drawFrame('tiles', edgeFrame, tileOrigin(x), tileOrigin(y));
-          if (edgeFrame === undefined && (x >= W0 || y >= H0) && !treeAnchor(x, y)) {
-            const nearGrove = treeAnchor(x + 2, y) || treeAnchor(x - 2, y) || treeAnchor(x, y + 2) || treeAnchor(x, y - 2)
-              || treeAnchor(x + 2, y + 2) || treeAnchor(x - 2, y - 2);
-            if (nearGrove && hash(x, y, 61) % 9 === 0) {
-              const flowers = FOUNDING_GROUND_FLOWER_FRAMES;
-              this.expansionRT.drawFrame('tiles', flowers[hash(x, y, 67) % flowers.length], tileOrigin(x), tileOrigin(y));
-            } else if (hash(x, y, 71) % 97 === 0) {
-              const tufts = FOUNDING_GROUND_TUFT_FRAMES;
-              this.expansionRT.drawFrame('tiles', tufts[hash(x, y, 73) % tufts.length], tileOrigin(x), tileOrigin(y));
-            } else if (hash(x, y, 79) % 499 === 0) {
-              this.expansionRT.drawFrame('tiles', FOUNDING_GROUND_ACCENT_FRAMES[1], tileOrigin(x), tileOrigin(y));
-            } else if (hash(x, y, 83) % 613 === 0) {
-              this.expansionRT.drawFrame('tiles', FOUNDING_GROUND_ACCENT_FRAMES[0], tileOrigin(x), tileOrigin(y));
-            }
-          }
-          if (treeAnchor(x, y)) {
-            const variant = hash(x, y, 37) % 20;
-            if (variant < 9) {
-              for (let dx = 0; dx < BIG.w; dx++) {
-                for (let dy = 0; dy < BIG.h; dy++) {
-                  const frame = decor[BIG.x + dx]?.[BIG.y + dy];
-                  if (frame === -1 || frame === undefined) continue;
-                  const px = x - 1 + dx, py = y - 1 + dy;
-                  if (px < 0 || py < 0 || px >= width || py >= height) continue;
-                  if (px < W0 && py < H0) continue;
-                  this.expansionRT.drawFrame('tiles', frame, tileOrigin(px), tileOrigin(py));
-                }
-              }
-            } else {
-              // verified single-tile trees: 894 pine, 939 round, 940 bush
-              const single = variant < 14 ? 894 : variant < 18 ? 939 : 940;
-              this.expansionRT.drawFrame('tiles', single, tileOrigin(x), tileOrigin(y));
-            }
-          }
-        }
-      }
-      this.renderWfcChunks();
+    if (width > this.tilemap.width || height > this.tilemap.height) {
+      throw new Error(`living boundary ${width}x${height} exceeds the prepared Tiled canvas`);
     }
+    this.navigation.rebuild(width, height, (x, y) => {
+      const tile = this.collisionTileLayer?.getTileAt(x, y);
+      return Boolean(tile && tile.index >= 0);
+    });
+    for (const chunk of [...(this.objects.chunks ?? [])].sort((a, b) =>
+      a.generation - b.generation || a.chunkY - b.chunkY || a.chunkX - b.chunkX)) {
+      this.putTiledChunk(chunk);
+    }
+    const navigation = this.navigation.diagnostics();
+    document.documentElement.dataset.renderedChunks = String(this.renderedChunks.size);
+    document.documentElement.dataset.navigationGrid = `${navigation.width}x${navigation.height}`;
     this.applyWorldBounds();
     const boundary = document.getElementById('boundary');
     if (boundary) boundary.textContent = `ring ${generation} · ${width}×${height} tiles · capacity ${this.objects.state.capacity}`;
   }
 
+  putTiledChunk(chunk: WorldChunk) {
+    if (!this.groundTileLayer || !this.collisionTileLayer || !this.overheadTileLayer) return;
+    const tiled = normalizeTiledChunk(chunk);
+    const signature = `${chunk.generation}:${chunk.seed}:${tiled.version}:${chunk.tiles.join('|')}`;
+    if (this.renderedChunks.get(chunk.chunkId) === signature) return;
+    const originX = chunk.chunkX * chunk.size;
+    const originY = chunk.chunkY * chunk.size;
+    // Tiled serializes an empty cell as GID 0. Phaser represents the same
+    // empty cell as tile index -1; passing 0 to putTilesAt asks Phaser for a
+    // non-existent global tile and crashes while resolving its tileset.
+    const phaserMatrix = (data: ReadonlyArray<number>) =>
+      tiledLayerMatrix(data, tiled.width, tiled.height)
+        .map((row) => row.map((gid) => gid === 0 ? -1 : gid));
+    this.groundTileLayer.putTilesAt(
+      phaserMatrix(tiled.layers.GroundLayer), originX, originY, true,
+    );
+    this.collisionTileLayer.putTilesAt(
+      phaserMatrix(tiled.layers.CollisionLayer), originX, originY, true,
+    );
+    this.overheadTileLayer.putTilesAt(
+      phaserMatrix(tiled.layers.OverheadLayer), originX, originY, true,
+    );
+    this.collisionTileLayer.setCollisionByProperty({ collides: true }, true);
+    this.navigation.putCollisionChunk(
+      originX, originY, tiled.width, tiled.height, tiled.layers.CollisionLayer,
+    );
+    this.renderedChunks.set(chunk.chunkId, signature);
+  }
   renderDirectory() {
     const list = document.getElementById('citizen-list');
     const queryNode = document.getElementById('citizen-search') as HTMLInputElement | null;
@@ -698,335 +656,40 @@ class EarthScene extends Phaser.Scene {
     this.showProfile(agentId);
   }
 
-  drawNativeFeatures(graphics: Phaser.GameObjects.Graphics, build: Build, x: number, y: number, width: number, height: number) {
-    const features = new Set(build.blueprint?.features ?? []);
-    const center = x + width / 2;
-    if (features.has('entry-path')) {
-      graphics.fillStyle(0x6f6250).fillRect(center - 5, y + height - 7, 10, 14);
-      graphics.fillStyle(0xb9a77e).fillRect(center - 3, y + height - 6, 6, 13);
-    }
-    if (features.has('porch')) {
-      graphics.fillStyle(0x4d301e).fillRect(center - 12, y + height - 12, 24, 3);
-      graphics.fillStyle(0xb78350).fillRect(center - 10, y + height - 14, 20, 4);
-    }
-    if (features.has('flower-bed') || features.has('herb-bed')) {
-      const bedColor = features.has('herb-bed') ? 0x315d37 : 0x6f4b2f;
-      graphics.fillStyle(INK).fillRect(x + 3, y + height - 10, Math.max(12, width * 0.28), 8);
-      graphics.fillStyle(bedColor).fillRect(x + 5, y + height - 9, Math.max(8, width * 0.28 - 4), 5);
-      for (let i = 0; i < 4; i++) graphics.fillStyle(i % 2 ? 0xfdf6ec : 0xf5c96a).fillRect(x + 7 + i * 6, y + height - 11 - (i % 2), 3, 3);
-    }
-    if (features.has('small-plants')) {
-      for (const px of [x + 7, x + width - 9]) {
-        graphics.fillStyle(0x315d37).fillRect(px, y + height - 9, 3, 8);
-        graphics.fillStyle(0x75a05b).fillRect(px - 3, y + height - 10, 4, 3).fillRect(px + 2, y + height - 13, 4, 3);
-      }
-    }
-    if (features.has('native-tree') && width >= 64 && height >= 64) {
-      graphics.fillStyle(INK, 0.18).fillEllipse(x + 17, y + 34, 28, 9);
-      graphics.fillStyle(0x5a351f).fillRect(x + 14, y + 15, 7, 24);
-      graphics.fillStyle(0x315d37).fillCircle(x + 17, y + 13, 13);
-      graphics.fillStyle(0x75a05b).fillCircle(x + 12, y + 9, 8).fillCircle(x + 23, y + 10, 8);
-    }
-    if (features.has('timber-fence')) {
-      graphics.lineStyle(2, 0x5a351f).strokeRect(x + 2, y + 2, width - 4, height - 4);
-      for (let fx = x + 3; fx < x + width; fx += 14) graphics.fillStyle(0xb78350).fillRect(fx, y, 3, 8);
-    }
-    if (features.has('bird-bath')) {
-      graphics.fillStyle(INK).fillRect(x + width - 17, y + height - 19, 4, 12).fillEllipse(x + width - 15, y + height - 20, 15, 5);
-      graphics.fillStyle(0x6aa8c8).fillEllipse(x + width - 15, y + height - 21, 10, 3);
-    }
-    if (features.has('pond') && width >= 64) {
-      graphics.fillStyle(INK, 0.28).fillEllipse(x + width - 21, y + height - 13, 29, 13);
-      graphics.fillStyle(0x6aa8c8).fillEllipse(x + width - 23, y + height - 15, 25, 10);
-    }
-    if (features.has('pet-yard')) {
-      graphics.lineStyle(2, 0x8d5e3b).strokeRect(x + width - 27, y + height - 24, 23, 19);
-      graphics.fillStyle(0x75a05b).fillRect(x + width - 24, y + height - 21, 17, 13);
-    }
-    if (features.has('pet-shelter')) {
-      const sx = x + width - 24, sy = y + height - 22;
-      graphics.fillStyle(INK).fillTriangle(sx - 2, sy + 8, sx + 8, sy, sx + 18, sy + 8).fillRect(sx, sy + 7, 16, 12);
-      graphics.fillStyle(0x8d5e3b).fillTriangle(sx, sy + 7, sx + 8, sy + 2, sx + 16, sy + 7);
-      graphics.fillStyle(0xe9d6ad).fillRect(sx + 2, sy + 8, 12, 9);
-      graphics.fillStyle(0x4d301e).fillRect(sx + 6, sy + 11, 5, 6);
-    }
-  }
-
-  drawNativeStructure(graphics: Phaser.GameObjects.Graphics, build: Build, plot: Plot, x: number, y: number, width: number, height: number) {
-    const kind = build.blueprint?.kind ?? build.structure;
-    const accent = FAMILY_COLORS[plot.district] ?? 0x64748b;
-    if (kind === 'garden') {
-      graphics.fillStyle(INK, 0.24).fillRect(x + 3, y + 5, width, height);
-      graphics.fillStyle(0x315d37).fillRect(x, y, width, height - 3);
-      graphics.fillStyle(0x6f4b2f).fillRect(x + 5, y + 5, width - 10, Math.max(6, height - 13));
-      graphics.fillStyle(0x9b6a3f);
-      for (let row = 0; row < 2; row++) graphics.fillRect(x + 7, y + 8 + row * 8, width - 14, 3);
-      const flowers = [0xfdf6ec, 0xf59e0b, accent, 0xec4899];
-      for (let i = 0; i < 6; i++) graphics.fillStyle(flowers[i % flowers.length]).fillRect(x + 8 + (i * 11) % Math.max(12, width - 14), y + 5 + (i % 2) * 9, 3, 3);
-      graphics.lineStyle(2, 0x5a3a24).strokeRect(x, y, width, height - 3);
-      for (let fx = x; fx <= x + width; fx += 10) graphics.fillStyle(0xd8b879).fillRect(fx, y - 2, 3, height + 1);
-      return;
-    }
-    if (kind === 'bench') {
-      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 3, y + height * 0.72, width, 8);
-      graphics.fillStyle(0x4d301e).fillRect(x + 3, y + 8, width - 6, 5).fillRect(x + 3, y + 16, width - 6, 5);
-      graphics.fillStyle(0xb78350).fillRect(x + 5, y + 7, width - 10, 3).fillRect(x + 5, y + 15, width - 10, 3);
-      graphics.fillStyle(INK).fillRect(x + 6, y + 20, 3, 8).fillRect(x + width - 9, y + 20, 3, 8);
-      return;
-    }
-    if (kind === 'art') {
-      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 4, y + height - 3, width * 0.8, 8);
-      graphics.fillStyle(0x4d301e).fillRect(x + width / 2 - 3, y + height / 2, 6, height / 2);
-      graphics.fillStyle(accent).fillTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
-      graphics.lineStyle(2, INK).strokeTriangle(x + width / 2, y, x + width, y + height / 2, x, y + height / 2);
-      return;
-    }
-
-    if (kind === 'laptop') {
-      // A citizen's coding spot: timber desk, cream laptop, capability-glow screen.
-      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 3, y + height - 2, width * 0.9, 7);
-      graphics.fillStyle(0x4d301e).fillRect(x + 2, y + height * 0.45, width - 4, 5);
-      graphics.fillStyle(INK).fillRect(x + 4, y + height * 0.45 + 5, 3, height * 0.35).fillRect(x + width - 7, y + height * 0.45 + 5, 3, height * 0.35);
-      graphics.fillStyle(0xe9d6ad).fillRect(x + width / 2 - 8, y + height * 0.45 - 3, 16, 3);
-      graphics.fillStyle(INK).fillRect(x + width / 2 - 8, y + height * 0.45 - 14, 16, 11);
-      graphics.fillStyle(accent).fillRect(x + width / 2 - 6, y + height * 0.45 - 12, 12, 7);
-      graphics.fillStyle(0xfdf6ec).fillRect(x + width / 2 - 5, y + height * 0.45 - 11, 4, 1).fillRect(x + width / 2 - 5, y + height * 0.45 - 9, 7, 1);
-      return;
-    }
-    if (kind === 'data_center') {
-      // Server racks in Earthfolk timber: dark cabinets, blinking capability lights.
-      graphics.fillStyle(INK, 0.24).fillRect(x + 4, y + 6, width, height);
-      graphics.fillStyle(INK).fillRect(x, y, width, height - 2);
-      graphics.fillStyle(0x3a2a1e).fillRect(x + 2, y + 2, width - 4, height - 6);
-      graphics.fillStyle(0x4d301e).fillRect(x, y - 4, width, 6);
-      const rackColumns = Math.max(2, Math.floor(width / 14));
-      for (let column = 0; column < rackColumns; column++) {
-        const rackX = x + 5 + column * ((width - 10) / rackColumns);
-        graphics.fillStyle(0x1a130d).fillRect(rackX, y + 6, 8, height - 14);
-        for (let slot = 0; slot < 4; slot++) {
-          graphics.fillStyle(0x2c2118).fillRect(rackX + 1, y + 8 + slot * 7, 6, 2);
-          graphics.fillStyle((column + slot) % 3 === 0 ? accent : (column + slot) % 3 === 1 ? 0x22c55e : 0xf59e0b)
-            .fillRect(rackX + 6, y + 8 + slot * 7, 1, 1);
-        }
-      }
-      graphics.fillStyle(0x9b6a3f).fillRect(x + width - 8, y + 3, 5, 3);
-      graphics.lineStyle(2, INK).strokeRect(x, y, width, height - 2);
-      return;
-    }
-    if (kind === 'industry') {
-      // A working hall in full native grammar: timber-framed plaster, one
-      // connected sawtooth roof with skylight glints, warm windows, a real
-      // door with a path, crates, and a soft chimney. No empty walls.
-      const wallY = y + Math.max(10, height * 0.34);
-      const wallH = y + height - wallY - 3;
-      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 6, y + height, width + 8, 10);
-      graphics.fillStyle(INK).fillRect(x - 1, wallY - 2, width + 2, wallH + 5);
-      graphics.fillStyle(0xe9d6ad).fillRect(x + 1, wallY, width - 2, wallH);
-      const beams = Math.max(3, Math.floor(width / 16));
-      graphics.fillStyle(0x6f4328);
-      for (let beam = 0; beam <= beams; beam++) {
-        graphics.fillRect(x + 1 + beam * ((width - 5) / beams), wallY, 3, wallH);
-      }
-      graphics.fillRect(x + 1, wallY, width - 2, 3);
-      const teeth = Math.max(3, Math.floor(width / 14));
-      const toothWidth = width / teeth;
-      const toothHeight = Math.min(12, toothWidth * 0.8);
-      graphics.fillStyle(0x4d301e).fillRect(x - 1, wallY - 7, width + 2, 8);
-      for (let tooth = 0; tooth < teeth; tooth++) {
-        const toothX = x + tooth * toothWidth;
-        graphics.fillStyle(0x9b6a3f).fillTriangle(
-          toothX, wallY - 6, toothX + toothWidth, wallY - 6, toothX + toothWidth, wallY - 6 - toothHeight);
-        graphics.lineStyle(2, INK).strokeTriangle(
-          toothX, wallY - 6, toothX + toothWidth, wallY - 6, toothX + toothWidth, wallY - 6 - toothHeight);
-        graphics.fillStyle(0xffd79a).fillRect(toothX + toothWidth - 6, wallY - 10, 3, 2);
-      }
-      const windowCount = Math.max(2, beams - 1);
-      for (let windowIndex = 0; windowIndex < windowCount; windowIndex++) {
-        const windowX = x + 7 + windowIndex * ((width - 20) / Math.max(1, windowCount - 1));
-        graphics.fillStyle(INK).fillRect(windowX, wallY + 7, 9, 8);
-        graphics.fillStyle(0xffd79a).fillRect(windowX + 1, wallY + 8, 7, 6);
-        graphics.fillStyle(0xfdf6ec, 0.7).fillRect(windowX + 2, wallY + 9, 2, 2);
-      }
-      graphics.fillStyle(INK).fillRect(x + width / 2 - 6, y + height - 18, 12, 15);
-      graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 5, y + height - 17, 10, 14);
-      graphics.fillStyle(0xffd79a).fillRect(x + width / 2 - 2, y + height - 14, 4, 3);
-      graphics.fillStyle(0xd8b879).fillRect(x + width / 2 - 4, y + height - 3, 8, 4);
-      graphics.fillStyle(INK).fillRect(x + 4, wallY - 1, 12, 7);
-      graphics.fillStyle(accent).fillRect(x + 5, wallY, 10, 5);
-      graphics.fillStyle(0x9b6a3f).fillRect(x + width - 13, y + height - 13, 8, 8);
-      graphics.lineStyle(1, INK).strokeRect(x + width - 13, y + height - 13, 8, 8);
-      graphics.fillStyle(0x4d301e).fillRect(x + width - 10, wallY - 18, 5, 12);
-      graphics.fillStyle(0x8d8d8d, 0.5).fillRect(x + width - 9, wallY - 22, 3, 3).fillRect(x + width - 6, wallY - 26, 3, 3);
-      return;
-    }
-    const architecture = build.blueprint?.architecture ?? 'native';
-    if (architecture === 'modern-earthfolk') {
-      const wallX = x + 5, wallY = y + Math.max(12, height * 0.3), wallW = width - 10, wallH = height - (wallY - y) - 5;
-      graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 5, y + height - 1, width + 8, 11);
-      graphics.fillStyle(INK).fillRect(wallX - 2, wallY - 2, wallW + 4, wallH + 4);
-      graphics.fillStyle(0xe9d6ad).fillRect(wallX, wallY, wallW, wallH);
-      graphics.fillStyle(0x4d301e).fillRect(x + 1, wallY - 8, width - 2, 10);
-      graphics.fillStyle(0x9b6a3f).fillRect(x + 3, wallY - 6, width - 6, 5);
-      graphics.fillStyle(0x6f4328).fillRect(wallX + 5, wallY + 4, 6, wallH - 4);
-      const windowWidth = Math.max(10, Math.min(22, wallW * 0.25));
-      graphics.fillStyle(INK).fillRect(x + width - windowWidth - 12, wallY + 7, windowWidth + 4, 13);
-      graphics.fillStyle(0xf5c96a).fillRect(x + width - windowWidth - 10, wallY + 9, windowWidth, 9);
-      graphics.fillStyle(INK).fillRect(x + width / 2 - 6, wallY + wallH - 15, 12, 15);
-      graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 4, wallY + wallH - 13, 8, 13);
-      graphics.fillStyle(0xcab889).fillRect(x + width / 2 - 5, y + height, 10, 8);
-      graphics.fillStyle(FAMILY_COLORS[plot.district] ?? 0x64748b).fillRect(wallX + 2, wallY + 2, 5, 3);
-      this.drawNativeFeatures(graphics, build, x, y, width, height);
-      return;
-    }
-
-    const mayor = build.ownerAgentId === 'agent:sam-cbf0499925';
-    const wallX = x + 4, wallY = y + Math.max(14, height * 0.34);
-    const wallW = width - 8, wallH = height - (wallY - y) - 4;
-    const roofBrown = mayor ? 0x6b3f26 : 0x805235;
-    const roofLight = mayor ? 0xb98556 : 0xb99362;
-    graphics.fillStyle(INK, 0.22).fillEllipse(x + width / 2 + 5, y + height - 1, width + 9, 11);
-    graphics.fillStyle(INK).fillRect(wallX - 2, wallY - 2, wallW + 4, wallH + 4);
-    graphics.fillStyle(0xe9d6ad).fillRect(wallX, wallY, wallW, wallH);
-    graphics.fillStyle(0xc69c68).fillRect(wallX, wallY + wallH - 6, wallW, 6);
-    graphics.fillStyle(INK).fillRect(x + width / 2 - 6, wallY + wallH - 15, 12, 15);
-    graphics.fillStyle(0x6f4328).fillRect(x + width / 2 - 4, wallY + wallH - 13, 8, 13);
-    graphics.fillStyle(0xf5c96a).fillRect(x + 9, wallY + 8, 8, 7);
-    graphics.lineStyle(2, INK).strokeRect(x + 8, wallY + 7, 10, 9);
-    if (wallW > 34) {
-      graphics.fillStyle(0xf5c96a).fillRect(x + width - 17, wallY + 8, 8, 7);
-      graphics.lineStyle(2, INK).strokeRect(x + width - 18, wallY + 7, 10, 9);
-    }
-    graphics.fillStyle(INK).fillTriangle(x - 3, wallY + 2, x + width / 2, y + 1, x + width + 3, wallY + 2);
-    graphics.fillStyle(roofBrown).fillTriangle(x, wallY, x + width / 2, y + 4, x + width, wallY);
-    graphics.fillStyle(roofLight).fillTriangle(x + width / 2, y + 4, x + width, wallY, x + width / 2, wallY - 2);
-    graphics.fillStyle(0xd9b878);
-    for (let tile = 8; tile < width - 4; tile += 11) graphics.fillRect(x + tile, wallY - 7 - (tile < width / 2 ? tile * 0.22 : (width - tile) * 0.22), 7, 3);
-    graphics.fillStyle(INK).fillRect(x + width - 16, y + 7, 8, 13);
-    graphics.fillStyle(0x8d5e3b).fillRect(x + width - 14, y + 8, 5, 11);
-    graphics.fillStyle(accent).fillRect(x + width / 2 - 3, wallY - 1, 6, 4);
-    if (kind === 'hall' || mayor) {
-      graphics.fillStyle(0xfdf6ec).fillRect(x + 3, wallY + 4, 5, 10);
-      graphics.fillStyle(accent).fillRect(x + 4, wallY + 5, 3, 4);
-    }
-    graphics.fillStyle(0xcab889).fillRect(x + width / 2 - 5, y + height, 10, 8);
-    graphics.fillStyle(0x8b8067).fillRect(x + width / 2 - 3, y + height + 2, 6, 3);
-    this.drawNativeFeatures(graphics, build, x, y, width, height);
-  }
-
   renderVenue(venue: Venue) {
     if (!this.objectLayer) return;
-    const graphics = this.add.graphics();
-    const cx = (venue.x + 0.5) * TILE, cy = (venue.y + 0.5) * TILE;
-    const active = this.objects.meetings.some((meeting) => meeting.venueId === venue.venueId);
-    graphics.fillStyle(INK, 0.18).fillEllipse(cx + 3, cy + 9, 31, 10);
-    if (venue.kind === 'training_ground') {
-      graphics.fillStyle(0x315d37).fillCircle(cx, cy, 17);
-      graphics.lineStyle(3, 0xd0b77d).strokeCircle(cx, cy, 15);
-      graphics.fillStyle(0xfdf6ec).fillTriangle(cx, cy - 11, cx + 8, cy - 2, cx, cy + 11);
-      graphics.fillStyle(0x8d5e3b).fillRect(cx - 10, cy - 2, 4, 15);
-    } else if (venue.kind === 'bench') {
-      graphics.fillStyle(0x5a351f).fillRect(cx - 13, cy - 4, 26, 5).fillRect(cx - 11, cy + 4, 22, 5);
-      graphics.fillStyle(0xd0a064).fillRect(cx - 11, cy - 5, 22, 3).fillRect(cx - 9, cy + 3, 18, 3);
-    } else if (venue.kind === 'table') {
-      graphics.fillStyle(0xfdf6ec).fillCircle(cx, cy, 12);
-      graphics.lineStyle(3, 0x4d301e).strokeCircle(cx, cy, 12);
-      graphics.fillStyle(0x4d301e).fillRect(cx - 2, cy + 10, 4, 8);
-    } else if (venue.kind === 'park') {
-      graphics.fillStyle(0x315d37).fillCircle(cx, cy, 15);
-      graphics.fillStyle(0x8fb760).fillCircle(cx - 3, cy - 4, 10);
-      graphics.fillStyle(0xf59e0b).fillRect(cx - 9, cy - 1, 3, 3).fillRect(cx + 6, cy + 3, 3, 3);
-    } else {
-      graphics.fillStyle(0xd0b77d).fillCircle(cx, cy, 14);
-      graphics.lineStyle(3, INK).strokeCircle(cx, cy, 14);
-      graphics.fillStyle(0xfdf6ec).fillRect(cx - 4, cy - 4, 8, 8);
-    }
-    if (active) graphics.lineStyle(3, 0xec4899, 0.95).strokeCircle(cx, cy, 20);
-    const zone = this.add.zone(cx, cy, 42, 42).setInteractive({ useHandCursor: true });
+    const prefab = venue.kind === 'training_ground' ? LPC_PREFABS.training_green_3x3
+      : venue.kind === 'park' ? LPC_PREFABS.park
+        : venue.kind === 'bench' ? LPC_PREFABS.bench_native_2x1
+          : venue.kind === 'table' ? LPC_PREFABS.meeting_table_3x2
+            : LPC_PREFABS.plaza_fountain_3x3;
+    const x = Math.max(0, Math.round(venue.x - prefab.width / 2));
+    const y = Math.max(0, Math.round(venue.y - prefab.height / 2));
+    this.stampLpcBuild({
+      buildId: `venue:${venue.venueId}`, plotId: `venue:${venue.venueId}`, ownerAgentId: 'civic:earth',
+      structure: prefab.structureType, state: 'built', x, y, w: prefab.width, h: prefab.height,
+      blueprint: {
+        name: prefab.name, kind: prefab.structureType, prefabId: prefab.id,
+        assetFramework: lpcManifest.standard,
+        placements: prefab.placements.map((placement) => ({
+          ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
+        })),
+      },
+    });
+    const cx = tileCenter(venue.x), cy = tileCenter(venue.y);
+    const zone = this.add.zone(cx, cy, Math.max(42, prefab.width * TILE), Math.max(42, prefab.height * TILE))
+      .setInteractive({ useHandCursor: true });
     zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showVenue(venue); });
-    graphics.setDepth(Math.round(cy));
     zone.setDepth(Math.round(cy));
-    this.objectLayer.add([graphics, zone]);
+    this.objectLayer.add(zone);
     if (!embed) {
-      const label = this.add.text(cx, cy - 27, venue.name, {
-        fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC', backgroundColor: '#3A2A1E', padding: { x: 3, y: 1 },
-      }).setOrigin(0.5);
-      label.setDepth(Math.round(cy));
+      const label = this.add.text(cx, tileOrigin(y) - 5, venue.name, {
+        fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
+        backgroundColor: '#3A2A1E', padding: { x: 3, y: 1 },
+      }).setOrigin(0.5).setDepth(structureSortAnchor(y));
       this.objectLayer.add(label);
     }
   }
-
-  renderWfcChunks() {
-    if (!this.expansionRT || !this.expansionOverheadRT) return;
-    let chunks = this.objects.chunks ?? [];
-    if (!chunks.length && DEBUG_WFC) {
-      const preview = generateWfcChunk({ seed: 0x4c5043, biome: 'Residential_Suburbs', size: 16 });
-      chunks = [{
-        chunkId: 'debug:wfc-preview', chunkX: 3, chunkY: 1, size: 16,
-        biome: 'Residential_Suburbs', generation: 0, seed: 0x4c5043,
-        tiles: preview.tiles, edges: preview.edges,
-      }];
-    }
-    if (!chunks.length) return;
-    // Edges are decided across the whole expansion, not inside one chunk. A
-    // lake that crosses a chunk seam has to be edged as one lake, so the
-    // terrain of every collapsed cell is gathered first and the atlas frames
-    // are chosen afterwards from that shared picture.
-    const terrain = new Map<string, string>();
-    for (const chunk of chunks) {
-      for (let localY = 0; localY < chunk.size; localY++) for (let localX = 0; localX < chunk.size; localX++) {
-        const tileX = chunk.chunkX * chunk.size + localX, tileY = chunk.chunkY * chunk.size + localY;
-        terrain.set(`${tileX},${tileY}`, wfcRule(chunk.tiles[localY * chunk.size + localX]).terrain);
-      }
-    }
-    // Off-map reads as "same region" so a lake or trail running off the
-    // world's rim is edged as continuing, never sliced flat.
-    const region = (kinds: ReadonlyArray<string>) => (x: number, y: number) => {
-      const kind = terrain.get(`${x},${y}`);
-      return kind === undefined ? true : kinds.includes(kind);
-    };
-    const isWater = region(['water', 'shore']);
-    const isTrail = region(['road']);
-    const variant = (x: number, y: number, salt: number) => {
-      let h = (x * 374761393 + y * 668265263 + salt * 2246822519) | 0;
-      h = (h ^ (h >>> 13)) * 1274126177;
-      return (h ^ (h >>> 16)) >>> 0;
-    };
-    for (const chunk of chunks) {
-      for (let localY = 0; localY < chunk.size; localY++) for (let localX = 0; localX < chunk.size; localX++) {
-        const tileId = chunk.tiles[localY * chunk.size + localX];
-        const rule = wfcRule(tileId);
-        const tileX = chunk.chunkX * chunk.size + localX, tileY = chunk.chunkY * chunk.size + localY;
-        // renderExpansion already stamped the founding atlas continuation.
-        // Preserve it so pixels and worldGrid share the same fixed boundary.
-        if (foundingEdgeContinuationFrame(tileX, tileY) !== undefined) continue;
-        const px = tileOrigin(tileX), py = tileOrigin(tileY);
-        // Every collapsed cell first erases legacy noise with the canonical
-        // grass tile. Its Wang sockets then paint only connected features.
-        this.expansionRT.drawFrame('tiles', 271, px, py);
-        if (rule.terrain === 'field') {
-          this.expansionRT.drawFrame('crop-growth', 0, px, py);
-        } else if (rule.terrain === 'forest') {
-          // The same verified trees the wilderness pass plants, so a generated
-          // wood and a founding wood are made of the same three sprites.
-          const pick = variant(tileX, tileY, 37) % 20;
-          this.expansionOverheadRT.drawFrame('tiles', pick < 13 ? 894 : pick < 17 ? 939 : 940, px, py);
-        } else if (rule.terrain === 'water' || rule.terrain === 'shore') {
-          this.expansionRT.drawFrame('tiles', autotileFrame(
-            WATER_AUTOTILE, autotileMask(isWater, tileX, tileY), variant(tileX, tileY, 19),
-          ), px, py);
-        } else if (rule.terrain === 'road') {
-          this.expansionRT.drawFrame('tiles', autotileFrame(
-            TRAIL_AUTOTILE, autotileMask(isTrail, tileX, tileY), variant(tileX, tileY, 23),
-          ), px, py);
-        }
-        // A buildable plot is drawn by nothing at all. Ownership is already
-        // told by the surveyor's stakes and by the house that eventually
-        // stands there; a tan rectangle over open grass was only ever a
-        // debug overlay that shipped.
-      }
-    }
-  }
-
   worldLayer(layer: WorldRenderLayer) {
     return layer === 'ground' ? this.groundLayer : layer === 'overhead' ? this.overheadLayer : this.objectLayer;
   }
@@ -1042,60 +705,15 @@ class EarthScene extends Phaser.Scene {
   }
 
 
-  // NATIVE BUILD KIT (earthfolk-native-v1): homes reuse the map's own building
-  // composition, scaled with crisp pixels inside the Kernel-validated footprint.
-  // Other structure kinds use the same palette, perspective, shadows, and grid.
-  stampFromMap(srcX: number, srcY: number, w: number, h: number, destPx: number, destPy: number, scale: number) {
-    const map = this.cache.json.get('map');
-    const decor = map.bgtiles[1];
-    for (let dx = 0; dx < w; dx++) {
-      for (let dy = 0; dy < h; dy++) {
-        const frame = decor[srcX + dx]?.[srcY + dy];
-        if (frame === -1 || frame === undefined) continue;
-        const img = this.add.image(destPx + dx * TILE * scale, destPy + dy * TILE * scale, 'tiles', frame)
-          .setOrigin(0).setScale(scale).setDepth(Math.round(destPy + (dy + 1) * TILE * scale));
-        this.objectLayer?.add(img);
-      }
-    }
-  }
-
-  stampNativeBuild(build: Build, plot: Plot) {
-    const kind = build.blueprint?.kind ?? build.structure;
-    const x = (build.x ?? plot.x) * TILE, y = (build.y ?? plot.y) * TILE;
-    const width = (build.w ?? 1) * TILE, height = (build.h ?? 1) * TILE;
-    if (kind === 'home') {
-      if (build.blueprint?.architecture === 'modern-earthfolk') {
-        const graphics = this.add.graphics();
-        this.drawNativeStructure(graphics, build, plot, x, y, width, height);
-        graphics.setDepth(structureSortAnchor(build.y ?? plot.y, build.h ?? plot.h));
-        this.objectLayer?.add(graphics);
-        return;
-      }
-      const scale = Math.min(width, height) / (4 * TILE);
-      const nativeSize = 4 * TILE * scale;
-      this.stampFromMap(9, 7, 3, 3, x + (width - nativeSize) / 2, y + (height - nativeSize) / 2, scale);
-      if (build.blueprint?.features?.length) {
-        const graphics = this.add.graphics();
-        this.drawNativeFeatures(graphics, build, x, y, width, height);
-        graphics.setDepth(structureSortAnchor(build.y ?? plot.y, build.h ?? plot.h));
-        this.objectLayer?.add(graphics);
-      }
-      return;
-    }
-    const graphics = this.add.graphics();
-    this.drawNativeStructure(graphics, build, plot, x, y, width, height);
-    graphics.setDepth(structureSortAnchor(build.y ?? plot.y, build.h ?? plot.h));
-    this.objectLayer?.add(graphics);
-  }
-
   stampLpcBuild(build: Build, plot?: Plot) {
-    const compatibilityPrefabId = build.blueprint?.prefabId
+    const requestedPrefabId = build.blueprint?.prefabId
       ?? (build.buildId === 'build:earth-bank' ? 'bank_lpc_grand'
         : build.buildId === 'build:earth-bank-forecourt' ? 'bank_forecourt' : undefined);
-    const prefab = compatibilityPrefabId ? LPC_PREFABS[compatibilityPrefabId] : undefined;
-    const placements = prefab
-      ? prefab.placements.map((placement) => ({ ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const }))
-      : build.blueprint?.placements ?? [];
+    const prefab = (requestedPrefabId ? LPC_PREFABS[requestedPrefabId] : undefined)
+      ?? prefabForStructure(build.blueprint?.kind ?? build.structure);
+    const placements = prefab.placements.map((placement) => ({
+      ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
+    }));
     for (const placement of placements) {
       const component = (lpcManifest.components as Record<string, {
         width: number;
@@ -1117,7 +735,7 @@ class EarthScene extends Phaser.Scene {
       ).setOrigin(0);
       if (build.state === 'building') image.setAlpha(0.62);
       if (layer === 'midground') image.setDepth(structureSortAnchor(tileY, component.height));
-      image.setData('prefab-id', prefab?.id ?? build.blueprint?.prefabId ?? 'legacy');
+      image.setData('prefab-id', prefab.id);
       image.setData('world-layer', layer);
       this.worldLayer(layer)?.add(image);
     }
@@ -1157,11 +775,7 @@ class EarthScene extends Phaser.Scene {
     for (const build of this.objects.builds) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
-      if (build.blueprint?.assetFramework === lpcManifest.standard && build.blueprint.placements?.length) {
-        this.stampLpcBuild(build, plot);
-      } else {
-        this.stampNativeBuild(build, plot);
-      }
+      this.stampLpcBuild(build, plot);
     }
     if (lpcRenderPreview) {
       const previewPrefab: LpcPrefab = LPC_PREFABS.house_small_brick;
@@ -1181,38 +795,14 @@ class EarthScene extends Phaser.Scene {
         fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
         backgroundColor: '#3A2A1E', padding: { x: 4, y: 2 },
       });
-      const previewBuilder = this.add.sprite(tileCenter(39), tileCenter(21), 'lpc-agent-engineer', 27)
-        .play('lpc-engineer-build_hammer');
-      const previewBehind = this.add.sprite(tileCenter(39), tileCenter(18), 'lpc-agent-designer', 27)
-        .play('lpc-designer-walk');
+      const previewBuilder = this.add.sprite(tileCenter(39), tileCenter(21), 'lpc-agent-default_male')
+        .play('lpc-default_male-build_hammer');
+      const previewBehind = this.add.sprite(tileCenter(39), tileCenter(18), 'lpc-agent-default_female')
+        .play('lpc-default_female-walk');
       previewLabel.setDepth(structureSortAnchor(16));
       previewBuilder.setDepth(citizenDepth(tileCenter(21)));
       previewBehind.setDepth(citizenDepth(tileCenter(18)));
       this.objectLayer.add([previewLabel, previewBehind, previewBuilder]);
-    }
-    if (groundLayerPreview) {
-      // Permanent local regression fixture for the mixed founding decoration
-      // plane. Both sprites stand directly on the bank flower tiles that used
-      // to be flattened above citizens.
-      const checks = [
-        { x: 26, y: 22, key: 'lpc-agent-engineer', animation: 'lpc-engineer-idle' },
-        { x: 32, y: 22, key: 'lpc-agent-designer', animation: 'lpc-designer-idle' },
-      ];
-      for (const check of checks) {
-        const sprite = this.add.sprite(tileCenter(check.x), tileCenter(check.y), check.key, 0)
-          .setOrigin(0.5, 0.75)
-          .play(check.animation)
-          // One pixel above an equal-Y venue marker keeps the debug citizen
-          // inspectable without changing its whole-pixel world position.
-          .setDepth(citizenDepth(tileCenter(check.y) + 1));
-        sprite.setData('ground-layer-preview', true);
-        this.objectLayer.add(sprite);
-      }
-      const label = this.add.text(tileOrigin(26), tileOrigin(21), 'GROUND OCCLUSION CHECK', {
-        fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
-        backgroundColor: '#3A2A1E', padding: { x: 4, y: 2 },
-      }).setDepth(structureSortAnchor(21));
-      this.objectLayer.add(label);
     }
     for (const venue of this.objects.venues) this.renderVenue(venue);
     for (const ticket of this.objects.careTickets ?? []) {

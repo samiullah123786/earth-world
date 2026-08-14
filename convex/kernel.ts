@@ -15,7 +15,7 @@ import {
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
-import { footprintCells, matchLegacyPlacements, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
+import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
 import { loadWorldWalkability } from './worldGrid';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
@@ -448,15 +448,14 @@ function validateLpcPlacements(rawPlacements: unknown, footprint?: { w: number; 
 }
 
 function buildFootprint(plot: any, payload: any) {
-  const standard: Record<string, { offsetX: number; offsetY: number; w: number; h: number }> = {
-    home: { offsetX: 0, offsetY: 0, w: 2, h: 2 },
-    extension: { offsetX: 2, offsetY: 0, w: 1, h: 2 },
-    garden: { offsetX: 0, offsetY: 2, w: 2, h: 1 },
-    bench: { offsetX: 2, offsetY: 2, w: 1, h: 1 },
-  };
   let structure = String(payload.structure ?? '');
   let blueprint: any = undefined;
-  let spec = standard[structure];
+  let spec: { offsetX: number; offsetY: number; w: number; h: number } | undefined;
+  if (['home', 'extension', 'garden', 'bench'].includes(structure)) {
+    const prefab = prefabForStructure(structure);
+    spec = { offsetX: 0, offsetY: 0, w: prefab.width, h: prefab.height };
+    blueprint = canonicalPrefabBlueprint(prefab, 0, 0);
+  }
   if (structure === 'blueprint') {
     const raw = payload.blueprint;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('custom build requires a blueprint');
@@ -473,25 +472,23 @@ function buildFootprint(plot: any, payload: any) {
     const features = Array.from(new Set(rawFeatures.map((item: unknown) => String(item).trim())));
     if (features.some((item) => !BLUEPRINT_FEATURES.has(item))) throw new Error('blueprint contains an unsupported native feature');
     if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
-    const assetFramework = raw.assetFramework === undefined ? undefined : String(raw.assetFramework);
+    const assetFramework = String(raw.assetFramework ?? '');
     let placements: LpcPlacement[] | undefined;
     let canonicalPrefab: LpcPrefab | undefined;
-    if (assetFramework !== undefined) {
-      if (assetFramework !== LPC_ASSET_STANDARD) throw new Error('unsupported asset framework');
-      canonicalPrefab = requireLpcPrefab(String(raw.prefabId ?? ''));
-      if (name !== canonicalPrefab.name || kind !== canonicalPrefab.structureType
-        || w !== canonicalPrefab.width || h !== canonicalPrefab.height) {
-        throw new Error('LPC prefab fields must match the canonical blueprint');
-      }
-      placements = canonicalPrefabBlueprint(canonicalPrefab, offsetX, offsetY).placements;
-    } else if (raw.placements !== undefined) {
-      throw new Error('manifest placements require the LPC asset framework');
+    if (assetFramework !== LPC_ASSET_STANDARD) {
+      throw new Error('all structures must use the registered LPC asset framework');
     }
+    canonicalPrefab = requireLpcPrefab(String(raw.prefabId ?? ''));
+    if (name !== canonicalPrefab.name || kind !== canonicalPrefab.structureType
+      || w !== canonicalPrefab.width || h !== canonicalPrefab.height) {
+      throw new Error('LPC prefab fields must match the canonical blueprint');
+    }
+    placements = canonicalPrefabBlueprint(canonicalPrefab, offsetX, offsetY).placements;
     spec = { offsetX, offsetY, w, h };
     blueprint = {
       name, kind, architecture, features, offsetX, offsetY, w, h,
-      style: assetFramework ?? 'earthfolk-native-v1', assetFramework, placements,
-      prefabId: assetFramework ? String(raw.prefabId) : undefined,
+      style: assetFramework, assetFramework, placements,
+      prefabId: String(raw.prefabId),
       entry: canonicalPrefab?.entry,
       collision: canonicalPrefab?.collision,
     };
@@ -506,16 +503,12 @@ function buildFootprint(plot: any, payload: any) {
 
 async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
   const structureType = String(action.structureType ?? '');
-  if (!(LPC_STRUCTURE_TYPES as readonly string[]).includes(structureType)) throw new Error('unsupported LPC structure type');
   const coordinates = action.coordinates;
   const x = Number(coordinates?.x), y = Number(coordinates?.y);
   if (![x, y].every(Number.isInteger) || x < 0 || y < 0) throw new Error('construction coordinates must be non-negative integer tiles');
   const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first();
   if (!plot) throw new Error('claim a plot before constructing a structure');
-  const prefab = action.prefabId
-    ? requireLpcPrefab(String(action.prefabId))
-    : matchLegacyPlacements(action.blueprint);
-  if (!prefab) throw new Error('construction must use a registered atomic LPC prefab');
+  const prefab = requireLpcPrefab(String(action.prefabId ?? ''));
   if (prefab.structureType !== structureType) throw new Error('prefab does not match the requested structure type');
   const offsetX = x - plot.x, offsetY = y - plot.y;
   return {
@@ -961,13 +954,11 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
   let home = builds.find((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home');
   if (!home && autonomy === 'active') {
     home = await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'home' }, now);
-    await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'garden' }, now);
-    await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'bench' }, now);
   } else if (!home && autonomy === 'light') {
     const pending = await ctx.db.query('approvals').withIndex('agent_state', (q: any) => q.eq('agentId', agent.agentId).eq('state', 'pending')).collect();
     const existing = pending.find((approval: any) => approval.kind === 'build' && approval.payload?.structure === 'home');
     const approvalId = existing?._id ?? await insertApproval(ctx, agent.agentId, 'build', 'Build an Earthfolk home',
-      `A native cream, timber, and warm-brown cottage with a protected 2 by 2 footprint on ${plot.plotId}.`,
+      `A native LPC cottage with a protected 3 by 3 footprint on ${plot.plotId}.`,
       { plotId: plot.plotId, structure: 'home' }, 'routine');
     if (!existing) await notifyOwner(ctx, agent.agentId, 'approval', 'Your home is ready to build',
       `Tock approved the native home plan for ${plot.plotId}. Your owner decision starts construction.`, approvalId);

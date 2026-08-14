@@ -99,47 +99,16 @@ export function requireLpcPrefab(prefabId: string): LpcPrefab {
   return prefab;
 }
 
-function placementKey(assetId: string, xOffset: number, yOffset: number) {
-  return `${assetId}@${xOffset},${yOffset}`;
-}
-
-// The published earth-skill before this refactor placed the garden bench one
-// cell farther east. Accept that exact signed catalog shape and translate it
-// to the canonical prefab; arbitrary client-authored placement arrays remain
-// rejected. This keeps existing installations compatible without returning
-// build authority to clients.
-const LEGACY_PLACEMENT_ALIASES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  community_garden: [
-    placementKey('plowed_dirt', 0, 0), placementKey('crop_stage_1', 1, 0),
-    placementKey('wooden_fence', 2, 0), placementKey('water_barrel', 0, 1),
-    placementKey('crop_stage_2', 1, 1), placementKey('wooden_bench', 2, 1),
-  ].sort(),
+const STRUCTURE_PREFABS: Readonly<Record<string, string>> = {
+  home: 'house_native_3x3', cottage: 'house_native_3x3', extension: 'house_native_3x3',
+  garden: 'garden_native_2x1', community_garden: 'community_garden', farm_plot: 'farm_row',
+  bench: 'bench_native_2x1', park: 'park', table: 'meeting_table_3x2', meeting_table: 'meeting_table_3x2',
+  training_ground: 'training_green_3x3', plaza: 'plaza_fountain_3x3',
+  workshop: 'store_wooden', studio: 'store_wooden', hall: 'store_wooden', art: 'store_wooden',
+  laptop: 'store_wooden', industry: 'store_wooden', data_center: 'store_wooden',
+  industrial_structure: 'bank_lpc_grand', road_segment: 'bank_forecourt',
 };
 
-export function matchLegacyPlacements(rawPlacements: unknown): LpcPrefab | null {
-  if (!Array.isArray(rawPlacements)) return null;
-  const submitted: string[] = [];
-  for (const raw of rawPlacements) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const row = raw as Record<string, unknown>;
-    const assetId = typeof row.assetId === 'string'
-      ? row.assetId
-      : typeof row.tile === 'string'
-        ? row.tile
-        : typeof row.prop === 'string'
-          ? row.prop
-          : null;
-    const xOffset = Number(row.xOffset), yOffset = Number(row.yOffset);
-    if (!assetId || !whole(xOffset) || !whole(yOffset)) return null;
-    submitted.push(placementKey(assetId, xOffset, yOffset));
-  }
-  submitted.sort();
-  const canonical = Object.values(LPC_PREFABS).find((prefab) => {
-    const canonical = prefab.placements.map((placement) => placementKey(placement.assetId, placement.xOffset, placement.yOffset)).sort();
-    return canonical.length === submitted.length && canonical.every((key, index) => key === submitted[index]);
-  });
-  if (canonical) return canonical;
-  const alias = Object.entries(LEGACY_PLACEMENT_ALIASES).find(([_prefabId, keys]) =>
-    keys.length === submitted.length && keys.every((key, index) => key === submitted[index]));
-  return alias ? LPC_PREFABS[alias[0]] ?? null : null;
+export function prefabForStructure(structure: string): LpcPrefab {
+  return requireLpcPrefab(STRUCTURE_PREFABS[structure] ?? 'store_wooden');
 }
