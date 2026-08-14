@@ -646,6 +646,74 @@ const publicBank = httpAction(async (ctx) => {
   }
 });
 
+/**
+ * The MCP registry, open to read without a session.
+ *
+ * A catalogue nobody can query from outside is a catalogue nobody builds on.
+ * These are the four reads a client, a script, or another registry actually
+ * needs: browse, search, one server in full, and the list of clients Earth can
+ * write config for. Everything is a GET with query parameters, so any of them
+ * can be tried from a browser address bar or a curl one-liner.
+ */
+const mcpBrowse = httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    const sort = url.searchParams.get('sort');
+    const result = await ctx.runQuery(api.mcp.browse, {
+      category: url.searchParams.get('category') ?? undefined,
+      transport: url.searchParams.get('transport') ?? undefined,
+      capability: url.searchParams.get('capability') ?? undefined,
+      sort: (sort === 'installs' || sort === 'name' || sort === 'recent') ? sort : undefined,
+      limit: Number(url.searchParams.get('limit')) || undefined,
+    });
+    return json({ ok: true, ...result });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const mcpSearch = httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    const servers = await ctx.runQuery(api.mcp.search, {
+      query: url.searchParams.get('q') ?? '',
+      category: url.searchParams.get('category') ?? undefined,
+      limit: Number(url.searchParams.get('limit')) || undefined,
+    });
+    return json({ ok: true, servers });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const mcpClients = httpAction(async (ctx) => {
+  return json({ ok: true, clients: await ctx.runQuery(api.mcp.clients, {}) });
+});
+
+const mcpCategories = httpAction(async (ctx) => {
+  return json({ ok: true, categories: await ctx.runQuery(api.mcp.categories, {}) });
+});
+
+/** /v1/mcp/server/<serverId>, optionally ?client=cursor for one snippet. */
+const mcpServerDetail = httpAction(async (ctx, request) => {
+  try {
+    const url = new URL(request.url);
+    const serverId = decodeURIComponent(url.pathname.split('/v1/mcp/server/')[1] ?? '').trim();
+    if (!serverId) return json({ ok: false, why: 'name a server' }, 400);
+    const clientId = url.searchParams.get('client');
+    if (clientId) {
+      const install = await ctx.runQuery(api.mcp.installFor, { serverId, clientId });
+      if (!install) return json({ ok: false, why: 'no such MCP server' }, 404);
+      return json({ ok: true, install });
+    }
+    const server = await ctx.runQuery(api.mcp.detail, { serverId });
+    if (!server) return json({ ok: false, why: 'no such MCP server' }, 404);
+    return json({ ok: true, server });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
 const mayorManager = httpAction(async (ctx, request) => {
   try {
     const tokenHash = await sha256Hex(bearerToken(request));
@@ -842,5 +910,12 @@ http.route({ path: '/v1/health', method: 'GET', handler: health });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });
+// The MCP registry. Open reads: browse, search, clients, categories, and one
+// server in full. The detail route is a prefix so a server id can carry a colon.
+http.route({ path: '/v1/mcp/servers', method: 'GET', handler: mcpBrowse });
+http.route({ path: '/v1/mcp/search', method: 'GET', handler: mcpSearch });
+http.route({ path: '/v1/mcp/clients', method: 'GET', handler: mcpClients });
+http.route({ path: '/v1/mcp/categories', method: 'GET', handler: mcpCategories });
+http.route({ pathPrefix: '/v1/mcp/server/', method: 'GET', handler: mcpServerDetail });
 http.route({ path: '/v1/skill/download', method: 'POST', handler: skillDownload });
 export default http;

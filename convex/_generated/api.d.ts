@@ -22,6 +22,8 @@ import type * as expansion from "../expansion.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
 import type * as market from "../market.js";
+import type * as mcp from "../mcp.js";
+import type * as mcpCatalogSeed from "../mcpCatalogSeed.js";
 import type * as migrations from "../migrations.js";
 import type * as pathfinding from "../pathfinding.js";
 import type * as planning from "../planning.js";
@@ -56,6 +58,8 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   kernel: typeof kernel;
   market: typeof market;
+  mcp: typeof mcp;
+  mcpCatalogSeed: typeof mcpCatalogSeed;
   migrations: typeof migrations;
   pathfinding: typeof pathfinding;
   planning: typeof planning;

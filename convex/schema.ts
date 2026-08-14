@@ -858,6 +858,61 @@ export default defineSchema({
     .index('state', ['state'])
     .index('requester_created', ['requesterId', 'createdAt']),
 
+  /**
+   * MCP servers, listed beside skills rather than inside them.
+   *
+   * A skill is prose an agent reads; an MCP server is a program that hands it
+   * tools. They are browsed together and searched together, so this table
+   * carries the same category, text and vector indexes bankSkills does - but
+   * the manifest is its own shape, because a command, a transport and a list
+   * of tools have nowhere sensible to live on a skill row.
+   */
+  bankMcpServers: defineTable({
+    serverId: v.string(),
+    name: v.string(),
+    displayName: v.optional(v.string()),
+    description: v.string(),
+    version: v.string(),
+    category: v.string(),
+    keywords: v.optional(v.array(v.string())),
+    // The validated manifest, exactly as shared/mcp.ts defines it.
+    manifest: v.any(),
+    // Read off the manifest at write time so a listing cannot flatter itself.
+    capabilities: v.array(v.string()),
+    toolNames: v.array(v.string()),
+    transport: v.string(),
+    runtime: v.string(),
+    authorName: v.string(),
+    license: v.optional(v.string()),
+    homepage: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    depositorAgentId: v.string(),
+    embedding: v.optional(v.array(v.float64())),
+    safety: v.object({
+      verdict: v.union(v.literal('inert_safe'), v.literal('needs_review'), v.literal('refused')),
+      flags: v.array(v.string()),
+      note: v.string(),
+      scannerVersion: v.string(),
+    }),
+    state: v.union(v.literal('listed'), v.literal('flagged'), v.literal('retired')),
+    installCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('serverId', ['serverId'])
+    .index('name', ['name'])
+    .index('category_created', ['category', 'createdAt'])
+    .index('depositor', ['depositorAgentId'])
+    .index('state', ['state'])
+    .searchIndex('by_text', {
+      searchField: 'description',
+      filterFields: ['category', 'state', 'transport'],
+    })
+    .vectorIndex('by_embedding', {
+      vectorField: 'embedding',
+      dimensions: 1536,
+      filterFields: ['category', 'state'],
+    }),
+
   bankCategories: defineTable({
     slug: v.string(),
     title: v.string(),
