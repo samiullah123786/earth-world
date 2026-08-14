@@ -1,4 +1,5 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +23,45 @@ const GID = {
   cobbleMiddle: 64,
   cobbleRight: 65,
   treeFirst: 75,
+  waterFirst: 37,
+};
+
+/**
+ * The LPC terrain sheets are 3 wide by 6 tall, and that layout is a contract,
+ * not a coincidence: rows two to four are a nine-slice, and the bottom row is
+ * plain fill. Painting every cell with the single centre tile - which is what
+ * the first version of this generator did - throws away the whole reason the
+ * sheet is shaped that way, and the result reads as a flat green bedsheet.
+ */
+const slice = (first) => ({
+  topLeft: first + 6, top: first + 7, topRight: first + 8,
+  left: first + 9, centre: first + 10, right: first + 11,
+  bottomLeft: first + 12, bottom: first + 13, bottomRight: first + 14,
+  fill: [first + 15, first + 16, first + 17],
+});
+const WATER = slice(GID.waterFirst);
+const GRASS_FILL = [GID.grass, GID.grass + 1, GID.grass + 2];
+
+/** Stable per-cell variation: the same tile every time, never a shimmer. */
+const vary = (x, y, salt) => {
+  let h = Math.imul(x + 0x9e37, 0x85ebca6b) ^ Math.imul(y + 0x79b1, 0xc2b2ae35) ^ Math.imul(salt, 0x27d4eb2f);
+  h ^= h >>> 15; h = Math.imul(h, 0x2545f491); h ^= h >>> 13;
+  return (h >>> 0);
+};
+
+/** Which nine-slice tile edges a cell, given which neighbours share its region. */
+const sliceTile = (region, inRegion, x, y, salt) => {
+  const north = inRegion(x, y - 1), south = inRegion(x, y + 1);
+  const west = inRegion(x - 1, y), east = inRegion(x + 1, y);
+  if (north && south && west && east) return region.fill[vary(x, y, salt) % region.fill.length];
+  if (!north && !west) return region.topLeft;
+  if (!north && !east) return region.topRight;
+  if (!south && !west) return region.bottomLeft;
+  if (!south && !east) return region.bottomRight;
+  if (!north) return region.top;
+  if (!south) return region.bottom;
+  if (!west) return region.left;
+  return region.right;
 };
 
 const blank = () => new Array(MAP_WIDTH * MAP_HEIGHT).fill(0);
@@ -32,8 +72,34 @@ const at = (x, y) => y * MAP_WIDTH + x;
 const blocked = (x, y) => x < 0 || y < 0 || x >= width || y >= height || rows[y][x] === '1';
 
 for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-  ground[at(x, y)] = GID.grass;
+  ground[at(x, y)] = GRASS_FILL[vary(x, y, 11) % GRASS_FILL.length];
   if (blocked(x, y)) collision[at(x, y)] = GID.grass;
+}
+
+/**
+ * The river, put back.
+ *
+ * The founding map's collision grid records only that a cell is impassable, so
+ * the migration to Tiled kept the river's SHAPE - every tile of it still blocks
+ * - while losing the fact that it was water at all, and the map came out an
+ * unbroken green field with mysteriously unwalkable stripes through it. The
+ * mask below is recovered from the original hand-authored map, and the water
+ * sheet's own nine-slice draws its banks, so the river reads as a river again
+ * without a single collision cell moving.
+ */
+const waterMask = JSON.parse(readFileSync(new URL('./founding-water.json', import.meta.url), 'utf8'));
+const isWater = (x, y) => x >= 0 && y >= 0 && x < waterMask.width && y < waterMask.height
+  && waterMask.rows[y][x] === '1';
+// The sheet's nine-slice edges are deliberately part-transparent so they can
+// be laid OVER a base terrain, and the ground layer has room for exactly one
+// tile per cell - so an edge tile here would show the void through its corners
+// rather than grass. Until there is a terrain overlay layer to hold them, the
+// river is drawn from the sheet's opaque fill row: solid water, honest edges.
+let waterPainted = 0;
+for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+  if (!isWater(x, y)) continue;
+  ground[at(x, y)] = WATER.fill[vary(x, y, 23) % WATER.fill.length];
+  waterPainted += 1;
 }
 
 // A small number of deliberate avenues connect the existing neighborhoods.
@@ -62,15 +128,19 @@ for (const key of avenueCells) {
 
 // Complete 3x3 LPC tree compositions, never isolated canopy fragments. Only
 // fully blocked 3x3 regions qualify, so visual mass and Kernel collision agree.
-const treeTiles = [
-  GID.treeFirst + 0, GID.treeFirst + 1, GID.treeFirst + 2,
-  GID.treeFirst + 6, GID.treeFirst + 7, GID.treeFirst + 8,
-  GID.treeFirst + 12, GID.treeFirst + 13, GID.treeFirst + 14,
-];
+// The canopy sheet is six tiles wide and carries more than one tree. Using
+// only the first of them made every wood on Earth the same shrub, repeated.
+const treeVariants = [0, 3].map((column) => [
+  GID.treeFirst + column + 0, GID.treeFirst + column + 1, GID.treeFirst + column + 2,
+  GID.treeFirst + column + 6, GID.treeFirst + column + 7, GID.treeFirst + column + 8,
+  GID.treeFirst + column + 12, GID.treeFirst + column + 13, GID.treeFirst + column + 14,
+]);
 const occupied = new Set();
 for (let y = 0; y <= height - 3; y += 2) for (let x = 0; x <= width - 3; x += 2) {
   const cells = Array.from({ length: 9 }, (_unused, index) => ({ x: x + index % 3, y: y + Math.floor(index / 3) }));
-  if (!cells.every((cell) => blocked(cell.x, cell.y) && !occupied.has(`${cell.x},${cell.y}`))) continue;
+  if (!cells.every((cell) => blocked(cell.x, cell.y) && !occupied.has(`${cell.x},${cell.y}`)
+    && !isWater(cell.x, cell.y))) continue;
+  const treeTiles = treeVariants[vary(x, y, 37) % treeVariants.length];
   cells.forEach((cell, index) => {
     overhead[at(cell.x, cell.y)] = treeTiles[index];
     occupied.add(`${cell.x},${cell.y}`);
