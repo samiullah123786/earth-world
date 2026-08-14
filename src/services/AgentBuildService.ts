@@ -1,5 +1,5 @@
 import lpcManifest from '../data/lpc_manifest.json';
-import { LPC_PREFABS, matchLegacyPlacements, requireLpcPrefab } from '../../shared/lpc-prefabs';
+import { LPC_PREFABS, requireLpcPrefab } from '../../shared/lpc-prefabs';
 
 export type AgentWorldPlacement = {
   tile?: string;
@@ -12,8 +12,7 @@ export type ConstructStructureAction = {
   action: 'construct_structure';
   structureType: string;
   coordinates: { x: number; y: number };
-  prefabId?: string;
-  blueprint?: AgentWorldPlacement[];
+  prefabId: string;
 };
 
 export type KernelConstructStructureAction = Omit<ConstructStructureAction, 'action'> & {
@@ -59,10 +58,7 @@ export class AgentBuildService<Result = unknown> {
     if (!isWholeTile(input.coordinates?.x) || !isWholeTile(input.coordinates?.y)) {
       throw new Error('construction coordinates must use non-negative whole tiles');
     }
-    const prefab = input.prefabId
-      ? requireLpcPrefab(input.prefabId)
-      : matchLegacyPlacements(input.blueprint);
-    if (!prefab) throw new Error('construction must use a registered atomic LPC prefab');
+    const prefab = requireLpcPrefab(input.prefabId);
     if (prefab.structureType !== input.structureType) throw new Error('prefab does not match the requested structure type');
 
     return await this.submitSignedAction({

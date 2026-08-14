@@ -1,8 +1,9 @@
-import { W, H } from './walkable';
+import { W, H } from './tiledFounding';
 import {
   WORLD_CHUNK_SIZE, chunkAvenues, generateWfcChunk, grassBoundary, wfcRule,
   type Cardinal, type DistrictBiome, type WfcBoundary,
 } from '../shared/wfc';
+import { TILED_LAYER_NAMES, TILED_MAP_FORMAT, TILED_MAP_VERSION, TILED_TILE_SIZE, tiledChunkForWfc } from '../shared/tiled-world';
 
 export const WORLD_KEY = 'earth';
 const RING = WORLD_CHUNK_SIZE;
@@ -24,12 +25,22 @@ export async function ensureWorldState(ctx: any) {
     const id = await ctx.db.insert('worldState', {
       key: WORLD_KEY, width: W, height: H, generation: 0,
       capacity: Math.max(50, plots.length), landPolicy: 'risk_based',
+      mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
+      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES],
       // Only ever used when a world is being created from nothing. A stray
       // literal here is how a fresh deployment silently installs the wrong
       // Mayor, so the founding seat is named once and named openly.
       mayorAgentId: FOUNDING_MAYOR_ID, updatedAt: Date.now(),
     });
     state = await ctx.db.get(id);
+  }
+  if (state && state.mapFormat !== TILED_MAP_FORMAT) {
+    await ctx.db.patch(state._id, {
+      mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
+      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES], updatedAt: Date.now(),
+    });
+    state = { ...state, mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
+      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES] };
   }
   return state;
 }
@@ -189,7 +200,8 @@ export async function expandWorld(ctx: any, reason: string, force = false) {
   });
     const chunk = {
       chunkId: `chunk:${coordinate.chunkX}:${coordinate.chunkY}`, ...coordinate, size: RING,
-      biome, generation, seed, tiles: collapsed.tiles, edges: collapsed.edges, createdAt: Date.now(),
+      biome, generation, seed, tiles: collapsed.tiles, edges: collapsed.edges,
+      tiled: tiledChunkForWfc(collapsed.tiles, RING), createdAt: Date.now(),
     };
     generated.push(chunk);
     byCoordinate.set(`${coordinate.chunkX},${coordinate.chunkY}`, chunk);
@@ -276,6 +288,7 @@ export async function expansionStep(ctx: any) {
     await ctx.db.insert('worldChunks', {
       chunkId: `chunk:${coordinate.chunkX}:${coordinate.chunkY}`, ...coordinate, size: RING,
       biome, generation: pending.generation, seed, tiles: collapsed.tiles, edges: collapsed.edges,
+      tiled: tiledChunkForWfc(collapsed.tiles, RING),
       createdAt: Date.now(),
     });
   }
@@ -425,7 +438,10 @@ export async function storeRelaidChunk(ctx: any, chunk: {
   const existing = await ctx.db.query('worldChunks')
     .withIndex('coordinates', (q: any) => q.eq('chunkX', chunk.chunkX).eq('chunkY', chunk.chunkY)).first();
   if (!existing) return { stored: false };
-  await ctx.db.patch(existing._id, { biome: chunk.biome, tiles: chunk.tiles, edges: chunk.edges });
+  await ctx.db.patch(existing._id, {
+    biome: chunk.biome, tiles: chunk.tiles, edges: chunk.edges,
+    tiled: tiledChunkForWfc(chunk.tiles, Math.sqrt(chunk.tiles.length)),
+  });
   return { stored: true };
 }
 
@@ -436,7 +452,9 @@ export async function saveExpansionChunk(ctx: any, chunk: any) {
   if (!pending) return { stored: false };
   const already = await ctx.db.query('worldChunks')
     .withIndex('coordinates', (q: any) => q.eq('chunkX', chunk.chunkX).eq('chunkY', chunk.chunkY)).first();
-  if (!already) await ctx.db.insert('worldChunks', { ...chunk, createdAt: Date.now() });
+  const canonical = { ...chunk, tiled: tiledChunkForWfc(chunk.tiles, chunk.size) };
+  if (already) await ctx.db.patch(already._id, canonical);
+  else await ctx.db.insert('worldChunks', { ...canonical, createdAt: Date.now() });
   await ctx.db.patch(state._id, {
     pendingExpansion: {
       ...pending,

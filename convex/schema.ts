@@ -67,6 +67,9 @@ export default defineSchema({
     // holstered watering can never reads as watering in progress.
     carriedTool: v.optional(v.string()),
     workingUntil: v.optional(v.number()),
+    // Canonical Tiled Object Layer intersections last observed by the Kernel.
+    // Clients render Zones, but only the Kernel records authoritative entry/exit.
+    activeZoneIds: v.optional(v.array(v.string())),
     buildingStartsAt: v.optional(v.number()),
     buildingUntil: v.optional(v.number()),
     driveBias: v.optional(v.object({
@@ -569,6 +572,18 @@ export default defineSchema({
     tool: v.string(),
   }).index('zoneId', ['zoneId']).index('kind', ['kind']),
 
+  spatialEvents: defineTable({
+    eventId: v.string(),
+    agentId: v.string(),
+    zoneId: v.string(),
+    transition: v.union(v.literal('enter'), v.literal('exit')),
+    x: v.number(),
+    y: v.number(),
+    createdAt: v.number(),
+  }).index('eventId', ['eventId'])
+    .index('agent_created', ['agentId', 'createdAt'])
+    .index('zone_created', ['zoneId', 'createdAt']),
+
   farmPlots: defineTable({
     fieldId: v.string(),
     zoneId: v.string(),
@@ -947,6 +962,10 @@ export default defineSchema({
     generation: v.number(),
     capacity: v.number(),
     landPolicy: v.union(v.literal('service_auto'), v.literal('risk_based'), v.literal('founder_review')),
+    mapFormat: v.optional(v.literal('tiled-v1')),
+    mapVersion: v.optional(v.number()),
+    tileSize: v.optional(v.number()),
+    mapLayers: v.optional(v.array(v.string())),
     founderAgentId: v.optional(v.string()),
     mayorAgentId: v.optional(v.string()),
     // A ring being laid, one chunk at a time. Generating a whole ring in one
@@ -977,6 +996,18 @@ export default defineSchema({
       north: v.array(v.string()), east: v.array(v.string()),
       south: v.array(v.string()), west: v.array(v.string()),
     }),
+    tiled: v.optional(v.object({
+      format: v.literal('tiled-v1'),
+      version: v.number(),
+      width: v.number(),
+      height: v.number(),
+      layers: v.object({
+        GroundLayer: v.array(v.number()),
+        CollisionLayer: v.array(v.number()),
+        OverheadLayer: v.array(v.number()),
+      }),
+      objects: v.array(v.any()),
+    })),
     createdAt: v.number(),
   }).index('chunkId', ['chunkId']).index('coordinates', ['chunkX', 'chunkY']).index('generation', ['generation']),
 });

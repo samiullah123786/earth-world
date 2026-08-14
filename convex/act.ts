@@ -2,6 +2,7 @@ import { internalMutation } from './_generated/server';
 import { createRouter, findRoute, walkableInWorld } from './pathfinding';
 import { ensureWorldState } from './planning';
 import { loadWorldWalkability } from './worldGrid';
+import { intersectingZoneIds, spatialTransitionKey } from '../shared/tiled-world';
 
 const SPEED = 2.2;
 const STROLLS = [
@@ -93,11 +94,12 @@ export const ambientTick = internalMutation({
     // which is exactly why citizens stood still and then jumped. This
     // snapshot is the tick's whole read budget, and it does not grow with
     // population: more citizens now cost arithmetic, not queries.
-    const [allVenues, allPlots, allTickets, recentConversations] = await Promise.all([
+    const [allVenues, allPlots, allTickets, recentConversations, allZones] = await Promise.all([
       ctx.db.query('venues').collect(),
       ctx.db.query('plots').collect(),
       ctx.db.query('careTickets').withIndex('state', (q: any) => q.eq('state', 'open')).take(20),
       ctx.db.query('conversations').order('desc').take(120),
+      ctx.db.query('activityZones').collect(),
     ]);
     const homeByOwner = new Map<string, any>();
     for (const plot of allPlots) if (plot.ownerAgentId) homeByOwner.set(plot.ownerAgentId, plot);
@@ -184,6 +186,27 @@ export const ambientTick = internalMutation({
     }
     const talking = new Set<string>(newlyTalking);
     for (const citizen of citizens) {
+      const position = currentPosition(citizen, now);
+      const nextZoneIds = intersectingZoneIds(position, allZones);
+      const previousZoneIds = new Set<string>(citizen.activeZoneIds ?? []);
+      const nextZoneSet = new Set(nextZoneIds);
+      const transitions = [
+        ...nextZoneIds.filter((zoneId) => !previousZoneIds.has(zoneId)).map((zoneId) => ({ zoneId, transition: 'enter' as const })),
+        ...Array.from(previousZoneIds).filter((zoneId) => !nextZoneSet.has(zoneId)).map((zoneId) => ({ zoneId, transition: 'exit' as const })),
+      ];
+      for (const transition of transitions) {
+        const eventId = spatialTransitionKey(citizen.agentId, transition.zoneId, transition.transition, now);
+        await ctx.db.insert('spatialEvents', {
+          eventId, agentId: citizen.agentId, zoneId: transition.zoneId, transition: transition.transition,
+          x: position.x, y: position.y, createdAt: now,
+        });
+        await ctx.db.insert('events', {
+          kind: `spatial_${transition.transition}`, actorId: citizen.agentId,
+          payload: { eventId, zoneId: transition.zoneId, x: position.x, y: position.y },
+          gloss: `${citizen.name} ${transition.transition === 'enter' ? 'entered' : 'left'} ${transition.zoneId}.`,
+        });
+      }
+      if (transitions.length) await ctx.db.patch(citizen._id, { activeZoneIds: nextZoneIds });
       if (citizen.activeBuildId && (citizen.buildingStartsAt ?? Infinity) <= now && (citizen.buildingUntil ?? 0) > now) {
         const build = await ctx.db.query('builds').withIndex('buildId', (q: any) => q.eq('buildId', citizen.activeBuildId)).first();
         if (build) await ctx.db.patch(citizen._id, {

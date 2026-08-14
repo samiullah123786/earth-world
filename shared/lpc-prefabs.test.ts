@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LPC_PREFABS, cellsAreContiguous, footprintCells, matchLegacyPlacements, requireLpcPrefab, validatePrefab, type LpcPrefab } from './lpc-prefabs';
+import { LPC_PREFABS, cellsAreContiguous, footprintCells, requireLpcPrefab, validatePrefab, type LpcPrefab } from './lpc-prefabs';
 
 describe('versioned LPC prefab blueprints', () => {
   it('validates every shipped prefab as a contiguous, layered atomic footprint', () => {
@@ -20,18 +20,9 @@ describe('versioned LPC prefab blueprints', () => {
     expect(cellsAreContiguous([{ x: 0, y: 0 }, { x: 2, y: 0 }])).toBe(false);
   });
 
-  it('maps the legacy bundled placement lists to one canonical prefab only', () => {
-    const garden = requireLpcPrefab('community_garden');
-    const legacy = garden.placements.map((placement) => ({
-      [placement.layer === 'ground' ? 'tile' : 'prop']: placement.assetId,
-      xOffset: placement.xOffset,
-      yOffset: placement.yOffset,
-    }));
-    expect(matchLegacyPlacements(legacy)?.id).toBe('community_garden');
-    expect(matchLegacyPlacements(legacy.map((placement) =>
-      'prop' in placement && placement.prop === 'wooden_bench'
-        ? { ...placement, xOffset: 2 }
-        : placement))?.id).toBe('community_garden');
-    expect(matchLegacyPlacements([...legacy, { prop: 'streetlamp', xOffset: 3, yOffset: 1 }])).toBeNull();
+  it('ships canonical native prefabs for every standard build action', () => {
+    expect(Object.keys(LPC_PREFABS)).toEqual(expect.arrayContaining([
+      'house_native_3x3', 'garden_native_2x1', 'bench_native_2x1',
+    ]));
   });
 });

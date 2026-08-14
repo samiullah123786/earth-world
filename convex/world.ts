@@ -119,7 +119,19 @@ export const worldObjects = query({
     return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, chunks, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
+      mapFormat: state.mapFormat ?? 'tiled-v1', mapVersion: state.mapVersion ?? 1,
+      tileSize: state.tileSize ?? 32, mapLayers: state.mapLayers ?? ['GroundLayer', 'CollisionLayer', 'OverheadLayer'],
     } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925' } };
+  },
+});
+
+export const recentSpatialEvents = query({
+  args: { agentId: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 40)));
+    return args.agentId
+      ? await ctx.db.query('spatialEvents').withIndex('agent_created', (q) => q.eq('agentId', args.agentId!)).order('desc').take(limit)
+      : await ctx.db.query('spatialEvents').order('desc').take(limit);
   },
 });
 

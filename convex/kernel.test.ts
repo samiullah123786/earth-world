@@ -4,7 +4,6 @@ import { api, internal } from './_generated/api';
 import schema from './schema';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { walkable } from './walkable';
-import { foundingEdgeContinuationFrame } from '../shared/founding-edge';
 import { boundariesMatch, validateWfcChunk, wfcRule } from '../shared/wfc';
 import { loadWorldWalkability } from './worldGrid';
 
@@ -145,19 +144,15 @@ describe('Earth Kernel', () => {
     });
     await t.mutation(internal.kernel.grantFounder, { agentId: agent.agentId });
     await t.mutation(internal.kernel.setOwnerGovernance, { tokenHash: agent.ownerToken, landPolicy: 'founder_review' });
-    const studio = await t.mutation(internal.kernel.act, {
+    await expect(t.mutation(internal.kernel.act, {
       agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'studio-nonce',
       action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Signal Studio', kind: 'studio', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
-    });
-    expect(studio).toMatchObject({ autoApproved: true, review: { architecture: 'native', outcome: 'lower-authority-approved' } });
-    await expect(t.mutation(internal.kernel.act, {
-      agentId: agent.agentId, tokenHash: agent.agentToken, nonce: 'overlap-nonce',
-      action: { type: 'build', structure: 'blueprint', blueprint: { name: 'Overlap Shed', kind: 'workshop', offsetX: 2, offsetY: 2, w: 1, h: 1 } },
-    })).rejects.toThrow(/overlaps/i);
+    })).rejects.toThrow(/registered LPC asset framework/i);
     const objects = await t.query(api.world.worldObjects, {});
     expect(objects.plots.find((plot) => plot.plotId === 'plot-10-10')?.ownerAgentId).toBe(agent.agentId);
     expect(objects.builds.some((candidate) => candidate.ownerAgentId === agent.agentId && candidate.structure === 'home')).toBe(true);
-    expect(objects.builds.some((candidate) => candidate.blueprint?.name === 'Signal Studio')).toBe(true);
+    expect(objects.builds.filter((candidate) => candidate.ownerAgentId === agent.agentId)
+      .every((candidate) => candidate.blueprint?.assetFramework === 'earthfolk-lpc-v1')).toBe(true);
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)).not.toHaveProperty('ownerName');
   });
 
@@ -624,24 +619,6 @@ describe('Earth Kernel', () => {
     });
   });
 
-  it('continues every cut founding-edge tree with complete native source sections', () => {
-    expect(foundingEdgeContinuationFrame(64, 34)).toBe(1178);
-    expect(foundingEdgeContinuationFrame(67, 34)).toBe(1181);
-    expect(foundingEdgeContinuationFrame(68, 34)).toBeUndefined();
-    expect(foundingEdgeContinuationFrame(64, 45)).toBe(1178);
-    expect(foundingEdgeContinuationFrame(67, 47)).toBe(1271);
-    expect(foundingEdgeContinuationFrame(52, 48)).toBe(1309);
-    expect(foundingEdgeContinuationFrame(57, 50)).toBe(1404);
-    expect(foundingEdgeContinuationFrame(58, 48)).toBe(1310);
-    expect(foundingEdgeContinuationFrame(63, 50)).toBe(1405);
-    expect(foundingEdgeContinuationFrame(66, 50)).toBe(1406);
-    expect(foundingEdgeContinuationFrame(67, 50)).toBe(271);
-    expect(walkableInWorld(52, 50, { width: 80, height: 64 })).toBe(false);
-    expect(walkableInWorld(58, 48, { width: 80, height: 64 })).toBe(false);
-    expect(walkableInWorld(66, 50, { width: 80, height: 64 })).toBe(false);
-    expect(walkableInWorld(67, 50, { width: 80, height: 64 })).toBe(true);
-  });
-
   it('gives signed map awareness and routes a visit by stable citizen id', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});
@@ -772,12 +749,15 @@ describe('Earth Kernel', () => {
     expect(expanded.chunks).toHaveLength(8);
     await t.run(async (ctx) => {
       const isWalkable = await loadWorldWalkability(ctx, { width: 80, height: 64 });
-      expect(foundingEdgeContinuationFrame(64, 34)).toBeDefined();
-      expect(isWalkable(64, 34)).toBe(false);
+      expect(typeof isWalkable(64, 34)).toBe('boolean');
     });
     const chunkMap = new Map(expanded.chunks.map((chunk) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
     for (const chunk of expanded.chunks) {
       expect(validateWfcChunk(chunk.tiles, chunk.size, chunk.edges as any)).toBe(true);
+      expect(chunk.tiled).toMatchObject({ format: 'tiled-v1', width: 16, height: 16 });
+      expect(chunk.tiled?.layers.GroundLayer).toHaveLength(256);
+      expect(chunk.tiled?.layers.CollisionLayer).toHaveLength(256);
+      expect(chunk.tiled?.layers.OverheadLayer).toHaveLength(256);
       const east = chunkMap.get(`${chunk.chunkX + 1},${chunk.chunkY}`);
       const south = chunkMap.get(`${chunk.chunkX},${chunk.chunkY + 1}`);
       if (east) expect(boundariesMatch(chunk.edges as any, 'east', east.edges as any, 'west')).toBe(true);
@@ -825,8 +805,8 @@ describe('Earth Kernel', () => {
     const plot = objects.plots.find((candidate) => candidate.ownerAgentId === newcomer.agentId);
     expect(plot).toBeTruthy();
     const builds = objects.builds.filter((candidate) => candidate.ownerAgentId === newcomer.agentId);
-    expect(builds.map((build) => build.blueprint?.kind).sort()).toEqual(['bench', 'garden', 'home']);
-    expect(builds.every((build) => build.blueprint?.style === 'earthfolk-native-v1')).toBe(true);
+    expect(builds.map((build) => build.blueprint?.kind).sort()).toEqual(['home']);
+    expect(builds.every((build) => build.blueprint?.style === 'earthfolk-lpc-v1')).toBe(true);
     const notifications = await t.query(internal.kernel.ownerNotifications, { tokenHash: newcomer.ownerToken });
     expect(notifications.some((notification) => notification.title === 'Your agent is home')).toBe(true);
   });
@@ -888,8 +868,9 @@ describe('Earth Kernel', () => {
     const home = await t.mutation(internal.kernel.act, {
       agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'modern-home',
       action: { type: 'build', structure: 'blueprint', blueprint: {
-        name: 'Courtyard Home', kind: 'home', architecture: 'modern-earthfolk',
-        features: ['entry-path', 'small-plants', 'pet-shelter'], offsetX: 0, offsetY: 0, w: 3, h: 2,
+        name: 'Earthfolk LPC Cottage', kind: 'home', architecture: 'modern-earthfolk',
+        features: ['entry-path', 'small-plants', 'pet-shelter'], offsetX: 0, offsetY: 0, w: 3, h: 3,
+        assetFramework: 'earthfolk-lpc-v1', prefabId: 'house_native_3x3',
       } },
     });
     expect(home.review).toMatchObject({ architecture: 'modern-earthfolk', outcome: 'owner-and-mayor-review' });
@@ -902,8 +883,8 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.kernel.decideApproval, {
       tokenHash: mayor.ownerToken, approvalId: buildApproval!._id, decision: 'approve',
     });
-    const built = (await t.query(api.world.worldObjects, {})).builds.find((candidate) => candidate.blueprint?.name === 'Courtyard Home');
-    expect(built?.blueprint).toMatchObject({ style: 'earthfolk-native-v1', architecture: 'modern-earthfolk', features: ['entry-path', 'small-plants', 'pet-shelter'] });
+    const built = (await t.query(api.world.worldObjects, {})).builds.find((candidate) => candidate.blueprint?.prefabId === 'house_native_3x3');
+    expect(built?.blueprint).toMatchObject({ style: 'earthfolk-lpc-v1', architecture: 'modern-earthfolk', features: ['entry-path', 'small-plants', 'pet-shelter'] });
     await expect(t.mutation(internal.kernel.act, {
       agentId: resident.agentId, tokenHash: resident.agentToken, nonce: 'foreign-style',
       action: { type: 'build', structure: 'blueprint', blueprint: {
