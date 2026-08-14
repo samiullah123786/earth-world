@@ -821,6 +821,18 @@ export default defineSchema({
       vectorField: 'embedding',
       dimensions: 1536,
       filterFields: ['category', 'state'],
+    })
+    // Words, not vectors. Semantic search needs an embedding of the query,
+    // which is a paid call to an outside provider - and when that provider
+    // stopped answering, every search in the Bank returned a 500 rather than
+    // a result. A catalogue's search is not allowed to depend on somebody
+    // else's billing account, so the same query also runs against a plain
+    // text index and the two are merged. A skill description is written as a
+    // list of the phrases that should trigger it, which makes it unusually
+    // good text to match on.
+    .searchIndex('by_text', {
+      searchField: 'description',
+      filterFields: ['category', 'state'],
     }),
 
   // Tracks which skills a citizen has acquired from the Bank (replicas, not masters).

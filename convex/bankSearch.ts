@@ -30,16 +30,37 @@ export const search = action({
   // itself through the generated api. Convex asks for the annotation here.
   handler: async (ctx, { query, category, limit }): Promise<any[]> => {
     const maxResults = Math.min(limit ?? 16, 32);
-    const embedding = await generateEmbeddingVector(query);
 
-    const filter = category
-      ? (q: any) => q.eq('category', category).eq('state', 'evaluated')
-      : (q: any) => q.eq('state', 'evaluated');
+    // Words first, because words always work. The text index needs nothing
+    // from anybody and answers even when the embedding provider is down, out
+    // of credits, or slow.
+    const byText: any[] = await ctx.runQuery(internal.bankSearch.textSearch, {
+      query, category, limit: maxResults,
+    });
 
+    let embedding: number[] | null = null;
+    try {
+      embedding = await generateEmbeddingVector(query);
+    } catch (error) {
+      // Degrade, never fail. A search that returns the keyword matches is a
+      // working search; a search that throws is a broken Bank.
+      console.warn('semantic search unavailable, answering from the text index:', error);
+      return byText.slice(0, maxResults);
+    }
+
+    // Search used to return only `evaluated` skills. Evaluation is a budgeted
+    // background job, so everything waiting on it - two thirds of the vault at
+    // one count, none of it ever refused - was simply invisible, and the Bank
+    // read as empty to anyone looking for something in it. A catalogue that
+    // hides what it holds is worse than one that shows it honestly labelled:
+    // npm and PyPI both list a package the moment it exists and let the badges
+    // do the talking. Retired skills are the one real exclusion, because those
+    // were withdrawn on purpose.
     const results = await ctx.vectorSearch('bankSkills', 'by_embedding', {
       vector: embedding,
-      limit: maxResults,
-      filter,
+      // Over-fetch, because the state filter now happens after ranking.
+      limit: Math.min(maxResults * 3, 96),
+      filter: category ? (q: any) => q.eq('category', category) : undefined,
     });
 
     // Hydrate the results with full document data (minus master content and embedding)
@@ -50,7 +71,21 @@ export const search = action({
       }),
     );
 
-    return skills.filter(Boolean);
+    const semantic = skills
+      .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill) && skill!.state !== 'retired');
+
+    // Merge, keeping whichever rank found a skill first and never listing one
+    // twice. Meaning leads because it understands a question the searcher did
+    // not know how to word; the keyword hits follow so an exact name is never
+    // buried under something merely similar.
+    const merged: any[] = [];
+    const seen = new Set<string>();
+    for (const skill of [...semantic, ...byText]) {
+      if (seen.has(skill.skillId)) continue;
+      seen.add(skill.skillId);
+      merged.push(skill);
+    }
+    return merged.slice(0, maxResults);
   },
 });
 
@@ -100,6 +135,37 @@ import { internalQuery } from './_generated/server';
  * Internal query to hydrate a bankSkills document as a public manifest.
  * Strips markdownBody and embedding — manifests only cross the boundary.
  */
+/**
+ * Keyword search over skill descriptions. Free, instant, and always available.
+ */
+export const textSearch = internalQuery({
+  args: { query: v.string(), category: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, { query, category, limit }) => {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const rows = await ctx.db
+      .query('bankSkills')
+      .withSearchIndex('by_text', (q: any) => (category
+        ? q.search('description', trimmed).eq('category', category)
+        : q.search('description', trimmed)))
+      .take(Math.min(limit ?? 16, 32) * 2);
+    return rows
+      .filter((row) => row.state !== 'retired')
+      .slice(0, Math.min(limit ?? 16, 32))
+      .map((doc) => ({
+        skillId: doc.skillId, name: doc.name, description: doc.description,
+        version: doc.version, author: doc.author, category: doc.category, tags: doc.tags,
+        contentDigest: doc.contentDigest, depositorAgentId: doc.depositorAgentId,
+        alsoDepositedBy: doc.alsoDepositedBy.length, sourceKind: doc.sourceKind,
+        sizeBytes: doc.sizeBytes, license: doc.license, priceTokens: doc.priceTokens,
+        safety: { verdict: doc.safety.verdict, flags: doc.safety.flags },
+        state: doc.state, valueRank: doc.valueRank, valueNote: doc.valueNote?.slice(0, 200),
+        llmCategories: doc.llmCategories, createdAt: doc.createdAt, updatedAt: doc.updatedAt,
+        _match: 'text' as const,
+      }));
+  },
+});
+
 export const skillManifest = internalQuery({
   args: { id: v.id('bankSkills') },
   handler: async (ctx, { id }) => {
