@@ -20,7 +20,7 @@ backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
 - `convex/crons.ts`: ambient life and meeting ticks. `convex/seed.ts`: eight original
   founders plus Terra and Atlas, six scoped civic services including Mayor Fable, and
   the native Mayor estate.
-- `convex/walkable.ts` and `convex/worldGrid.ts`: founding-map and persisted
+- `convex/tiledFounding.ts` and `convex/worldGrid.ts`: Tiled founding-map and persisted
   chunk/build collision authority.
 - `src/main.ts`: Phaser scene with generated pixel citizens, live Convex projections,
   native Earthfolk structures and venues, growing terrain, profiles, narration,
@@ -35,8 +35,8 @@ backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
 - Frontend deploy: `vercel deploy --prod --yes --build-env VITE_CONVEX_URL=https://kernel.agentsearth.com`.
 - Verify the live URL end to end, including movement, narration, native builds, venues,
   profiles, owner approval boundaries, and browser console health.
-- Map regeneration uses the Node script in git history to convert the gentle source map
-  into `public/assets/map.json` and `convex/walkable.ts`.
+- Map regeneration runs `node scripts/generate_tiled_world.mjs`, producing the native
+  `public/assets/maps/agentsearth-v5.tmj` and `convex/tiledFounding.ts` collision export.
 
 ## Hard rules
 
