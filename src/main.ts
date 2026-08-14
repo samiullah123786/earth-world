@@ -13,6 +13,7 @@ import {
   FOUNDING_GROUND_TUFT_FRAMES,
   foundingDecorationLayer,
 } from './world/foundingLayers';
+import { autotileFrame, autotileMask, TRAIL_AUTOTILE, WATER_AUTOTILE } from './world/autotile';
 import { LPC_PREFABS, type LpcPrefab } from '../shared/lpc-prefabs';
 import { generateWfcChunk, wfcRule, type DistrictBiome } from '../shared/wfc';
 
@@ -966,7 +967,30 @@ class EarthScene extends Phaser.Scene {
       }];
     }
     if (!chunks.length) return;
-    const paint = this.add.graphics();
+    // Edges are decided across the whole expansion, not inside one chunk. A
+    // lake that crosses a chunk seam has to be edged as one lake, so the
+    // terrain of every collapsed cell is gathered first and the atlas frames
+    // are chosen afterwards from that shared picture.
+    const terrain = new Map<string, string>();
+    for (const chunk of chunks) {
+      for (let localY = 0; localY < chunk.size; localY++) for (let localX = 0; localX < chunk.size; localX++) {
+        const tileX = chunk.chunkX * chunk.size + localX, tileY = chunk.chunkY * chunk.size + localY;
+        terrain.set(`${tileX},${tileY}`, wfcRule(chunk.tiles[localY * chunk.size + localX]).terrain);
+      }
+    }
+    // Off-map reads as "same region" so a lake or trail running off the
+    // world's rim is edged as continuing, never sliced flat.
+    const region = (kinds: ReadonlyArray<string>) => (x: number, y: number) => {
+      const kind = terrain.get(`${x},${y}`);
+      return kind === undefined ? true : kinds.includes(kind);
+    };
+    const isWater = region(['water', 'shore']);
+    const isTrail = region(['road']);
+    const variant = (x: number, y: number, salt: number) => {
+      let h = (x * 374761393 + y * 668265263 + salt * 2246822519) | 0;
+      h = (h ^ (h >>> 13)) * 1274126177;
+      return (h ^ (h >>> 16)) >>> 0;
+    };
     for (const chunk of chunks) {
       for (let localY = 0; localY < chunk.size; localY++) for (let localX = 0; localX < chunk.size; localX++) {
         const tileId = chunk.tiles[localY * chunk.size + localX];
@@ -982,37 +1006,25 @@ class EarthScene extends Phaser.Scene {
         if (rule.terrain === 'field') {
           this.expansionRT.drawFrame('crop-growth', 0, px, py);
         } else if (rule.terrain === 'forest') {
-          this.expansionOverheadRT.drawFrame('tiles', 894, px, py);
-        } else if (rule.terrain === 'plot') {
-          paint.fillStyle(0xd0b77d, 0.5).fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
-          paint.lineStyle(2, INK, 0.45).strokeRect(px + 2, py + 2, TILE - 4, TILE - 4);
+          // The same verified trees the wilderness pass plants, so a generated
+          // wood and a founding wood are made of the same three sprites.
+          const pick = variant(tileX, tileY, 37) % 20;
+          this.expansionOverheadRT.drawFrame('tiles', pick < 13 ? 894 : pick < 17 ? 939 : 940, px, py);
+        } else if (rule.terrain === 'water' || rule.terrain === 'shore') {
+          this.expansionRT.drawFrame('tiles', autotileFrame(
+            WATER_AUTOTILE, autotileMask(isWater, tileX, tileY), variant(tileX, tileY, 19),
+          ), px, py);
         } else if (rule.terrain === 'road') {
-          const lane = 12, inset = (TILE - lane) / 2;
-          paint.fillStyle(0x72553b, 1).fillRect(px + inset, py + inset, lane, lane);
-          if (rule.sockets.north === 'road') paint.fillRect(px + inset, py, lane, TILE / 2);
-          if (rule.sockets.east === 'road') paint.fillRect(px + TILE / 2, py + inset, TILE / 2, lane);
-          if (rule.sockets.south === 'road') paint.fillRect(px + inset, py + TILE / 2, lane, TILE / 2);
-          if (rule.sockets.west === 'road') paint.fillRect(px, py + inset, TILE / 2, lane);
-          paint.lineStyle(2, 0xb99162, 0.75).strokeRect(px + inset, py + inset, lane, lane);
-        } else if (rule.terrain === 'water') {
-          paint.fillStyle(0x2b779f, 1).fillRect(px, py, TILE, TILE);
-          paint.fillStyle(0x4b9fc0, 0.85).fillRect(px + 3, py + 7, 12, 2).fillRect(px + 17, py + 21, 11, 2);
-        } else if (rule.terrain === 'shore') {
-          paint.fillStyle(0x2b779f, 1);
-          if (rule.sockets.north === 'water') paint.fillRect(px, py, TILE, TILE / 2);
-          if (rule.sockets.east === 'water') paint.fillRect(px + TILE / 2, py, TILE / 2, TILE);
-          if (rule.sockets.south === 'water') paint.fillRect(px, py + TILE / 2, TILE, TILE / 2);
-          if (rule.sockets.west === 'water') paint.fillRect(px, py, TILE / 2, TILE);
-          paint.lineStyle(3, 0xd0b77d, 1);
-          if (rule.sockets.north === 'grass') paint.lineBetween(px, py + 2, px + TILE, py + 2);
-          if (rule.sockets.east === 'grass') paint.lineBetween(px + TILE - 2, py, px + TILE - 2, py + TILE);
-          if (rule.sockets.south === 'grass') paint.lineBetween(px, py + TILE - 2, px + TILE, py + TILE - 2);
-          if (rule.sockets.west === 'grass') paint.lineBetween(px + 2, py, px + 2, py + TILE);
+          this.expansionRT.drawFrame('tiles', autotileFrame(
+            TRAIL_AUTOTILE, autotileMask(isTrail, tileX, tileY), variant(tileX, tileY, 23),
+          ), px, py);
         }
+        // A buildable plot is drawn by nothing at all. Ownership is already
+        // told by the surveyor's stakes and by the house that eventually
+        // stands there; a tan rectangle over open grass was only ever a
+        // debug overlay that shipped.
       }
     }
-    this.expansionRT.draw(paint);
-    paint.destroy();
   }
 
   worldLayer(layer: WorldRenderLayer) {

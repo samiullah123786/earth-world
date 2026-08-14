@@ -22,6 +22,9 @@ crons.interval('skill manager', { minutes: 3 }, internal.bankManager.evalSkills,
 // The committee watches deterministic counters and words a report only when
 // something is actually wrong, at most once per six hours.
 crons.interval('civic committee', { minutes: 30 }, internal.committee.tick, {});
+// The Deputy Mayor clears routine civic work so a sleeping Mayor never
+// becomes a stalled town. Consequential decisions are never touched.
+crons.interval('deputy mayor', { minutes: 4 }, internal.kernel.deputyTick, {});
 
 // The Chronicler writes at most one town bulletin per calendar day, under the
 // same switches and budgets as every other always-on mind. A quiet day earns

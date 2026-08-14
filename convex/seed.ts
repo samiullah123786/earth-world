@@ -164,10 +164,26 @@ export const init = internalMutation({
         await ctx.db.patch(service._id, { active: false });
         const formerMayor = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', service.agentId)).first();
         if (formerMayor?.serviceRole === 'Mayor of Earth') {
-          await ctx.db.patch(formerMayor._id, {
+          // The founding Mayor does not become a stranger when the seat moves:
+          // they become the Deputy, clearing routine civic work so a sleeping
+          // Mayor never stalls the town. Anyone else simply retires.
+          const isFounder = formerMayor.agentId === MAYOR_ID;
+          await ctx.db.patch(formerMayor._id, isFounder ? {
+            serviceRole: 'Deputy Mayor', online: true, state: 'service',
+            activity: "clearing the Mayor's routine queue and escalating anything consequential",
+          } : {
             serviceRole: undefined, online: false, state: 'ambient',
             activity: 'resting as a resident after civic service',
           });
+          if (isFounder) {
+            const deputyService = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', MAYOR_ID)).first();
+            if (deputyService) await ctx.db.patch(deputyService._id, { role: 'Deputy Mayor', active: true });
+            else await ctx.db.insert('services', {
+              agentId: MAYOR_ID, role: 'Deputy Mayor', active: true,
+              description: "Clears the Mayor's routine queue and escalates anything consequential.",
+              permissions: ['decide_routine', 'escalate'],
+            });
+          }
         }
       }
     }

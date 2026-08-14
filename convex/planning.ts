@@ -1,6 +1,6 @@
 import { W, H } from './walkable';
 import {
-  WORLD_CHUNK_SIZE, generateWfcChunk, grassBoundary, wfcRule,
+  WORLD_CHUNK_SIZE, chunkAvenues, generateWfcChunk, grassBoundary, wfcRule,
   type Cardinal, type DistrictBiome, type WfcBoundary,
 } from '../shared/wfc';
 
@@ -44,17 +44,75 @@ function chunkSeed(chunkX: number, chunkY: number, generation: number) {
   return hash >>> 0;
 }
 
-function biomeForChunk(chunkX: number, chunkY: number): DistrictBiome {
-  const value = Math.abs((chunkX * 5 + chunkY * 7) % 12);
-  if (value < 2) return 'Town_Center';
-  if (value < 6) return 'Residential_Suburbs';
-  if (value < 9) return 'Farmland';
-  return 'Forest_Wilderness';
+/** Smooth value noise over the chunk lattice, in 0..1. */
+function fieldNoise(chunkX: number, chunkY: number, wavelength: number, salt: number) {
+  const at = (ix: number, iy: number) => {
+    let h = (Math.imul(ix + 0x1f1f, 0x9e3779b1) ^ Math.imul(iy + 0x2c2c, 0x85ebca6b) ^ Math.imul(salt, 0xc2b2ae35)) >>> 0;
+    h ^= h >>> 15; h = Math.imul(h, 0x2545f491); h ^= h >>> 13;
+    return (h >>> 0) / 0x1_0000_0000;
+  };
+  const fx = chunkX / wavelength, fy = chunkY / wavelength;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const tx = fx - x0, ty = fy - y0;
+  const ease = (t: number) => t * t * (3 - 2 * t);
+  const sx = ease(tx), sy = ease(ty);
+  const top = at(x0, y0) * (1 - sx) + at(x0 + 1, y0) * sx;
+  const bottom = at(x0, y0 + 1) * (1 - sx) + at(x0 + 1, y0 + 1) * sx;
+  return top * (1 - sy) + bottom * sy;
 }
 
-function roadEdge() {
+/**
+ * Which kind of district a chunk becomes.
+ *
+ * This used to be `(chunkX * 5 + chunkY * 7) % 12`, which lays biomes in
+ * diagonal stripes one chunk wide: a farm, then woods, then a town centre,
+ * repeating forever with no region larger than a single chunk. Terrain
+ * generators cannot invent structure at a scale bigger than the window they
+ * decide in, so the structure has to be handed to them - a low-frequency field
+ * decides the district and the collapse only fills in its detail.
+ *
+ * Two things shape the field. Settlement falls away with distance from the
+ * founding town, so Earth reads outward as streets, then homes, then farms,
+ * then wilderness rather than a shuffled patchwork. Smooth noise then bends
+ * that ring so the boundary wanders instead of drawing a circle.
+ */
+function biomeForChunk(chunkX: number, chunkY: number): DistrictBiome {
+  const townX = 30 / RING, townY = 20 / RING;
+  const distance = Math.hypot(chunkX - townX, chunkY - townY);
+  const settlement = Math.max(0, 1 - distance / 5) * 0.75 + fieldNoise(chunkX, chunkY, 2.5, 101) * 0.45;
+  if (settlement > 0.82) return 'Town_Center';
+  if (settlement > 0.62) return 'Residential_Suburbs';
+  // Beyond the houses the land is worked where it is fertile and wild where
+  // it is not, in patches several chunks across.
+  return fieldNoise(chunkX, chunkY, 3, 202) > 0.47 ? 'Farmland' : 'Forest_Wilderness';
+}
+
+/**
+ * The regional fields handed to the collapse. Lake country and deep woods are
+ * several chunks across, and the sharp curve on wetness keeps most of Earth
+ * dry so the water that does appear is worth walking to.
+ */
+function terrainFields(chunkX: number, chunkY: number) {
+  const wet = fieldNoise(chunkX, chunkY, 3.5, 303);
+  return {
+    wetness: Math.max(0, (wet - 0.55) / 0.45) ** 1.5,
+    woodedness: fieldNoise(chunkX, chunkY, 2.5, 404),
+  };
+}
+
+/**
+ * The seam a chunk shares with a neighbour that has not been laid yet.
+ *
+ * It used to promise a road on every seam, which is half of why the finished
+ * map wore a lattice. The promise now follows the same avenue rule the
+ * collapse itself uses, and both sides of a seam read the rule from the same
+ * coordinates, so they cannot disagree.
+ */
+function seamEdge(side: Cardinal, chunkX: number, chunkY: number) {
+  const avenues = chunkAvenues(chunkX, chunkY);
+  const carries = side === 'north' || side === 'south' ? avenues.northSouth : avenues.eastWest;
   const edge = [...grassBoundary(RING).north];
-  edge[Math.floor(RING / 2)] = 'road';
+  if (carries) edge[Math.floor(RING / 2)] = 'road';
   return edge;
 }
 
@@ -119,11 +177,16 @@ export async function expandWorld(ctx: any, reason: string, force = false) {
       const neighborKey = `${coordinate.chunkX + dx},${coordinate.chunkY + dy}`;
       const neighbor = byCoordinate.get(neighborKey);
       if (neighbor) copyBoundaryEdge(boundary, side, neighbor.edges[opposite(side)]);
-      else if (coordinateKeys.has(neighborKey)) copyBoundaryEdge(boundary, side, roadEdge());
+      else if (coordinateKeys.has(neighborKey)) copyBoundaryEdge(boundary, side, seamEdge(side, coordinate.chunkX, coordinate.chunkY));
     }
     const biome = biomeForChunk(coordinate.chunkX, coordinate.chunkY);
     const seed = chunkSeed(coordinate.chunkX, coordinate.chunkY, generation);
-    const collapsed = generateWfcChunk({ seed, biome, boundary: boundary as WfcBoundary });
+    const collapsed = generateWfcChunk({
+    seed, biome, boundary: boundary as WfcBoundary,
+    ...terrainFields(coordinate.chunkX, coordinate.chunkY),
+    avenues: chunkAvenues(coordinate.chunkX, coordinate.chunkY),
+    origin: { x: coordinate.chunkX * RING, y: coordinate.chunkY * RING },
+  });
     const chunk = {
       chunkId: `chunk:${coordinate.chunkX}:${coordinate.chunkY}`, ...coordinate, size: RING,
       biome, generation, seed, tiles: collapsed.tiles, edges: collapsed.edges, createdAt: Date.now(),
@@ -199,11 +262,16 @@ export async function expansionStep(ctx: any) {
     const neighborKey = `${coordinate.chunkX + dx},${coordinate.chunkY + dy}`;
     const neighbor = byCoordinate.get(neighborKey);
     if (neighbor) copyBoundaryEdge(boundary, side, neighbor.edges[opposite(side)]);
-    else if (plannedKeys.has(neighborKey)) copyBoundaryEdge(boundary, side, roadEdge());
+    else if (plannedKeys.has(neighborKey)) copyBoundaryEdge(boundary, side, seamEdge(side, coordinate.chunkX, coordinate.chunkY));
   }
   const biome = biomeForChunk(coordinate.chunkX, coordinate.chunkY);
   const seed = chunkSeed(coordinate.chunkX, coordinate.chunkY, pending.generation);
-  const collapsed = generateWfcChunk({ seed, biome, boundary: boundary as WfcBoundary });
+  const collapsed = generateWfcChunk({
+    seed, biome, boundary: boundary as WfcBoundary,
+    ...terrainFields(coordinate.chunkX, coordinate.chunkY),
+    avenues: chunkAvenues(coordinate.chunkX, coordinate.chunkY),
+    origin: { x: coordinate.chunkX * RING, y: coordinate.chunkY * RING },
+  });
   if (!byCoordinate.has(`${coordinate.chunkX},${coordinate.chunkY}`)) {
     await ctx.db.insert('worldChunks', {
       chunkId: `chunk:${coordinate.chunkX}:${coordinate.chunkY}`, ...coordinate, size: RING,
@@ -259,7 +327,7 @@ export async function nextExpansionWork(ctx: any) {
     const neighbor = await ctx.db.query('worldChunks')
       .withIndex('coordinates', (q: any) => q.eq('chunkX', nx).eq('chunkY', ny)).first();
     if (neighbor) copyBoundaryEdge(boundary, side, neighbor.edges[opposite(side)]);
-    else if (plannedKeys.has(`${nx},${ny}`)) copyBoundaryEdge(boundary, side, roadEdge());
+    else if (plannedKeys.has(`${nx},${ny}`)) copyBoundaryEdge(boundary, side, seamEdge(side, coordinate.chunkX, coordinate.chunkY));
   }
   return {
     pending: true as const, ready: false as const, coordinate,
@@ -267,7 +335,98 @@ export async function nextExpansionWork(ctx: any) {
     biome: biomeForChunk(coordinate.chunkX, coordinate.chunkY),
     seed: chunkSeed(coordinate.chunkX, coordinate.chunkY, pending.generation),
     boundary,
+    // The ring is laid from an action, so the regional plan has to travel
+    // with the work item; the action must never re-derive it and drift.
+    ...terrainFields(coordinate.chunkX, coordinate.chunkY),
+    avenues: chunkAvenues(coordinate.chunkX, coordinate.chunkY),
+    origin: { x: coordinate.chunkX * RING, y: coordinate.chunkY * RING },
   };
+}
+
+/**
+ * Every chunk that exists, in the order terrain has to be re-laid: north and
+ * west first, so each one is conditioned on neighbours already rewritten.
+ */
+export async function relayCoordinates(ctx: any) {
+  const chunks = await ctx.db.query('worldChunks').collect();
+  const coordinates = chunks
+    .map((chunk: any) => ({ chunkX: chunk.chunkX, chunkY: chunk.chunkY }))
+    .sort((a: any, b: any) => (a.chunkY - b.chunkY) || (a.chunkX - b.chunkX));
+  return { coordinates, total: coordinates.length };
+}
+
+/**
+ * Everything needed to re-lay one existing chunk.
+ *
+ * The seams differ from a fresh ring in one way that matters: neighbours to
+ * the north and west have already been rewritten, so their new edges are
+ * copied, while neighbours to the south and east still hold old terrain whose
+ * edges are about to change. Reading those would pin the new chunk to terrain
+ * that is on its way out, so they take the avenue rule instead - the same
+ * promise the not-yet-laid neighbour will keep when its own turn comes.
+ */
+export async function relayWorkFor(ctx: any, chunkX: number, chunkY: number) {
+  const chunk = await ctx.db.query('worldChunks')
+    .withIndex('coordinates', (q: any) => q.eq('chunkX', chunkX).eq('chunkY', chunkY)).first();
+  if (!chunk) return { found: false as const };
+  const state = await ensureWorldState(ctx);
+  const boundary = grassBoundary(RING) as Record<Cardinal, string[]>;
+  const steps: ReadonlyArray<{ side: Cardinal; dx: number; dy: number; rewritten: boolean }> = [
+    { side: 'north', dx: 0, dy: -1, rewritten: true }, { side: 'west', dx: -1, dy: 0, rewritten: true },
+    { side: 'south', dx: 0, dy: 1, rewritten: false }, { side: 'east', dx: 1, dy: 0, rewritten: false },
+  ];
+  for (const { side, dx, dy, rewritten } of steps) {
+    const nx = chunkX + dx, ny = chunkY + dy;
+    const neighbor = await ctx.db.query('worldChunks')
+      .withIndex('coordinates', (q: any) => q.eq('chunkX', nx).eq('chunkY', ny)).first();
+    if (!neighbor) continue;
+    if (rewritten) copyBoundaryEdge(boundary, side, neighbor.edges[opposite(side)]);
+    else copyBoundaryEdge(boundary, side, seamEdge(side, chunkX, chunkY));
+  }
+  // Land anyone owns, and the ground under anything standing, stays clear.
+  const originX = chunkX * RING, originY = chunkY * RING;
+  const keepClear: Array<{ x: number; y: number }> = [];
+  const seen = new Set<string>();
+  const add = (worldX: number, worldY: number) => {
+    const x = worldX - originX, y = worldY - originY;
+    if (x < 0 || y < 0 || x >= RING || y >= RING) return;
+    const key = `${x},${y}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    keepClear.push({ x, y });
+  };
+  for (const plot of await ctx.db.query('plots').collect()) {
+    for (let dy = 0; dy < plot.h; dy++) for (let dx = 0; dx < plot.w; dx++) add(plot.x + dx, plot.y + dy);
+  }
+  for (const build of await ctx.db.query('builds').collect()) {
+    if (build.state === 'razed' || build.x === undefined || build.y === undefined) continue;
+    const width = Number(build.w ?? build.blueprint?.w ?? 1), height = Number(build.h ?? build.blueprint?.h ?? 1);
+    for (let dy = 0; dy < height; dy++) for (let dx = 0; dx < width; dx++) add(build.x + dx, build.y + dy);
+  }
+  for (const venue of await ctx.db.query('venues').collect()) {
+    if (Number.isInteger(venue.x) && Number.isInteger(venue.y)) add(venue.x, venue.y);
+  }
+  return {
+    found: true as const,
+    biome: biomeForChunk(chunkX, chunkY),
+    seed: chunkSeed(chunkX, chunkY, state.generation),
+    boundary,
+    ...terrainFields(chunkX, chunkY),
+    avenues: chunkAvenues(chunkX, chunkY),
+    origin: { x: originX, y: originY },
+    keepClear,
+  };
+}
+
+/** Overwrite one chunk's terrain in place. The ring plan is untouched. */
+export async function storeRelaidChunk(ctx: any, chunk: {
+  chunkX: number; chunkY: number; biome: DistrictBiome; tiles: string[]; edges: any;
+}) {
+  const existing = await ctx.db.query('worldChunks')
+    .withIndex('coordinates', (q: any) => q.eq('chunkX', chunk.chunkX).eq('chunkY', chunk.chunkY)).first();
+  if (!existing) return { stored: false };
+  await ctx.db.patch(existing._id, { biome: chunk.biome, tiles: chunk.tiles, edges: chunk.edges });
+  return { stored: true };
 }
 
 /** Store one collapsed chunk and advance the ring. Pure writes, no compute. */

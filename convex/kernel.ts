@@ -2,7 +2,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { findRoute, walkableInWorld } from './pathfinding';
-import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld, finishExpansion, nextExpansionWork, planExpansion, saveExpansionChunk } from './planning';
+import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld, finishExpansion, nextExpansionWork, planExpansion, relayCoordinates, relayWorkFor, saveExpansionChunk, storeRelaidChunk } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
   BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
@@ -330,7 +330,7 @@ const SERVICE_REPLIES: Record<string, string> = {
   'agent:atlas-boundary': 'I survey growth. Earth expands in protected rings when population or occupied land approaches capacity.',
   'agent:aegis-0006': 'I keep Earth constructive through de-escalation and human review. I do not punish disagreement.',
   'agent:tock-0008': 'I inspect builds against ownership, supported structures, and registry geometry before anything appears.',
-  [MAYOR_ID]: 'Welcome to Earth. Routine homes and healthy growth can move quickly after Terra and Tock validate them. Exceptional requests go to the founder owner.',
+  [MAYOR_ID]: 'I am the Deputy. Routine land and gathering requests I can settle myself once Terra and Tock validate them; anything touching money, offices or the boundary waits for the Mayor.',
 };
 
 const BLUEPRINT_KINDS = new Set([
@@ -1144,9 +1144,19 @@ export const register = internalMutation({
         skillCount: args.skillCount ?? 0, experienceTier: args.experienceTier ?? 'emerging',
         avatarSpec: honestAvatarSpec(args.avatarSpec),
       });
-      await ctx.db.insert('claimTokens', { tokenHash: args.claimTokenHash, agentId: byKey.agentId, expiresAt: args.claimExpiresAt });
+      // Re-registering is routine: the install flow re-runs, doctor --repair
+      // rejoins, a machine moves. It must not ask an owner who is already bound
+      // to go and claim their citizen a second time. A claim token grants an
+      // owner session to whoever holds it, so one is minted only when the owner
+      // actually has no way in - never as a side effect of the agent restarting.
+      const liveOwner = (await ctx.db.query('sessions').withIndex('agentId', (q) => q.eq('agentId', byKey.agentId)).collect())
+        .some((session) => session.kind === 'owner' && !session.revokedAt && session.expiresAt > Date.now());
+      const alreadyClaimed = byKey.status === 'active' && liveOwner;
+      if (!alreadyClaimed) {
+        await ctx.db.insert('claimTokens', { tokenHash: args.claimTokenHash, agentId: byKey.agentId, expiresAt: args.claimExpiresAt });
+      }
       const carried = await grantGenesisTokens(ctx, byKey.agentId);
-      return { agentId: byKey.agentId, status: byKey.status, tokens: carried };
+      return { agentId: byKey.agentId, status: byKey.status, tokens: carried, alreadyClaimed };
     }
     if (await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', args.agentId)).first()) {
       throw new Error('agent id already exists');
@@ -4784,6 +4794,11 @@ const LLM_AUTHORITIES = [
   { role: 'Build Inspector', duty: 'audit new structures against their plots and footprints' },
   { role: 'Land Steward', duty: 'watch plot occupancy and protect land from overlap' },
   { role: 'Boundary Surveyor', duty: 'watch density and survey where the world should grow' },
+  // The Mayor's right hand. A human holds the seat, and a human is sometimes
+  // asleep - so routine civic work stopped dead whenever the Mayor did. The
+  // Deputy clears the routine queue and never touches anything consequential:
+  // land grants, money, offices and appointments stay the Mayor's alone.
+  { role: 'Deputy Mayor', duty: "clear the Mayor's routine queue and escalate everything consequential" },
   // The Bank Manager held real economic power with no body, no seat, and no
   // place in this rotation - powers nobody could watch being used. It is an
   // office like the rest now: same novelty gate, same budget, same pause, and
@@ -6597,6 +6612,105 @@ export const expansionStore = internalMutation({
 export const expansionCommit = internalMutation({
   args: {},
   handler: async (ctx) => await finishExpansion(ctx),
+});
+
+// Re-laying terrain that already exists. Same collapse, same seams, same
+// protections as a fresh ring; the only difference is that the chunk rows are
+// overwritten rather than inserted.
+export const relayPlan = internalQuery({
+  args: {},
+  handler: async (ctx) => await relayCoordinates(ctx),
+});
+
+export const relayWork = internalQuery({
+  args: { chunkX: v.number(), chunkY: v.number() },
+  handler: async (ctx, { chunkX, chunkY }) => await relayWorkFor(ctx, chunkX, chunkY),
+});
+
+export const relayStore = internalMutation({
+  args: { chunkX: v.number(), chunkY: v.number(), biome: v.any(), tiles: v.array(v.string()), edges: v.any() },
+  handler: async (ctx, chunk) => await storeRelaidChunk(ctx, chunk as any),
+});
+
+/** Ask the Kernel to re-lay every existing chunk under the current rules. */
+export const relayWorldTerrain = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.expansion.relayTerrain, {});
+    return { started: true };
+  },
+});
+
+/**
+ * The Deputy Mayor clears the routine queue.
+ *
+ * A human holds the Mayor's seat, and a human is sometimes asleep - so
+ * routine civic work simply stopped whenever the Mayor did, and citizens
+ * waited days for a plot nobody disputed. The Deputy decides ONLY what is
+ * already marked routine and only in a narrow allowlist; everything
+ * consequential - money, land grants beyond the routine path, offices,
+ * appointments, the boundary, marriages, package installs - is left exactly
+ * where it is, on the Mayor's desk. Every decision is signed with the
+ * Deputy's name, so the record never pretends the Mayor said it.
+ *
+ * The Mayor can stand this office down like any other, and does not have to
+ * explain why.
+ */
+const DEPUTY_DECIDABLE = new Set(['claim', 'build', 'event_proposal']);
+
+export const deputyTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const config = await ensureGovernanceConfig(ctx);
+    if (!config.authoritiesEnabled || config.townPaused) return { ok: true, skipped: 'authorities are off' };
+    if ((config.disabledOffices ?? []).includes('Deputy Mayor')) return { ok: true, skipped: 'the Deputy is stood down' };
+
+    const world = await ensureWorldState(ctx);
+    const mayorId = world.mayorAgentId;
+    if (!mayorId) return { ok: true, skipped: 'no sitting Mayor' };
+    const deputy = await ctx.db.query('citizens')
+      .withIndex('agentId', (q) => q.eq('agentId', MAYOR_ID)).first();
+    if (!deputy || deputy.serviceRole !== 'Deputy Mayor' || MAYOR_ID === mayorId) {
+      return { ok: true, skipped: 'the founding Mayor holds the seat, so there is no deputy' };
+    }
+
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', mayorId).eq('state', 'pending')).take(20);
+    let decided = 0;
+    let escalated = 0;
+    for (const approval of pending) {
+      const routine = (approval.risk ?? 'routine') === 'routine';
+      if (!routine || !DEPUTY_DECIDABLE.has(approval.kind)) { escalated += 1; continue; }
+      // A routine land request still goes through the same validation the
+      // Mayor's own approval triggers - the Deputy signs it, never bypasses it.
+      try {
+        if (approval.kind === 'claim' || approval.kind === 'build') {
+          await stageLandReview(ctx, MAYOR_ID, approval.kind, approval.payload, Date.now());
+        } else if (approval.kind === 'event_proposal' && approval.payload?.eventId) {
+          await approveCommunityEvent(ctx, String(approval.payload.eventId),
+            'Routine civic gathering, cleared by the Deputy Mayor.', Date.now());
+        }
+      } catch (error) {
+        // A refusal is information, not a failure: leave it for the Mayor.
+        escalated += 1;
+        continue;
+      }
+      await ctx.db.patch(approval._id, {
+        state: 'approved', decidedAt: Date.now(), decidedBy: MAYOR_ID,
+      });
+      await ctx.db.insert('events', {
+        kind: 'deputy_decision', actorId: MAYOR_ID,
+        payload: { approvalId: String(approval._id), kind: approval.kind },
+        gloss: `Deputy Sam cleared a routine request: ${approval.summary}`,
+      });
+      decided += 1;
+    }
+    if (escalated) {
+      await notifyOwner(ctx, mayorId, 'info', 'The Deputy left these for you',
+        `${escalated} request(s) touch money, land grants, offices or the boundary, so they wait for the Mayor.`);
+    }
+    return { ok: true, decided, escalated };
+  },
 });
 
 export const aspirationTick = internalMutation({

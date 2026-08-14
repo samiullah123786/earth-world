@@ -119,10 +119,16 @@ const register = httpAction(async (ctx, request) => {
       charterVersion: '2026-08-09', claimTokenHash: await sha256Hex(claimToken),
       claimExpiresAt: Date.now() + 30 * 60_000,
     });
+    // When the owner is already bound no token was written, so returning a link
+    // would hand back one that is guaranteed to be refused - the exact loop that
+    // made owners think their finished claim had not counted.
+    const claimed = (result as { alreadyClaimed?: boolean }).alreadyClaimed === true;
     return json({
       ok: true, ...result,
-      claimCode: claimToken,
-      claimUrl: `${HOME_URL}/#claim=${encodeURIComponent(claimToken)}`,
+      ...(claimed ? {} : {
+        claimCode: claimToken,
+        claimUrl: `${HOME_URL}/#claim=${encodeURIComponent(claimToken)}`,
+      }),
     }, result.status === 'pending_owner' ? 201 : 200);
   } catch (error) {
     return json({ ok: false, why: message(error) }, 400);
