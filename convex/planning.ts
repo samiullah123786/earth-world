@@ -34,6 +34,11 @@ export async function ensureWorldState(ctx: any) {
     });
     state = await ctx.db.get(id);
   }
+  // Sweep the dead pre-Tiled field off the row the first time anyone reads it.
+  if (state && (state as any).architectureSystem !== undefined) {
+    await ctx.db.patch(state._id, { architectureSystem: undefined });
+    state = { ...state, architectureSystem: undefined };
+  }
   if (state && (state.mapFormat !== TILED_MAP_FORMAT || state.mapVersion !== TILED_MAP_VERSION)) {
     await ctx.db.patch(state._id, {
       mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,

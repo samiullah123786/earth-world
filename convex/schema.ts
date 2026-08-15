@@ -1024,6 +1024,11 @@ export default defineSchema({
 
   worldState: defineTable({
     key: v.string(),
+    // Left behind by the pre-Tiled schema and still present on the live row,
+    // which made every deploy fail schema validation. Accepted so a deploy can
+    // land, and cleared by ensureWorldState the first time it reads the row;
+    // once production carries none of these the field can go.
+    architectureSystem: v.optional(v.string()),
     width: v.number(),
     height: v.number(),
     generation: v.number(),
