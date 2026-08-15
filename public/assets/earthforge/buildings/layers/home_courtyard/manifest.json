@@ -1,0 +1,79 @@
+{
+  "assetId": "home_courtyard",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/home_courtyard.png",
+  "sourceSha256": "02407624923690d5e13031af6ac6c27282698984e512662df2d87fd9bf78a662",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    5,
+    5
+  ],
+  "entry": [
+    2,
+    4
+  ],
+  "collision": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      3,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        280
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        360,
+        512,
+        512
+      ],
+      [
+        0,
+        300,
+        108,
+        360
+      ],
+      [
+        398,
+        300,
+        512,
+        360
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "33fb92a3495e6e0d53001bdbabff8d2865c950820b6a1148e3f5221884eb50b0",
+    "midground": "d4a0952c35c3d9048a6873035a220da3872fef483f6a5786394a1b2851361fe3",
+    "overhead": "5e1c45e2515765e24e5af9e5ae54f16d7160c618d359569f9dc748e90df29d37",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "80d74810752ae58b768c5626658218f97e741e1f3a6f2a53e3901ed61503bbeb"
+  }
+}

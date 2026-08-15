@@ -1,0 +1,83 @@
+{
+  "assetId": "library_pavilion",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/library_pavilion.png",
+  "sourceSha256": "7591c8a66414ebb3cf6a54c7293bc7159ed8a3d92119e00baac716fc485f31e7",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    6,
+    5
+  ],
+  "entry": [
+    3,
+    4
+  ],
+  "collision": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      4,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      4,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        296
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        376,
+        512,
+        512
+      ],
+      [
+        0,
+        302,
+        110,
+        376
+      ],
+      [
+        400,
+        342,
+        512,
+        400
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "af2dabd9c09d43ec9ae2ccd732e0adb2f147f3e2fc6a3bf7fac3c7ba69869076",
+    "midground": "115d47d3e4cf7f96778179cc386a41193312b70a858ca13399f5e3233ce46409",
+    "overhead": "0361c6970dc1b267021509b56e26554bf265b699e51b0f9ce9f84ea84ee54f83",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "5cc63f76adda8c76dab5bb926cd44298b7f728989d1c0ed648eef922f6660769"
+  }
+}

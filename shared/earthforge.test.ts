@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertEarthForgeCatalog, EARTHFORGE_ASSETS, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from './earthforge';
+import { assertEarthForgeCatalog, EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from './earthforge';
 
 describe('EarthForge semantic catalog', () => {
   it('is internally valid and purpose-specific', () => {
@@ -10,7 +10,7 @@ describe('EarthForge semantic catalog', () => {
   });
 
   it('publishes one agent-readable visual system for the complete habitat', () => {
-    expect(EARTHFORGE_VISUAL_SYSTEM).toBe('earthforge-pixel-habitat-v2');
+    expect(EARTHFORGE_VISUAL_SYSTEM).toBe('earthforge-layered-habitat-v3');
     expect(Object.keys(EARTHFORGE_TERRAIN)).toEqual(expect.arrayContaining([
       'meadow', 'soil', 'water', 'stone_path', 'tree_canopy', 'tree_trunk', 'structure_tiles', 'bridge', 'crops',
     ]));
@@ -41,6 +41,17 @@ describe('EarthForge semantic catalog', () => {
       const [width, height] = asset.footprint;
       expect(asset.collision.every(([x, y]) => x >= 0 && y >= 0 && x < width && y < height)).toBe(true);
       expect(asset.collision).not.toContainEqual(asset.entry);
+    }
+  });
+
+  it('publishes native-size layer bundles instead of one sortable square', () => {
+    for (const asset of Object.values(EARTHFORGE_ASSETS)) {
+      expect(asset.layers.compiler).toBe(EARTHFORGE_COMPILER_SYSTEM);
+      expect(asset.layers.pixelSize.every((value) => value % 32 === 0)).toBe(true);
+      expect(asset.layers.tileOffset.every(Number.isInteger)).toBe(true);
+      expect(asset.layers.ground).not.toBe(asset.layers.midground);
+      expect(asset.layers.midground).not.toBe(asset.layers.overhead);
+      expect(asset.layers.sortRow).toBe(asset.entry[1]);
     }
   });
 });

@@ -1,0 +1,87 @@
+{
+  "assetId": "civic_hall",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/civic_hall.png",
+  "sourceSha256": "9771e949eb4941ad83ce31b1a57680eace65f17c47fe3167c2dc5c79eb24d8f4",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 5,
+  "footprint": [
+    7,
+    6
+  ],
+  "entry": [
+    3,
+    5
+  ],
+  "collision": [
+    [
+      1,
+      3
+    ],
+    [
+      2,
+      3
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      3
+    ],
+    [
+      5,
+      3
+    ],
+    [
+      1,
+      4
+    ],
+    [
+      5,
+      4
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        260
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        376,
+        512,
+        512
+      ],
+      [
+        0,
+        290,
+        105,
+        376
+      ],
+      [
+        405,
+        338,
+        512,
+        405
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "66224c217b76f7d53d1f0075b7bbe3dd0832534b2698e5ed545524d71e3b8ee3",
+    "midground": "98447a869eddd6d9475b2d014ede468c713ead1495d4225ad62f665492a548e4",
+    "overhead": "e3145b16cd55b005cb1efd610f37e437a50518ff64ee8b9a6382715e03471106",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "1eebeef1e5ee94dd795d3acebed39e118b4fc60f38cfc5916c54d50900f7f0d2"
+  }
+}

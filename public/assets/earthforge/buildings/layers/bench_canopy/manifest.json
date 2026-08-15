@@ -1,0 +1,67 @@
+{
+  "assetId": "bench_canopy",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/bench_canopy.png",
+  "sourceSha256": "b15d28936b903907a1a5159a7bb346e7835b7bf486439a7002166a7af481fc14",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 2,
+  "footprint": [
+    4,
+    3
+  ],
+  "entry": [
+    2,
+    2
+  ],
+  "collision": [
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      1
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        130,
+        135,
+        405,
+        286
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        356,
+        512,
+        512
+      ],
+      [
+        0,
+        292,
+        138,
+        356
+      ],
+      [
+        340,
+        320,
+        512,
+        390
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "2bf5ac19378610c566b7b3fac85b9df142dbc2e6752db646afda93148042679d",
+    "midground": "d12845d75489c00939f825064d8de7823fd58456084b835b8fc680762bf99375",
+    "overhead": "7950b89a27d42fec737bee84ba0f2c62a8d2716556540654cac1953422c7dc6d",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "2cc5a9a03a34c5ec4fb3e24c236ec90d8ba651c18782b3b55d7512a0397e20af"
+  }
+}

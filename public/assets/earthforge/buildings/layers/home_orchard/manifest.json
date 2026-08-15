@@ -1,0 +1,85 @@
+{
+  "assetId": "home_orchard",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/home_orchard.png",
+  "sourceSha256": "b171fd0ee750a74804f819ae79d1992e5361fa62a4d2cba7faca86a06a077083",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    5,
+    5
+  ],
+  "entry": [
+    2,
+    4
+  ],
+  "collision": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      3,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        286
+      ],
+      [
+        330,
+        250,
+        512,
+        350
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        372,
+        512,
+        512
+      ],
+      [
+        0,
+        306,
+        112,
+        372
+      ],
+      [
+        402,
+        350,
+        512,
+        390
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "916d455296c0c8672fd5a52ad0dd7fcbcd414817dbcd0c2424a8cc3857f865b7",
+    "midground": "44007fbc2b22731c4796b877c0e3d0a96c1f45654a64de560bb330a88ba5c77e",
+    "overhead": "3f214ec0d6ac225002dd202e8fe4a8c151b0874bf26501793368ac863da3e4f2",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "6cac81cb5824797a238b9369271beabbfadba7f2e462b388f8d5b45744b721e3"
+  }
+}

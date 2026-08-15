@@ -16,7 +16,7 @@ import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../sh
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
 import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
-import { EARTHFORGE_ASSETS, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
+import { EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
 import { loadWorldWalkability } from './worldGrid';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
@@ -358,9 +358,21 @@ function nativeBuildingKnowledge() {
     },
     visualHabitat: {
       standard: EARTHFORGE_VISUAL_SYSTEM,
-      rule: 'Use only catalogued habitat materials and authored props; all output is compiled to the same 32px hard-pixel grammar as citizens.',
+      compiler: EARTHFORGE_COMPILER_SYSTEM,
+      rule: 'Use approved catalog art only. Its ground, Y-sorted facade, roof/canopy and emissive passes are compiler-owned; agents never submit pixels, masks, paths or runtime code.',
+      layers: {
+        ground: 'paths, shadows, grass and low planting; never occludes citizens',
+        midground: 'facades, doors, furniture and trunks; sorted against citizen feet',
+        overhead: 'roofs and canopies; intentionally above citizens',
+      },
       terrain: Object.entries(EARTHFORGE_TERRAIN).map(([assetId, asset]) => ({ assetId, ...asset })),
       props: Object.entries(EARTHFORGE_PROPS).map(([assetId, asset]) => ({ assetId, ...asset })),
+    },
+    worldExpansion: {
+      format: 'tiled-v1', chunkSize: 16, coordinates: 'whole 32px tiles',
+      rule: 'Request expansion semantically. The Kernel alone collapses boundary-constrained WFC chunks, matches road/water/shore sockets, persists them, and refreshes pathfinding.',
+      agentEditable: ['district or biome intent', 'approved structure purpose', 'whole-tile construction coordinate'],
+      kernelOwned: ['tile GIDs', 'WFC seed and boundary sockets', 'collision grid', 'ownership sweep', 'visual pass masks'],
     },
     assetFramework: {
       standard: LPC_ASSET_STANDARD,

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "sourceRelease": "c295cb9",
+  "policy": "smooth-pre-quantization-only",
+  "sha256": {
+    "home_courtyard": "02407624923690d5e13031af6ac6c27282698984e512662df2d87fd9bf78a662",
+    "home_orchard": "b171fd0ee750a74804f819ae79d1992e5361fa62a4d2cba7faca86a06a077083",
+    "home_timber": "b23140051289e0afdfe46bbb58fdfaf949ebbeb52aa4f167381cf0ffeab57f77",
+    "bank_rotunda": "821168f3e9eb018c312a375399095d7532ec5948639e037d57709aacf203c1a1",
+    "workshop_sawtooth": "141d983a7af56c601e5685709ff1e92de52118bbde98e69e13cfca719df73966",
+    "civic_hall": "9771e949eb4941ad83ce31b1a57680eace65f17c47fe3167c2dc5c79eb24d8f4",
+    "data_center": "41fa86ad5baf4905101eaa908fe49b0ab95d569554795a470c29a5c34bfba82f",
+    "library_pavilion": "7591c8a66414ebb3cf6a54c7293bc7159ed8a3d92119e00baac716fc485f31e7",
+    "greenhouse": "de795f07adc81e3179785e92a7186ab534bfb59322a9d2af4d9883f3ac4c98ab",
+    "plaza_fountain": "bc2959a6a123d1b06a7c8a7c74a88c760713db7ae126109394ac68b023d45c6c",
+    "park_garden": "ffb9c7abfae670617309f2ab19ad5fd2551ac6c5593678e1b561dca657c945c3",
+    "training_grove": "45fa1a35e2557346543ae28df145371baf72680efaadaf21bfba408a7a67f9f0",
+    "bench_canopy": "b15d28936b903907a1a5159a7bb346e7835b7bf486439a7002166a7af481fc14",
+    "community_garden": "76c1740704240f7a9d7558cf8b37bee8689382c12228da0f845bc9a0fbaa47f9"
+  }
+}

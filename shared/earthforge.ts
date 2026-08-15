@@ -1,12 +1,36 @@
 import rawCatalog from './earthforge-catalog.json';
 
 export const EARTHFORGE_SYSTEM = 'earthforge-semantic-v1' as const;
-export const EARTHFORGE_VISUAL_SYSTEM = 'earthforge-pixel-habitat-v2' as const;
+export const EARTHFORGE_VISUAL_SYSTEM = 'earthforge-layered-habitat-v3' as const;
+export const EARTHFORGE_COMPILER_SYSTEM = 'earthforge-habitat-spec-v1' as const;
+
+export type EarthForgeVisualPass = 'ground' | 'midground' | 'overhead' | 'emissive';
+
+/**
+ * Every pass is extracted from the same approved source canvas and shares one
+ * placement, anchor and uniform instance scale. Ground decoration therefore
+ * cannot accidentally become a Y-sorted wall, roofs never share a depth value
+ * with the facade, and the recomposed structure keeps the approved silhouette.
+ */
+export type EarthForgeLayerBundle = Readonly<{
+  compiler: typeof EARTHFORGE_COMPILER_SYSTEM;
+  pixelSize: readonly [number, number];
+  /** Reserved whole-tile authoring offset for future native-size renditions. */
+  tileOffset: readonly [number, number];
+  sortRow: number;
+  ground: string;
+  midground: string;
+  overhead: string;
+  emissive: string;
+  normal: string;
+}>;
 
 export type EarthForgeAsset = Readonly<{
   kind: string;
   name: string;
+  /** Flattened v2 fallback retained for old clients during rolling deploys. */
   image: string;
+  layers: EarthForgeLayerBundle;
   footprint: readonly [number, number];
   entry: readonly [number, number];
   anchor: readonly [number, number];
@@ -67,6 +91,20 @@ function validateAsset(id: string, asset: EarthForgeAsset) {
   if (asset.collision.some(([x, y]) => x < 0 || y < 0 || x >= width || y >= height)) throw new Error(`${id} collision leaves footprint`);
   if (asset.collision.some(([x, y]) => x === asset.entry[0] && y === asset.entry[1])) throw new Error(`${id} blocks its entrance`);
   if (!asset.features.length) throw new Error(`${id} needs semantic features`);
+  const layers = asset.layers;
+  if (layers.compiler !== EARTHFORGE_COMPILER_SYSTEM) throw new Error(`${id} uses an unsupported EarthForge compiler`);
+  if (layers.pixelSize.some((value) => !Number.isInteger(value) || value <= 0 || value % 32 !== 0)) {
+    throw new Error(`${id} layer canvas must use positive 32px multiples`);
+  }
+  if (layers.tileOffset.some((value) => !Number.isInteger(value))) throw new Error(`${id} layer offset must use whole tiles`);
+  if (!Number.isInteger(layers.sortRow) || layers.sortRow < 1 || layers.sortRow > height) {
+    throw new Error(`${id} has an invalid facade sort row`);
+  }
+  for (const pass of ['ground', 'midground', 'overhead', 'emissive', 'normal'] as const) {
+    if (!layers[pass].startsWith('/assets/earthforge/buildings/layers/')) {
+      throw new Error(`${id}.${pass} has an invalid EarthForge layer image`);
+    }
+  }
   return asset;
 }
 
@@ -106,7 +144,7 @@ export function semanticIntentForAsset(assetId: string, stableId: string): Earth
 }
 
 export function assertEarthForgeCatalog() {
-  if (catalog.system !== EARTHFORGE_SYSTEM || catalog.visualSystem !== EARTHFORGE_VISUAL_SYSTEM || catalog.version !== 1) {
+  if (catalog.system !== EARTHFORGE_SYSTEM || catalog.visualSystem !== EARTHFORGE_VISUAL_SYSTEM || catalog.version !== 2) {
     throw new Error('unsupported EarthForge catalog');
   }
   for (const [id, asset] of [...Object.entries(EARTHFORGE_TERRAIN), ...Object.entries(EARTHFORGE_PROPS)]) {

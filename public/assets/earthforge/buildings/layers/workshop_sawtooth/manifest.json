@@ -1,0 +1,83 @@
+{
+  "assetId": "workshop_sawtooth",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/workshop_sawtooth.png",
+  "sourceSha256": "141d983a7af56c601e5685709ff1e92de52118bbde98e69e13cfca719df73966",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    6,
+    5
+  ],
+  "entry": [
+    3,
+    4
+  ],
+  "collision": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      4,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      4,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        286
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        374,
+        512,
+        512
+      ],
+      [
+        0,
+        318,
+        116,
+        374
+      ],
+      [
+        395,
+        330,
+        512,
+        390
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "33966656c83e5460ad0b4962566e14022053f5777449a1c0ed975c6a76abde55",
+    "midground": "ffa3df0a9fed3109e7263481ea770d24a572a1da138b523e534373bd42d15e9b",
+    "overhead": "8e63c742bbcde199b0152da3f257bb685858cc632b5b8b84228e0dd69aedc55c",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "abbc2b6b640014f38c30e830e5aab0d50caef10511b15e726525c48946e7ad04"
+  }
+}

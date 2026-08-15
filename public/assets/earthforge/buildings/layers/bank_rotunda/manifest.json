@@ -1,0 +1,99 @@
+{
+  "assetId": "bank_rotunda",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/bank_rotunda.png",
+  "sourceSha256": "821168f3e9eb018c312a375399095d7532ec5948639e037d57709aacf203c1a1",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 6,
+  "footprint": [
+    8,
+    7
+  ],
+  "entry": [
+    4,
+    6
+  ],
+  "collision": [
+    [
+      1,
+      3
+    ],
+    [
+      2,
+      3
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      3
+    ],
+    [
+      5,
+      3
+    ],
+    [
+      6,
+      3
+    ],
+    [
+      1,
+      4
+    ],
+    [
+      2,
+      4
+    ],
+    [
+      5,
+      4
+    ],
+    [
+      6,
+      4
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        252
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        380,
+        512,
+        512
+      ],
+      [
+        0,
+        286,
+        105,
+        380
+      ],
+      [
+        405,
+        335,
+        512,
+        410
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "4bba12ddc7b166b71b53bcd7f92ccb8086e25170cf54325ad72ea3de2c166efe",
+    "midground": "b5c2d8d281354712fe935a5b4e03952591c30c10d88a1687ec9b6ddf09eb6505",
+    "overhead": "07aa8f106b1383382bccfb108db856ef78fc321a54de972e0058b17940baf361",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "66bda766cd26a3ae7e6b0690db811484f0b87f09ce368d2b856b02f1b100619e"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "assetId": "training_grove",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/training_grove.png",
+  "sourceSha256": "45fa1a35e2557346543ae28df145371baf72680efaadaf21bfba408a7a67f9f0",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    6,
+    5
+  ],
+  "entry": [
+    3,
+    4
+  ],
+  "collision": [
+    [
+      0,
+      2
+    ],
+    [
+      5,
+      2
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [],
+    "groundRegions": [
+      [
+        0,
+        350,
+        512,
+        512
+      ],
+      [
+        105,
+        255,
+        410,
+        390
+      ],
+      [
+        0,
+        300,
+        115,
+        390
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "7a7b3506a45ca5fb97f3030c82540ddc9898c1bdfe6f84e3f05029e317fb82ec",
+    "midground": "cecfb10cf737a0992309d6e0f67ad694a698b362f96366f246944faa4864f9b2",
+    "overhead": "0c818e7f2015ccc420807cd894b00a26b7ba821ab13910154662c82195d4f836",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "c605d54b4aa97e546d6d2dc7df59b2e2b6ffc8bc09a45a68f9a39a5d86eea7da"
+  }
+}

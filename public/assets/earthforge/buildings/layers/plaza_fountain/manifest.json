@@ -1,0 +1,72 @@
+{
+  "assetId": "plaza_fountain",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/plaza_fountain.png",
+  "sourceSha256": "bc2959a6a123d1b06a7c8a7c74a88c760713db7ae126109394ac68b023d45c6c",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    5,
+    5
+  ],
+  "entry": [
+    2,
+    4
+  ],
+  "collision": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      3,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [],
+    "groundRegions": [
+      [
+        0,
+        372,
+        512,
+        512
+      ],
+      [
+        0,
+        294,
+        142,
+        372
+      ],
+      [
+        382,
+        340,
+        512,
+        395
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "de54261eede5787c40a1adc64f9aac16f00edbd504e65a69cedae4c1151889ff",
+    "midground": "445934f82504d6e636aee00b1b6ba86c12e196bb9fdaa5d5f2d790e05113efb6",
+    "overhead": "59fb2ed07c4c0c811df14df90fcf8029257f81a6be524dfb0aa3570865b61122",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "277879f47e1ef5953d5206a13662f5e0095350598741f9f8cbf713b7ff380969"
+  }
+}

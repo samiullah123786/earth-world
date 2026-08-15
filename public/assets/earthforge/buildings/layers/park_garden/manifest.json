@@ -1,0 +1,75 @@
+{
+  "assetId": "park_garden",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/park_garden.png",
+  "sourceSha256": "ffb9c7abfae670617309f2ab19ad5fd2551ac6c5593678e1b561dca657c945c3",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    6,
+    5
+  ],
+  "entry": [
+    3,
+    4
+  ],
+  "collision": [
+    [
+      4,
+      1
+    ],
+    [
+      4,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      2,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        238,
+        90,
+        472,
+        310
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        372,
+        512,
+        512
+      ],
+      [
+        0,
+        296,
+        118,
+        372
+      ],
+      [
+        360,
+        330,
+        512,
+        410
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "5116ae9d0b34343117987a39a3ed2c564cd24a05bf3ca3e3f310818db1e30c9e",
+    "midground": "9afe279003d75f088d45c6282bbb3cd8a810396b99286ada99c90a1d6813fcee",
+    "overhead": "2cbf80c506209ed9a2fe8a17e32bcc4a1e7ecd8b836cdbdbf23a00a3bbe9b271",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "0cc344330fbe7a842171a497a1a0c2389d9052eba7417c6ef4fee68a4d17bab0"
+  }
+}

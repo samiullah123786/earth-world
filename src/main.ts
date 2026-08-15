@@ -5,7 +5,7 @@ import lpcManifest from './data/lpc_manifest.json';
 import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_animations';
 import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSpec } from './avatar_identity';
 import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, tileCenter, tileOrigin } from './world/grid';
-import { componentRenderContract, citizenDepth, semanticStructureDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
+import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
 import { LPC_PREFABS, prefabForStructure, type LpcPrefab } from '../shared/lpc-prefabs';
 import {
   EARTHFORGE_ASSETS,
@@ -14,12 +14,12 @@ import {
   EARTHFORGE_VISUAL_SYSTEM,
   earthForgeAssetFor,
   semanticIntent,
-  type EarthForgeAsset,
 } from '../shared/earthforge';
 import type { DistrictBiome } from '../shared/wfc';
 import { normalizeTiledChunk, tiledLayerMatrix, TILED_GIDS, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
 import { DynamicNavigationGrid } from './world/navigation';
 import { selectRenderableBuilds, siteOriginAwayFromRoad } from './world/scene-layout';
+import { earthForgeRenderPlan, earthForgeTextureKey } from './world/earthforge-render';
 
 const RENDER_DELAY_MS = 140;
 const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
@@ -265,7 +265,9 @@ class EarthScene extends Phaser.Scene {
       this.load.image(`lpc-component-${componentId}`, component.webPath);
     }
     for (const [assetId, asset] of Object.entries(EARTHFORGE_ASSETS)) {
-      this.load.image(`earthforge-${assetId}`, asset.image);
+      for (const pass of ['ground', 'midground', 'overhead', 'emissive'] as const) {
+        this.load.image(earthForgeTextureKey(assetId, pass), asset.layers[pass]);
+      }
     }
     for (const [assetId, asset] of Object.entries(EARTHFORGE_PROPS)) {
       this.load.image(`earthforge-prop-${assetId}`, asset.image);
@@ -282,6 +284,17 @@ class EarthScene extends Phaser.Scene {
       const texture = this.textures.get(`lpc-component-${componentId}`);
       if (!texture.has('blueprint-frame')) {
         texture.add('blueprint-frame', 0, component.frame.x, component.frame.y, component.frame.width, component.frame.height);
+      }
+    }
+    // EarthForge structures are approved high-resolution Blender renders, not
+    // LPC pixel sheets. The world keeps nearest-neighbour sampling globally
+    // for terrain and citizens, but each structure pass explicitly opts into
+    // linear filtering so downscaling and camera zoom never re-pixelate it.
+    for (const assetId of Object.keys(EARTHFORGE_ASSETS)) {
+      for (const pass of ['ground', 'midground', 'overhead', 'emissive'] as const) {
+        const texture = this.textures.get(earthForgeTextureKey(assetId, pass));
+        texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+        texture.setSmoothPixelArt(true);
       }
     }
     for (const agentKey of ESSENTIAL_AGENT_KEYS) this.registerAgentAnimations(agentKey);
@@ -761,41 +774,36 @@ class EarthScene extends Phaser.Scene {
     return earthForgeAssetFor(kind, build.buildId);
   }
 
-  /**
-   * Render one semantic structure as one authored composition. Agents choose
-   * purpose and features; this catalog owns all geometry, perspective,
-   * lighting, collision cells and the entrance. That boundary is what stops
-   * a bank from becoming a house-shaped pile of individually guessed tiles.
-   */
+  /** Render one approved semantic structure as four identically placed passes. */
   stampEarthForgeBuild(build: Build, plot?: Plot) {
     const resolved = this.earthForgeForBuild(build);
-    if (!resolved || !this.objectLayer) return false;
+    if (!resolved || !this.groundLayer || !this.objectLayer || !this.overheadLayer) return false;
     const { id, asset } = resolved;
     const originX = Math.round(build.x ?? plot?.x ?? 0);
     const originY = Math.round(build.y ?? plot?.y ?? 0);
-    // Existing records keep their proven logical footprint during the rolling
-    // migration; newly-authored semantic records use the catalog footprint.
     const width = Math.max(1, Math.round(build.w ?? asset.footprint[0]));
     const height = Math.max(1, Math.round(build.h ?? asset.footprint[1]));
-    const displaySize = Math.round((width + 1) * TILE);
-    const image = this.add.image(
-      tileOrigin(originX) + Math.round(width * TILE / 2),
-      tileOrigin(originY + height),
-      `earthforge-${id}`,
-    ).setOrigin(asset.anchor[0], asset.anchor[1])
-      .setDisplaySize(displaySize, displaySize)
-      .setDepth(semanticStructureDepth(originY, height));
-    if (build.state === 'building') image.setAlpha(0.62);
-    image.setData('prefab-id', id);
-    image.setData('earthforge-asset', id);
-    image.setData('earthforge-visual-system', EARTHFORGE_VISUAL_SYSTEM);
-    image.setData('earthforge-intent', build.blueprint?.earthForge
-      ?? semanticIntent(asset.kind, build.buildId));
-    image.setData('world-layer', 'midground');
-    image.setData('collision-cells', asset.collision
+    const collisionCells = asset.collision
       .filter(([x, y]) => x < width && y < height)
-      .map(([x, y]) => ({ x: originX + x, y: originY + y })));
-    this.objectLayer.add(image);
+      .map(([x, y]) => ({ x: originX + x, y: originY + y }));
+    for (const pass of earthForgeRenderPlan(id, asset, originX, originY, width, height)) {
+      const image = this.add.image(pass.x, pass.y, pass.textureKey)
+        .setOrigin(pass.origin[0], pass.origin[1])
+        .setDisplaySize(pass.displaySize, pass.displaySize)
+        .setDepth(pass.depth);
+      if (pass.blend === 'add') image.setBlendMode(Phaser.BlendModes.ADD);
+      if (build.state === 'building') image.setAlpha(0.62);
+      image.setData('prefab-id', id);
+      image.setData('earthforge-asset', id);
+      image.setData('earthforge-pass', pass.pass);
+      image.setData('earthforge-native-size', asset.layers.pixelSize.join('x'));
+      image.setData('earthforge-visual-system', EARTHFORGE_VISUAL_SYSTEM);
+      image.setData('earthforge-intent', build.blueprint?.earthForge
+        ?? semanticIntent(asset.kind, build.buildId));
+      image.setData('world-layer', pass.layer);
+      if (pass.pass === 'midground') image.setData('collision-cells', collisionCells);
+      this.worldLayer(pass.layer)?.add(image);
+    }
     return true;
   }
 

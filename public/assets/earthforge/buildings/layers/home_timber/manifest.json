@@ -1,0 +1,79 @@
+{
+  "assetId": "home_timber",
+  "compiler": "earthforge-habitat-spec-v1",
+  "visualSystem": "earthforge-layered-habitat-v3",
+  "source": "/assets/earthforge/buildings/home_timber.png",
+  "sourceSha256": "b23140051289e0afdfe46bbb58fdfaf949ebbeb52aa4f167381cf0ffeab57f77",
+  "pixelSize": [
+    512,
+    512
+  ],
+  "sortRow": 4,
+  "footprint": [
+    5,
+    5
+  ],
+  "entry": [
+    2,
+    4
+  ],
+  "collision": [
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      2
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      3,
+      3
+    ]
+  ],
+  "masks": {
+    "overheadRegions": [
+      [
+        0,
+        0,
+        512,
+        284
+      ]
+    ],
+    "groundRegions": [
+      [
+        0,
+        365,
+        512,
+        512
+      ],
+      [
+        0,
+        302,
+        112,
+        365
+      ],
+      [
+        398,
+        302,
+        512,
+        365
+      ]
+    ]
+  },
+  "sha256": {
+    "ground": "b91d5b60e3bc2188e549d3cadd5d2a6332abd369bb3d0b20f3d336742f162f82",
+    "midground": "32a751a34a76712f17e8322d54ad637afe7fad8484823ac44a28a8631c4d1b22",
+    "overhead": "93db10b98ba361feee3bf2261238008cde41dc09fa898fc987af817b2ae52adb",
+    "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
+    "normal": "1def1b15f8249f123d9c5332b0da8e802d99b5002a2d972584c025b9ca787ce6"
+  }
+}

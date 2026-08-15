@@ -1,8 +1,9 @@
 """Compile the complete EarthForge Pixel Habitat visual set.
 
-The runtime never needs Pillow or Blender: generated PNGs are committed. Run
-this after ``generate_earthforge_assets.py`` so the smooth Blender source
-renders are reduced to the same hard pixel sampling as the 32px world.
+The runtime never needs Pillow or Blender: generated PNGs are committed. This
+produces the fixed-GID terrain atlases and then invokes the native-pixel
+layered HabitatSpec compiler. The retired Blender/Lanczos reduction created
+the mixed smooth/pixel style and made exact sprite bounds impossible to audit.
 
 Usage:
   python scripts/generate_earthforge_pixel_world.py
@@ -221,16 +222,6 @@ def props():
     logs.resize((96, 64), Image.Resampling.NEAREST).save(PROPS / "log_pile.png")
 
 
-def pixelate_buildings():
-    for path in BUILDINGS.glob("*.png"):
-        source = Image.open(path).convert("RGBA")
-        small = source.resize((128, 128), Image.Resampling.LANCZOS)
-        alpha = small.getchannel("A")
-        rgb = small.convert("RGB").quantize(colors=40, method=Image.Quantize.MEDIANCUT).convert("RGB")
-        rgba = Image.merge("RGBA", (*rgb.split(), alpha.point(lambda value: round(value / 32) * 32 if value < 224 else 255)))
-        rgba.resize(source.size, Image.Resampling.NEAREST).save(path)
-
-
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     PROPS.mkdir(parents=True, exist_ok=True)
@@ -243,7 +234,8 @@ def main():
     structure_tiles()
     crops()
     props()
-    pixelate_buildings()
+    from generate_earthforge_habitat_v3 import main as generate_layered_habitat
+    generate_layered_habitat()
     print("EARTHFORGE_PIXEL_WORLD_READY")
 
 
