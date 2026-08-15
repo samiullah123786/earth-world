@@ -2,15 +2,16 @@
   "visualSystem": "earthforge-layered-habitat-v3",
   "compiler": "earthforge-habitat-spec-v1",
   "gridSize": 32,
+  "seamGuardPixels": 8,
   "sourcePolicy": "catalog-owned-approved-render",
   "assets": [
     {
       "assetId": "home_courtyard",
       "sourceSha256": "02407624923690d5e13031af6ac6c27282698984e512662df2d87fd9bf78a662",
       "sha256": {
-        "ground": "33fb92a3495e6e0d53001bdbabff8d2865c950820b6a1148e3f5221884eb50b0",
-        "midground": "d4a0952c35c3d9048a6873035a220da3872fef483f6a5786394a1b2851361fe3",
-        "overhead": "5e1c45e2515765e24e5af9e5ae54f16d7160c618d359569f9dc748e90df29d37",
+        "ground": "1249e5dd70cbfe0fe1cd3d79abc26f4bbc8da760f106661e379e9ecaed7b36b8",
+        "midground": "8626e75b699e316761471a28be1f6687e173c2347a1c292571585d2366882118",
+        "overhead": "e0d2c930533dfde8295a553260cd8d6358af4a81d36fa31441a0aa76e1369021",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "80d74810752ae58b768c5626658218f97e741e1f3a6f2a53e3901ed61503bbeb"
       }
@@ -19,9 +20,9 @@
       "assetId": "home_orchard",
       "sourceSha256": "b171fd0ee750a74804f819ae79d1992e5361fa62a4d2cba7faca86a06a077083",
       "sha256": {
-        "ground": "916d455296c0c8672fd5a52ad0dd7fcbcd414817dbcd0c2424a8cc3857f865b7",
-        "midground": "44007fbc2b22731c4796b877c0e3d0a96c1f45654a64de560bb330a88ba5c77e",
-        "overhead": "3f214ec0d6ac225002dd202e8fe4a8c151b0874bf26501793368ac863da3e4f2",
+        "ground": "e89be1d6ee37839d6d346e89930cd355baa3338a8f95239dafe2a6d97c19c0e1",
+        "midground": "93a1c6ec751448684de6158e5ba9ad71e5184250f13062c53c937d056b8fc99a",
+        "overhead": "71f3669759fb5dacb74127bd32dbef7de707f2e40298cc57f07a01ff0d304853",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "6cac81cb5824797a238b9369271beabbfadba7f2e462b388f8d5b45744b721e3"
       }
@@ -30,9 +31,9 @@
       "assetId": "home_timber",
       "sourceSha256": "b23140051289e0afdfe46bbb58fdfaf949ebbeb52aa4f167381cf0ffeab57f77",
       "sha256": {
-        "ground": "b91d5b60e3bc2188e549d3cadd5d2a6332abd369bb3d0b20f3d336742f162f82",
-        "midground": "32a751a34a76712f17e8322d54ad637afe7fad8484823ac44a28a8631c4d1b22",
-        "overhead": "93db10b98ba361feee3bf2261238008cde41dc09fa898fc987af817b2ae52adb",
+        "ground": "3e6510df8175d353d2b0ace7b2d434b09180eab66931ff5757a2c68a001e75e0",
+        "midground": "e762e4cea6e4a275e68e0d1c68882f23dad71d480e84eaaac45f120e40c1841c",
+        "overhead": "cde837107040255f9f70b0e66e6300bf29787e082618295c2580f781c9045637",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "1def1b15f8249f123d9c5332b0da8e802d99b5002a2d972584c025b9ca787ce6"
       }
@@ -41,9 +42,9 @@
       "assetId": "bank_rotunda",
       "sourceSha256": "821168f3e9eb018c312a375399095d7532ec5948639e037d57709aacf203c1a1",
       "sha256": {
-        "ground": "4bba12ddc7b166b71b53bcd7f92ccb8086e25170cf54325ad72ea3de2c166efe",
-        "midground": "b5c2d8d281354712fe935a5b4e03952591c30c10d88a1687ec9b6ddf09eb6505",
-        "overhead": "07aa8f106b1383382bccfb108db856ef78fc321a54de972e0058b17940baf361",
+        "ground": "cd8ef08d46ebddfa9bff97932280951499810af0a8dae9e5e5c5402cd70082a1",
+        "midground": "f34cfeab59ee13f368999268f656dcccacbfa5ff18eddc27e23e631b25109eb1",
+        "overhead": "c5bd06099f8f09b2f658f609c8f6128314ae0f144b0c78681d60ba4728503900",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "66bda766cd26a3ae7e6b0690db811484f0b87f09ce368d2b856b02f1b100619e"
       }
@@ -52,9 +53,9 @@
       "assetId": "workshop_sawtooth",
       "sourceSha256": "141d983a7af56c601e5685709ff1e92de52118bbde98e69e13cfca719df73966",
       "sha256": {
-        "ground": "33966656c83e5460ad0b4962566e14022053f5777449a1c0ed975c6a76abde55",
-        "midground": "ffa3df0a9fed3109e7263481ea770d24a572a1da138b523e534373bd42d15e9b",
-        "overhead": "8e63c742bbcde199b0152da3f257bb685858cc632b5b8b84228e0dd69aedc55c",
+        "ground": "d994a79c3599916374e99840f3aa439b80ac825abc776a72991e975095011891",
+        "midground": "a0d2dc07522f70100ccdf5bf3d8da2b37b6924666f08a15fcab8feac426dc680",
+        "overhead": "b0953278cac69f30d17df960851db9445e526937da3e4c234e78c8a60da54bb4",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "abbc2b6b640014f38c30e830e5aab0d50caef10511b15e726525c48946e7ad04"
       }
@@ -63,9 +64,9 @@
       "assetId": "civic_hall",
       "sourceSha256": "9771e949eb4941ad83ce31b1a57680eace65f17c47fe3167c2dc5c79eb24d8f4",
       "sha256": {
-        "ground": "66224c217b76f7d53d1f0075b7bbe3dd0832534b2698e5ed545524d71e3b8ee3",
-        "midground": "98447a869eddd6d9475b2d014ede468c713ead1495d4225ad62f665492a548e4",
-        "overhead": "e3145b16cd55b005cb1efd610f37e437a50518ff64ee8b9a6382715e03471106",
+        "ground": "9684e423220929747d1223cdcfeb7498a66b0f5baa6d62d2eafd764dffa56a68",
+        "midground": "8abf04074a1625193076cd8b7f01e83d2bcd19b52111a791a7a7671d72d9bd43",
+        "overhead": "f9f231a9d385769992b662d58c744f1b5d60ba1b65557f6bb5a9bf741ed23a8d",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "1eebeef1e5ee94dd795d3acebed39e118b4fc60f38cfc5916c54d50900f7f0d2"
       }
@@ -74,9 +75,9 @@
       "assetId": "data_center",
       "sourceSha256": "41fa86ad5baf4905101eaa908fe49b0ab95d569554795a470c29a5c34bfba82f",
       "sha256": {
-        "ground": "698a4a69133330e901cb1c76fd295057c60a785bab2b625a075318e0dfee0de7",
-        "midground": "825e118c432976de3cd3ce5dbeb4431ffc3a047031da7d94442d7f63bfcd5590",
-        "overhead": "04164205c9ad44d6884cd1e4af127044ee8982a48840e163d200ff352d43c654",
+        "ground": "c07eddf7c9addbc9022478b0bf1c8c16ca4607cbbbaa289357e2f701fe3ce31a",
+        "midground": "9c940a7911a4ba0332fadf0ad321ed58b8dbe4a6ec19a56847c2267368bb1bc5",
+        "overhead": "cfac5e249321554a704d0fcfd0b38f371945ceeda27c0fe229a6b3919e7f9a56",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "f2fd86d496f0505041380ff042dd42e65b2548ec502a610401880ed53d045760"
       }
@@ -85,9 +86,9 @@
       "assetId": "library_pavilion",
       "sourceSha256": "7591c8a66414ebb3cf6a54c7293bc7159ed8a3d92119e00baac716fc485f31e7",
       "sha256": {
-        "ground": "af2dabd9c09d43ec9ae2ccd732e0adb2f147f3e2fc6a3bf7fac3c7ba69869076",
-        "midground": "115d47d3e4cf7f96778179cc386a41193312b70a858ca13399f5e3233ce46409",
-        "overhead": "0361c6970dc1b267021509b56e26554bf265b699e51b0f9ce9f84ea84ee54f83",
+        "ground": "db13f6dcc7ff008597132c627023f87d7456dc24c10408af23bfa88b1845587e",
+        "midground": "1e70d1dfca9327cc317c3ffddb108415ae0f9446102a313f4127900aca54c907",
+        "overhead": "f788121683e097b53e1af173c6b30608f8293fbbd22ac3a762e5d686031b46b6",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "5cc63f76adda8c76dab5bb926cd44298b7f728989d1c0ed648eef922f6660769"
       }
@@ -96,9 +97,9 @@
       "assetId": "greenhouse",
       "sourceSha256": "de795f07adc81e3179785e92a7186ab534bfb59322a9d2af4d9883f3ac4c98ab",
       "sha256": {
-        "ground": "267f9677d3b418aa97e2ffd16e936dc8b6dd237814e0f25c2ef1ddd2c6fe20d3",
-        "midground": "b83cfeca98512e591274884c7f7b7320a443dadd86f23c9917e48c246de8ab0e",
-        "overhead": "a5c4d0ae5b70552a67bd37b5ab05281ef8051ea0bd6fda0e5b6f578dfc346037",
+        "ground": "53800ba330bf81165094b491320b816e38bba4dd64c05aac5b7708bdac025a3e",
+        "midground": "cef4b0446bc329151f63bf25438bd6155d761b7860f4c9cd16b56b53bfd74bae",
+        "overhead": "70ec0237e50d2cb638ff97f2f378f4837aa2fc07c2484d31d178ae3409beef10",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "cb88adca64e2eecd8f0ad3cc605e59261a17de459f565a7c5f39bd7df9b6ea41"
       }
@@ -107,8 +108,8 @@
       "assetId": "plaza_fountain",
       "sourceSha256": "bc2959a6a123d1b06a7c8a7c74a88c760713db7ae126109394ac68b023d45c6c",
       "sha256": {
-        "ground": "de54261eede5787c40a1adc64f9aac16f00edbd504e65a69cedae4c1151889ff",
-        "midground": "445934f82504d6e636aee00b1b6ba86c12e196bb9fdaa5d5f2d790e05113efb6",
+        "ground": "b6f0ca488f48cbd04e8c30d64b688b8cce9bfbf5e95252eff0115d1161dffcc7",
+        "midground": "25a9089c6e28511d4b8eb39e50185ee9b82a4195650635067caed631de9505d0",
         "overhead": "59fb2ed07c4c0c811df14df90fcf8029257f81a6be524dfb0aa3570865b61122",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "277879f47e1ef5953d5206a13662f5e0095350598741f9f8cbf713b7ff380969"
@@ -118,9 +119,9 @@
       "assetId": "park_garden",
       "sourceSha256": "ffb9c7abfae670617309f2ab19ad5fd2551ac6c5593678e1b561dca657c945c3",
       "sha256": {
-        "ground": "5116ae9d0b34343117987a39a3ed2c564cd24a05bf3ca3e3f310818db1e30c9e",
-        "midground": "9afe279003d75f088d45c6282bbb3cd8a810396b99286ada99c90a1d6813fcee",
-        "overhead": "2cbf80c506209ed9a2fe8a17e32bcc4a1e7ecd8b836cdbdbf23a00a3bbe9b271",
+        "ground": "8ad24759fc3a65265a2e8b50c724a04ec61a60ab8494147035d3eb385a53eb15",
+        "midground": "ca6de8eb29b7b7530e35989688e09d8118741c947116dd8e12623b7af1fc7d51",
+        "overhead": "0c2f6650367477a844fd6df5dd0c42ea84c3d8d32bd51fce4ae9d5393a15b6b6",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "0cc344330fbe7a842171a497a1a0c2389d9052eba7417c6ef4fee68a4d17bab0"
       }
@@ -129,8 +130,8 @@
       "assetId": "training_grove",
       "sourceSha256": "45fa1a35e2557346543ae28df145371baf72680efaadaf21bfba408a7a67f9f0",
       "sha256": {
-        "ground": "7a7b3506a45ca5fb97f3030c82540ddc9898c1bdfe6f84e3f05029e317fb82ec",
-        "midground": "cecfb10cf737a0992309d6e0f67ad694a698b362f96366f246944faa4864f9b2",
+        "ground": "e68a77562d53d74f57013e53ac99a0407d20b749585f76a585adedea5b738158",
+        "midground": "773633dfefd7e5b5b7aea94e30c507eaf5fe57d1eaddfafde42c2f4275dad3ef",
         "overhead": "0c818e7f2015ccc420807cd894b00a26b7ba821ab13910154662c82195d4f836",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "c605d54b4aa97e546d6d2dc7df59b2e2b6ffc8bc09a45a68f9a39a5d86eea7da"
@@ -140,9 +141,9 @@
       "assetId": "bench_canopy",
       "sourceSha256": "b15d28936b903907a1a5159a7bb346e7835b7bf486439a7002166a7af481fc14",
       "sha256": {
-        "ground": "2bf5ac19378610c566b7b3fac85b9df142dbc2e6752db646afda93148042679d",
-        "midground": "d12845d75489c00939f825064d8de7823fd58456084b835b8fc680762bf99375",
-        "overhead": "7950b89a27d42fec737bee84ba0f2c62a8d2716556540654cac1953422c7dc6d",
+        "ground": "de157e491659c8c583d06dfcefc31f069c2f83bc4054fa2209064a870221e988",
+        "midground": "97937606efc1f900c875334707fdf4e0b8bb16836af2e5c51260f179354b5ba7",
+        "overhead": "18e454bc2e7d04df6385389fb6c2bc26b4809138ada75b6d3f89ee155943ccc7",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "2cc5a9a03a34c5ec4fb3e24c236ec90d8ba651c18782b3b55d7512a0397e20af"
       }
@@ -151,9 +152,9 @@
       "assetId": "community_garden",
       "sourceSha256": "76c1740704240f7a9d7558cf8b37bee8689382c12228da0f845bc9a0fbaa47f9",
       "sha256": {
-        "ground": "fed765b14161ce9741b0dde5eb7d2e7a6ae366af221e22fd17211d9a43ace895",
-        "midground": "0ee1b1ccd90ba9af047c65a6f9de9ce9f11b09f7e3e9735c63d5d070384b6ce6",
-        "overhead": "87c1a8153cc5c2a58274ac182e42fbe15b3a3bd93519ae11c645e449eadcc2b4",
+        "ground": "4e944b86991d11c349f02819311adc4be96ea94eaa2bc42c34a20cdef6a48281",
+        "midground": "2191e8c28113b8a1883d2f670b3e9933b58bd85268224045c3bf737535af5c22",
+        "overhead": "6579ea2def7f9eb6ca449dc53d610414ad1936fed6fae499b8556649cb80b5be",
         "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
         "normal": "6fa1acc1f26f19dd289275c3fc68eb3fb691369933162daab465ae9b0c554068"
       }

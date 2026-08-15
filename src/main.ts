@@ -11,14 +11,16 @@ import {
   EARTHFORGE_ASSETS,
   EARTHFORGE_PROPS,
   EARTHFORGE_SYSTEM,
+  EARTHFORGE_TEXTURE_REVISION,
   EARTHFORGE_VISUAL_SYSTEM,
   earthForgeAssetFor,
+  earthForgeSiteContract,
   semanticIntent,
 } from '../shared/earthforge';
 import type { DistrictBiome } from '../shared/wfc';
 import { normalizeTiledChunk, tiledLayerMatrix, TILED_GIDS, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
 import { DynamicNavigationGrid } from './world/navigation';
-import { selectRenderableBuilds, siteOriginAwayFromRoad } from './world/scene-layout';
+import { selectRenderableBuilds } from './world/scene-layout';
 import { earthForgeRenderPlan, earthForgeTextureKey } from './world/earthforge-render';
 
 const RENDER_DELAY_MS = 140;
@@ -266,7 +268,7 @@ class EarthScene extends Phaser.Scene {
     }
     for (const [assetId, asset] of Object.entries(EARTHFORGE_ASSETS)) {
       for (const pass of ['ground', 'midground', 'overhead', 'emissive'] as const) {
-        this.load.image(earthForgeTextureKey(assetId, pass), asset.layers[pass]);
+        this.load.image(earthForgeTextureKey(assetId, pass), `${asset.layers[pass]}?v=${EARTHFORGE_TEXTURE_REVISION}`);
       }
     }
     for (const [assetId, asset] of Object.entries(EARTHFORGE_PROPS)) {
@@ -607,6 +609,10 @@ class EarthScene extends Phaser.Scene {
       a.generation - b.generation || a.chunkY - b.chunkY || a.chunkX - b.chunkX)) {
       this.putTiledChunk(chunk);
     }
+    // Dynamic structures are authoritative obstacles too. Apply them after
+    // chunk insertion so putTilesAt cannot overwrite a building cell with the
+    // terrain layer's otherwise-walkable GID.
+    this.navigation.blockCells(this.earthForgeCollisionCells());
     const navigation = this.navigation.diagnostics();
     document.documentElement.dataset.renderedChunks = String(this.renderedChunks.size);
     document.documentElement.dataset.navigationGrid = `${navigation.width}x${navigation.height}`;
@@ -774,19 +780,38 @@ class EarthScene extends Phaser.Scene {
     return earthForgeAssetFor(kind, build.buildId);
   }
 
+  earthForgeCollisionCells() {
+    const cells: Array<{ x: number; y: number }> = [];
+    for (const build of this.objects.builds) {
+      if (build.state !== 'built' && build.state !== 'building') continue;
+      const resolved = this.earthForgeForBuild(build);
+      if (!resolved) continue;
+      const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
+      const homeSite = resolved.asset.kind === 'home' && plot;
+      const width = Math.max(1, Math.round(homeSite ? plot.w : build.w ?? resolved.asset.footprint[0]));
+      const height = Math.max(1, Math.round(homeSite ? plot.h : build.h ?? resolved.asset.footprint[1]));
+      const originX = Math.round(homeSite ? plot.x : build.x ?? plot?.x ?? 0);
+      const originY = Math.round(homeSite ? plot.y : build.y ?? plot?.y ?? 0);
+      for (const [x, y] of earthForgeSiteContract(resolved.asset, width, height).collision) {
+        cells.push({ x: originX + x, y: originY + y });
+      }
+    }
+    return cells;
+  }
+
   /** Render one approved semantic structure as four identically placed passes. */
   stampEarthForgeBuild(build: Build, plot?: Plot) {
     const resolved = this.earthForgeForBuild(build);
     if (!resolved || !this.groundLayer || !this.objectLayer || !this.overheadLayer) return false;
     const { id, asset } = resolved;
-    const originX = Math.round(build.x ?? plot?.x ?? 0);
-    const originY = Math.round(build.y ?? plot?.y ?? 0);
-    const width = Math.max(1, Math.round(build.w ?? asset.footprint[0]));
-    const height = Math.max(1, Math.round(build.h ?? asset.footprint[1]));
-    const collisionCells = asset.collision
-      .filter(([x, y]) => x < width && y < height)
+    const homeSite = asset.kind === 'home' && plot;
+    const originX = Math.round(homeSite ? plot.x : build.x ?? plot?.x ?? 0);
+    const originY = Math.round(homeSite ? plot.y : build.y ?? plot?.y ?? 0);
+    const width = Math.max(1, Math.round(homeSite ? plot.w : build.w ?? asset.footprint[0]));
+    const height = Math.max(1, Math.round(homeSite ? plot.h : build.h ?? asset.footprint[1]));
+    const collisionCells = earthForgeSiteContract(asset, width, height).collision
       .map(([x, y]) => ({ x: originX + x, y: originY + y }));
-    for (const pass of earthForgeRenderPlan(id, asset, originX, originY, width, height)) {
+    for (const pass of earthForgeRenderPlan(id, asset, originX, originY, width, height, homeSite ? width : width + 1)) {
       const image = this.add.image(pass.x, pass.y, pass.textureKey)
         .setOrigin(pass.origin[0], pass.origin[1])
         .setDisplaySize(pass.displaySize, pass.displaySize)
@@ -878,16 +903,10 @@ class EarthScene extends Phaser.Scene {
     for (const build of selectRenderableBuilds(this.objects.builds)) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
-      const kind = String(build.blueprint?.kind ?? build.structure);
-      const earthForge = this.earthForgeForBuild(build);
-      const footprint = earthForge
-        ? { width: build.w ?? earthForge.asset.footprint[0], height: build.h ?? earthForge.asset.footprint[1] }
-        : prefabForStructure(kind);
-      const origin = kind === 'home' || kind === 'cottage'
-        ? siteOriginAwayFromRoad(plot, footprint, (x, y) => this.groundTileLayer?.getTileAt(x, y)?.index === TILED_GIDS.cobbleFill)
-        : { x: build.x ?? plot.x, y: build.y ?? plot.y };
-      const placed = this.stampEarthForgeBuild({ ...build, ...origin }, plot);
-      if (!placed) this.stampLpcBuild({ ...build, ...origin }, plot);
+      // Display and authority use the same stored site. Moving art away from a
+      // road without moving collision created the exact half-inside-house bug.
+      const placed = this.stampEarthForgeBuild(build, plot);
+      if (!placed) this.stampLpcBuild(build, plot);
     }
     if (lpcRenderPreview) {
       const previewPrefab: LpcPrefab = LPC_PREFABS.house_small_brick;

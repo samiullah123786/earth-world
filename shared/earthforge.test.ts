@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertEarthForgeCatalog, EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from './earthforge';
+import { assertEarthForgeCatalog, EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_TEXTURE_REVISION, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, earthForgeSiteContract, semanticIntent, semanticIntentForAsset } from './earthforge';
 
 describe('EarthForge semantic catalog', () => {
   it('is internally valid and purpose-specific', () => {
@@ -53,5 +53,16 @@ describe('EarthForge semantic catalog', () => {
       expect(asset.layers.midground).not.toBe(asset.layers.overhead);
       expect(asset.layers.sortRow).toBe(asset.entry[1]);
     }
+  });
+
+  it('reserves enclosed sites north of the entry apron so citizens cannot cross a facade', () => {
+    const compact = earthForgeSiteContract(EARTHFORGE_ASSETS.home_courtyard, 3, 3);
+    expect(compact.entry).toEqual([1, 2]);
+    expect(compact.collision).toHaveLength(6);
+    expect(compact.collision.every(([, y]) => y < 2)).toBe(true);
+    const bank = earthForgeSiteContract(EARTHFORGE_ASSETS.bank_rotunda, 6, 5);
+    expect(bank.collision).toHaveLength(24);
+    expect(bank.collision.every(([, y]) => y < bank.entry[1])).toBe(true);
+    expect(EARTHFORGE_TEXTURE_REVISION).toMatch(/^seamguard-/);
   });
 });

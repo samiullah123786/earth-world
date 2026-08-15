@@ -31,6 +31,15 @@ export class DynamicNavigationGrid {
     this.finder.setAcceptableTiles([0]);
   }
 
+  blockCells(cells: ReadonlyArray<Readonly<{ x: number; y: number }>>) {
+    for (const { x, y } of cells) {
+      if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= this.width || y >= this.height) continue;
+      this.grid[y][x] = 1;
+    }
+    this.finder.setGrid(this.grid);
+    this.finder.setAcceptableTiles([0]);
+  }
+
   isWalkable(x: number, y: number) {
     return Number.isInteger(x) && Number.isInteger(y)
       && x >= 0 && y >= 0 && x < this.width && y < this.height

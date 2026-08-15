@@ -8,6 +8,7 @@
     512,
     512
   ],
+  "seamGuardPixels": 8,
   "sortRow": 5,
   "footprint": [
     7,
@@ -78,9 +79,9 @@
     ]
   },
   "sha256": {
-    "ground": "66224c217b76f7d53d1f0075b7bbe3dd0832534b2698e5ed545524d71e3b8ee3",
-    "midground": "98447a869eddd6d9475b2d014ede468c713ead1495d4225ad62f665492a548e4",
-    "overhead": "e3145b16cd55b005cb1efd610f37e437a50518ff64ee8b9a6382715e03471106",
+    "ground": "9684e423220929747d1223cdcfeb7498a66b0f5baa6d62d2eafd764dffa56a68",
+    "midground": "8abf04074a1625193076cd8b7f01e83d2bcd19b52111a791a7a7671d72d9bd43",
+    "overhead": "f9f231a9d385769992b662d58c744f1b5d60ba1b65557f6bb5a9bf741ed23a8d",
     "emissive": "9b04f10d403456a5dc17495d1e558b3c412862e34be805faae06e263a2668920",
     "normal": "1eebeef1e5ee94dd795d3acebed39e118b4fc60f38cfc5916c54d50900f7f0d2"
   }

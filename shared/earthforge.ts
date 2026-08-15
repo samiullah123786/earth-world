@@ -3,6 +3,9 @@ import rawCatalog from './earthforge-catalog.json';
 export const EARTHFORGE_SYSTEM = 'earthforge-semantic-v1' as const;
 export const EARTHFORGE_VISUAL_SYSTEM = 'earthforge-layered-habitat-v3' as const;
 export const EARTHFORGE_COMPILER_SYSTEM = 'earthforge-habitat-spec-v1' as const;
+export const EARTHFORGE_SITE_SYSTEM = 'earthforge-site-v1' as const;
+/** Cache-busts seam-guarded PNGs without changing their stable catalog paths. */
+export const EARTHFORGE_TEXTURE_REVISION = 'seamguard-2026-08-15' as const;
 
 export type EarthForgeVisualPass = 'ground' | 'midground' | 'overhead' | 'emissive';
 
@@ -47,6 +50,50 @@ export type EarthForgeIntent = Readonly<{
   features: ReadonlyArray<string>;
   seed: number;
 }>;
+
+export type EarthForgeSiteContract = Readonly<{
+  entry: readonly [number, number];
+  collision: ReadonlyArray<readonly [number, number]>;
+}>;
+
+const ENCLOSED_EARTHFORGE_KINDS = new Set([
+  'home', 'bank', 'workshop', 'hall', 'data_center', 'library', 'greenhouse',
+]);
+
+/**
+ * Navigation follows the visible site, not only the source model's wall cells.
+ * Enclosed structures reserve every row north of their south-facing apron so
+ * a citizen cannot be routed halfway through a roof or facade. Open civic and
+ * garden assets retain their authored collision, scaled onto legacy sites.
+ */
+export function earthForgeSiteContract(
+  asset: EarthForgeAsset,
+  width: number,
+  height: number,
+): EarthForgeSiteContract {
+  if (![width, height].every(Number.isInteger) || width < 1 || height < 1) {
+    throw new Error('EarthForge site dimensions must be positive whole tiles');
+  }
+  const canonical = width === asset.footprint[0] && height === asset.footprint[1];
+  const entry = canonical
+    ? asset.entry
+    : [Math.floor(width / 2), height - 1] as const;
+  if (ENCLOSED_EARTHFORGE_KINDS.has(asset.kind)) {
+    return {
+      entry,
+      collision: Array.from({ length: width * Math.max(0, height - 1) }, (_unused, index) =>
+        [index % width, Math.floor(index / width)] as const),
+    };
+  }
+  const collision = new Map<string, readonly [number, number]>();
+  for (const [x, y] of asset.collision) {
+    const scaledX = canonical ? x : Math.min(width - 1, Math.floor((x + 0.5) * width / asset.footprint[0]));
+    const scaledY = canonical ? y : Math.min(height - 1, Math.floor((y + 0.5) * height / asset.footprint[1]));
+    if (scaledX === entry[0] && scaledY === entry[1]) continue;
+    collision.set(`${scaledX},${scaledY}`, [scaledX, scaledY]);
+  }
+  return { entry, collision: [...collision.values()] };
+}
 
 export type EarthForgeTerrainAsset = Readonly<{
   name: string;

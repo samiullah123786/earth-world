@@ -32,12 +32,13 @@ export function earthForgeRenderPlan(
   originY: number,
   logicalWidth = asset.footprint[0],
   logicalHeight = asset.footprint[1],
+  displayTiles = logicalWidth + 1,
 ): readonly EarthForgeRenderPass[] {
   const x = tileOrigin(assertTileInteger(originX, 'EarthForge origin x'))
     + Math.round(assertTileInteger(logicalWidth, 'EarthForge logical width') * 32 / 2);
   const y = tileOrigin(assertTileInteger(originY, 'EarthForge origin y')
     + assertTileInteger(logicalHeight, 'EarthForge logical height'));
-  const displaySize = Math.round((logicalWidth + 1) * 32);
+  const displaySize = assertTileInteger(displayTiles, 'EarthForge display tile span') * 32;
   const placement = { x, y, origin: asset.anchor, displaySize } as const;
   // Migrated founding records retain smaller proven footprints. Clamp the
   // canonical entry row to their south edge so a 3x3 home cannot sort as if

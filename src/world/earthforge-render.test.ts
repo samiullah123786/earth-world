@@ -29,4 +29,10 @@ describe('EarthForge layered rendering contract', () => {
       expect(plan.find((pass) => pass.pass === 'overhead')?.layer).toBe('overhead');
     }
   });
+
+  it('fits a compact migrated home to its whole three-tile site without visual drift', () => {
+    const plan = earthForgeRenderPlan('home_timber', EARTHFORGE_ASSETS.home_timber, 18, 30, 3, 3, 3);
+    expect(plan[0]).toMatchObject({ x: 624, y: 1056, displaySize: 96 });
+    expect(new Set(plan.map((pass) => `${pass.x}:${pass.y}:${pass.displaySize}`))).toHaveLength(1);
+  });
 });

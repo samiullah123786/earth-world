@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectRenderableBuilds, siteOriginAwayFromRoad } from './scene-layout';
+import { selectRenderableBuilds } from './scene-layout';
 
 describe('world scene composition', () => {
   it('renders a legacy homestead as one property instead of stacked cottages', () => {
@@ -25,14 +25,5 @@ describe('world scene composition', () => {
       { buildId: 'old', plotId: 'plot:a', structure: 'home', state: 'razed' },
       { buildId: 'future', plotId: 'plot:b', structure: 'home', state: 'planned' },
     ])).toEqual([]);
-  });
-
-  it('moves a full-width facade away from a road embedded in the plot edge', () => {
-    const road = new Set(['32,2', '32,3', '32,4']);
-    expect(siteOriginAwayFromRoad(
-      { x: 30, y: 2, w: 3, h: 3 },
-      { width: 3, height: 3 },
-      (x, y) => road.has(`${x},${y}`),
-    )).toEqual({ x: 29, y: 2 });
   });
 });

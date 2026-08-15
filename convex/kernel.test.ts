@@ -152,7 +152,7 @@ describe('Earth Kernel', () => {
     expect(objects.plots.find((plot) => plot.plotId === 'plot-10-10')?.ownerAgentId).toBe(agent.agentId);
     expect(objects.builds.some((candidate) => candidate.ownerAgentId === agent.agentId && candidate.structure === 'home')).toBe(true);
     expect(objects.builds.filter((candidate) => candidate.ownerAgentId === agent.agentId)
-      .every((candidate) => candidate.blueprint?.assetFramework === 'earthfolk-lpc-v1')).toBe(true);
+      .every((candidate) => candidate.blueprint?.assetFramework === 'earthforge-semantic-v1')).toBe(true);
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)).not.toHaveProperty('ownerName');
   });
 
@@ -744,9 +744,11 @@ describe('Earth Kernel', () => {
 
     await t.mutation(internal.kernel.expandNow, { reason: 'capacity test' });
     const expanded = await t.query(api.world.worldObjects, {});
-    expect(expanded.state).toMatchObject({ width: 80, height: 64, generation: 1 });
+    // Claiming the first habitat-ready parcel proactively opened generation 1;
+    // the explicit operator expansion therefore creates generation 2.
+    expect(expanded.state).toMatchObject({ width: 96, height: 80, generation: 2 });
     expect(expanded.plots.length).toBeGreaterThan(50);
-    expect(expanded.chunks).toHaveLength(8);
+    expect(expanded.chunks).toHaveLength(18);
     await t.run(async (ctx) => {
       const isWalkable = await loadWorldWalkability(ctx, { width: 80, height: 64 });
       expect(typeof isWalkable(64, 34)).toBe('boolean');
@@ -764,15 +766,15 @@ describe('Earth Kernel', () => {
       if (south) expect(boundariesMatch(chunk.edges as any, 'south', south.edges as any, 'north')).toBe(true);
     }
     for (const plot of expanded.plots.filter((candidate) => candidate.plotId.startsWith('plot-g1-'))) {
-      const touchesRoad = [[-1, 0], [plot.w, 0], [0, -1], [0, plot.h]].some(([dx, dy]) => {
-        const x = plot.x + dx, y = plot.y + dy;
-        const chunk = chunkMap.get(`${Math.floor(x / 16)},${Math.floor(y / 16)}`);
-        if (!chunk) return false;
-        const localX = x - chunk.chunkX * chunk.size, localY = y - chunk.chunkY * chunk.size;
-        return localX >= 0 && localY >= 0 && localX < chunk.size && localY < chunk.size
-          && wfcRule(chunk.tiles[localY * chunk.size + localX]).terrain === 'road';
-      });
-      expect(touchesRoad).toBe(true);
+      expect(plot).toMatchObject({ w: 6, h: 6 });
+      const entryX = plot.x + Math.floor(plot.w / 2);
+      const entryY = plot.y + plot.h - 1;
+      const reachesRoad = expanded.chunks.some((chunk) => chunk.tiles.some((tile, index) => {
+        const x = chunk.chunkX * chunk.size + index % chunk.size;
+        const y = chunk.chunkY * chunk.size + Math.floor(index / chunk.size);
+        return Math.abs(x - entryX) + Math.abs(y - entryY) <= 6 && wfcRule(tile).terrain === 'road';
+      }));
+      expect(reachesRoad).toBe(true);
     }
     for (let i = 0; i < expanded.plots.length; i++) for (let j = i + 1; j < expanded.plots.length; j++) {
       const a = expanded.plots[i], b = expanded.plots[j];
@@ -806,9 +808,27 @@ describe('Earth Kernel', () => {
     expect(plot).toBeTruthy();
     const builds = objects.builds.filter((candidate) => candidate.ownerAgentId === newcomer.agentId);
     expect(builds.map((build) => build.blueprint?.kind).sort()).toEqual(['home']);
-    expect(builds.every((build) => build.blueprint?.style === 'earthfolk-lpc-v1')).toBe(true);
+    expect(builds.every((build) => build.blueprint?.style === 'earthforge-semantic-v1')).toBe(true);
+    expect(builds[0].blueprint?.earthForge?.assetId).toMatch(/^home_/);
+    expect(builds[0].blueprint?.collision).toHaveLength((plot!.w) * Math.max(0, plot!.h - 1));
     const notifications = await t.query(internal.kernel.ownerNotifications, { tokenHash: newcomer.ownerToken });
     expect(notifications.some((notification) => notification.title === 'Your agent is home')).toBe(true);
+  });
+
+  it('migrates compact homes onto their full authoritative site with no walk-through facade', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.init, {});
+    const result = await t.mutation(internal.migrations.migrateEarthForgeBuilds, {});
+    expect(result.migrated).toBeGreaterThan(0);
+    await t.run(async (ctx) => {
+      const build = await ctx.db.query('builds').withIndex('buildId', (q) => q.eq('buildId', 'build:mayor-hearth')).first();
+      const plot = await ctx.db.query('plots').withIndex('plotId', (q) => q.eq('plotId', build!.plotId)).first();
+      expect(build).toMatchObject({ x: plot!.x, y: plot!.y, w: plot!.w, h: plot!.h });
+      expect(build!.blueprint?.assetFramework).toBe('earthforge-semantic-v1');
+      expect(build!.blueprint?.collision).toHaveLength(plot!.w * (plot!.h - 1));
+      expect(build!.blueprint?.entry).toEqual({ x: Math.floor(plot!.w / 2), y: plot!.h - 1 });
+    });
+    expect(await t.mutation(internal.migrations.migrateEarthForgeBuilds, {})).toMatchObject({ migrated: 0, remaining: 0 });
   });
 
   it('requires founder and candidate owner consent before changing the mayor', async () => {

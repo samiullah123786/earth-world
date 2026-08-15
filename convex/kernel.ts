@@ -16,7 +16,8 @@ import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../sh
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
 import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
-import { EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
+import { EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SITE_SYSTEM, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, earthForgeSiteContract, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
+import { EARTH_SETTLEMENT_POLICY, rankHomePlots } from '../shared/settlement';
 import { loadWorldWalkability } from './worldGrid';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
@@ -359,7 +360,7 @@ function nativeBuildingKnowledge() {
     visualHabitat: {
       standard: EARTHFORGE_VISUAL_SYSTEM,
       compiler: EARTHFORGE_COMPILER_SYSTEM,
-      rule: 'Use approved catalog art only. Its ground, Y-sorted facade, roof/canopy and emissive passes are compiler-owned; agents never submit pixels, masks, paths or runtime code.',
+      rule: 'Use approved catalog art only. Ground, Y-sorted facade, roof/canopy and emissive passes are compiler-owned and seam-guarded before smooth downsampling; agents never submit pixels, masks, paths or runtime code.',
       layers: {
         ground: 'paths, shadows, grass and low planting; never occludes citizens',
         midground: 'facades, doors, furniture and trunks; sorted against citizen feet',
@@ -373,6 +374,13 @@ function nativeBuildingKnowledge() {
       rule: 'Request expansion semantically. The Kernel alone collapses boundary-constrained WFC chunks, matches road/water/shore sockets, persists them, and refreshes pathfinding.',
       agentEditable: ['district or biome intent', 'approved structure purpose', 'whole-tile construction coordinate'],
       kernelOwned: ['tile GIDs', 'WFC seed and boundary sockets', 'collision grid', 'ownership sweep', 'visual pass masks'],
+      settlement: {
+        standard: EARTH_SETTLEMENT_POLICY.version,
+        homeSite: EARTH_SETTLEMENT_POLICY.homeSite,
+        reserveHomeSites: EARTH_SETTLEMENT_POLICY.reserveHomeSites,
+        allocation: ['one owner-bound citizen, one home plot', 'home-ready sites before legacy microplots', 'capability district fit', 'shorter civic route', 'stable plot id tie-break'],
+        decoration: EARTH_SETTLEMENT_POLICY.decoration,
+      },
     },
     assetFramework: {
       standard: LPC_ASSET_STANDARD,
@@ -383,10 +391,9 @@ function nativeBuildingKnowledge() {
       status: 'legacy-read-compatible',
       scoring: 'Civic contribution is awarded by the Kernel only after routed construction completes.',
     },
-    sourceComposition: { x: 9, y: 7, w: 3, h: 3, use: 'standard native home' },
     architectures: [
-      { id: 'native', review: 'routine when geometry and ownership pass', description: 'Founding-world tent and cottage grammar.' },
-      { id: 'modern-earthfolk', review: 'owner then Mayor', description: 'Modern proportions using the same pixel scale, cream plaster, brown timber, warm light, and planted edges.' },
+      { id: 'native', review: 'routine when geometry and ownership pass', description: 'Approved EarthForge courtyard, orchard and timber families with smooth light and a south entry.' },
+      { id: 'modern-earthfolk', review: 'owner then Mayor', description: 'Modern proportions using the same Earthfolk materials, warm light, planted edges and layered depth contract.' },
     ],
     kinds: Array.from(BLUEPRINT_KINDS),
     features: Array.from(BLUEPRINT_FEATURES),
@@ -397,7 +404,7 @@ function nativeBuildingKnowledge() {
       'capability color is a small verified accent, never a building material',
     ],
     companionRule: 'Pet-yard and pet-shelter are supported house features. A living companion registry remains separate and must never be faked by a blueprint.',
-    expansionRule: 'Request 4 to 8 tiles in width or height with expand_plot. The owner consents first, then the Mayor reviews the reserved non-overlapping parcel.',
+    expansionRule: 'New standard home sites are 6 by 6. Existing owners may request up to 8 by 8 with expand_plot; the owner consents first, then the Mayor reviews the reserved non-overlapping parcel.',
   };
 }
 
@@ -476,7 +483,21 @@ function buildFootprint(plot: any, payload: any) {
   let structure = String(payload.structure ?? '');
   let blueprint: any = undefined;
   let spec: { offsetX: number; offsetY: number; w: number; h: number } | undefined;
-  if (['home', 'extension', 'garden', 'bench'].includes(structure)) {
+  if (structure === 'home') {
+    const resolved = earthForgeAssetFor('home', String(plot.ownerAgentId ?? plot.plotId));
+    if (!resolved) throw new Error('EarthForge home catalog is unavailable');
+    const site = earthForgeSiteContract(resolved.asset, plot.w, plot.h);
+    spec = { offsetX: 0, offsetY: 0, w: plot.w, h: plot.h };
+    blueprint = {
+      name: resolved.asset.name, kind: 'home', architecture: 'earthforge',
+      features: [...resolved.asset.features], offsetX: 0, offsetY: 0, w: plot.w, h: plot.h,
+      style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
+      siteContract: EARTHFORGE_SITE_SYSTEM,
+      entry: { x: site.entry[0], y: site.entry[1] },
+      collision: site.collision.map(([x, y]) => ({ x, y })),
+      earthForge: semanticIntentForAsset(resolved.id, `${plot.ownerAgentId ?? plot.plotId}:${plot.plotId}`),
+    };
+  } else if (['extension', 'garden', 'bench'].includes(structure)) {
     const prefab = prefabForStructure(structure);
     spec = { offsetX: 0, offsetY: 0, w: prefab.width, h: prefab.height };
     blueprint = canonicalPrefabBlueprint(prefab, 0, 0);
@@ -516,6 +537,7 @@ function buildFootprint(plot: any, payload: any) {
       blueprint = {
         name: asset.name, kind: asset.kind, architecture: 'earthforge', features: [...asset.features],
         offsetX, offsetY, w, h, style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
+        siteContract: EARTHFORGE_SITE_SYSTEM,
         entry: { x: asset.entry[0], y: asset.entry[1] },
         collision: asset.collision.map(([x, y]) => ({ x, y })),
         earthForge: semanticIntentForAsset(assetId, `${plot.plotId}:${offsetX},${offsetY}`),
@@ -570,6 +592,7 @@ async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
           name: asset.name, kind: asset.kind, architecture: 'earthforge', features: [...asset.features],
           offsetX, offsetY, w: asset.footprint[0], h: asset.footprint[1],
           style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
+          siteContract: EARTHFORGE_SITE_SYSTEM,
           assetId: requestedAssetId,
           earthForge: semanticIntentForAsset(requestedAssetId, `${requesterId}:${plot.plotId}:${x},${y}`),
         },
@@ -600,6 +623,10 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
   // Razed structures are history, not obstacles: they occupy no ground, block
   // no footprint, and never stop a rebuild.
   const builds = rawBuilds.filter((build: any) => build.state !== 'razed');
+  const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
+  if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) {
+    throw new Error('a home already stands on this plot');
+  }
   const targetCells = footprintCells({ width: footprint.w, height: footprint.h })
     .map((cell) => ({ x: footprint.x + cell.x, y: footprint.y + cell.y }));
   const isWalkable = await loadWorldWalkability(ctx, { width: world.width, height: world.height });
@@ -611,8 +638,6 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
       throw new Error(`prefab tile (${cell.x},${cell.y}) is blocked by terrain or collision geometry`);
     }
   }
-  const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
-  if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) throw new Error('a home already stands on this plot');
   if (builds.some((build: any) => build.x !== undefined && overlapsRect(footprint, build))) throw new Error('build footprint overlaps an existing structure');
   return { plot, footprint, targetCells };
 }
@@ -650,7 +675,7 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
   await ctx.db.patch(plot._id, { ownerAgentId: requesterId, claimedAt: now });
   await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra verified ${requesterId}'s protected claim on ${plot.plotId}. Mayor Sam authorized the routine land decision.` });
   await recordContribution(ctx, requesterId, 'civic', 'settlement', 2, `claim:${plot.plotId}`, `Protected and settled ${plot.plotId}.`, now);
-  await expandWorld(ctx, 'land occupancy threshold');
+  await expandWorld(ctx, 'land occupancy threshold', false, true);
   return plot;
 }
 
@@ -995,14 +1020,12 @@ async function directorySnapshot(ctx: any, viewerId: string) {
 
 async function findRecommendedPlot(ctx: any, primaryCategory: string) {
   let plots = await ctx.db.query('plots').collect();
-  if (!plots.some((plot: any) => !plot.ownerAgentId)) {
+  const district = districtForCategory(primaryCategory);
+  if (!rankHomePlots(plots, district).length) {
     await expandWorld(ctx, 'new resident needs a home district', true);
     plots = await ctx.db.query('plots').collect();
   }
-  const district = districtForCategory(primaryCategory);
-  return plots.filter((plot: any) => !plot.ownerAgentId)
-    .sort((a: any, b: any) => Number(b.district === district) - Number(a.district === district)
-      || Math.hypot(a.x - 32, a.y - 24) - Math.hypot(b.x - 32, b.y - 24))[0] ?? null;
+  return rankHomePlots(plots, district)[0] ?? null;
 }
 
 async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
@@ -1037,7 +1060,7 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
     const pending = await ctx.db.query('approvals').withIndex('agent_state', (q: any) => q.eq('agentId', agent.agentId).eq('state', 'pending')).collect();
     const existing = pending.find((approval: any) => approval.kind === 'build' && approval.payload?.structure === 'home');
     const approvalId = existing?._id ?? await insertApproval(ctx, agent.agentId, 'build', 'Build an Earthfolk home',
-      `A native LPC cottage with a protected 3 by 3 footprint on ${plot.plotId}.`,
+      `An approved EarthForge home on a protected ${plot.w} by ${plot.h} south-entry habitat site at ${plot.plotId}.`,
       { plotId: plot.plotId, structure: 'home' }, 'routine');
     if (!existing) await notifyOwner(ctx, agent.agentId, 'approval', 'Your home is ready to build',
       `Tock approved the native home plan for ${plot.plotId}. Your owner decision starts construction.`, approvalId);
@@ -1048,7 +1071,8 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
   if (!agent.settledAt) {
     await ctx.db.patch(agent._id, { settledAt: now });
     await ctx.db.patch(citizen._id, { welcomedAt: citizen.welcomedAt ?? now });
-    await routeCitizenNear(ctx, citizen, plot.x + 1, plot.y + plot.h, `settling into ${plot.plotId}`, now);
+    await routeCitizenNear(ctx, citizen, plot.x + Math.floor(plot.w / 2), plot.y + plot.h,
+      `settling into ${plot.plotId}`, now);
     const mayor = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', MAYOR_ID)).first();
     if (mayor && mayor.agentId !== agent.agentId) {
       await routeCitizenNear(ctx, mayor, plot.x + plot.w, plot.y + 1, `visiting ${agent.name}'s new home`, now);
@@ -5062,7 +5086,7 @@ export const authorityCommit = internalMutation({
         }
         return { ok: true, choice, escalated: true };
       }
-      await expandWorld(ctx, `${citizen.name} surveyed growing density`);
+      await expandWorld(ctx, `${citizen.name} surveyed growing density`, false, true);
       await ctx.db.patch(config._id, { dayStamp: today, ringsToday: ringsToday + 1 });
       await ctx.db.insert('events', {
         kind: 'world_expanded', actorId: agentId, payload: { choice, model },

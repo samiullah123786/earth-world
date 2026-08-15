@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +23,7 @@ SPEC_PATH = ROOT / "shared" / "earthforge-habitat-specs.json"
 SOURCE_LOCK_PATH = ROOT / "shared" / "earthforge-source-lock.json"
 BUILDINGS = ROOT / "public" / "assets" / "earthforge" / "buildings"
 LAYERS = BUILDINGS / "layers"
+SEAM_GUARD_PIXELS = 8
 
 
 def region_mask(size: tuple[int, int], regions: list[list[int]]) -> Image.Image:
@@ -44,6 +45,29 @@ def masked(source: Image.Image, mask: Image.Image) -> Image.Image:
     return output
 
 
+def seam_guard(mask: Image.Image) -> Image.Image:
+    """Overlap adjacent passes so bilinear downsampling cannot expose a gap.
+
+    The semantic ownership masks remain exact and are used for the lossless
+    recomposition assertion below. Runtime masks receive an eight-source-pixel
+    bleed. At the smallest supported structure scale that is one screen pixel,
+    and it gives both sides of every internal cut valid color
+    and alpha samples instead of blending two transparent edges together.
+    """
+    return mask.filter(ImageFilter.MaxFilter(SEAM_GUARD_PIXELS * 2 + 1))
+
+
+def assert_no_downsample_alpha_gaps(source: Image.Image, layers: dict[str, Image.Image]):
+    for display_size in (64, 96, 128, 160, 192, 224):
+        reference = source.resize((display_size, display_size), Image.Resampling.BILINEAR)
+        composed = Image.new("RGBA", reference.size, (0, 0, 0, 0))
+        for key in ("ground", "midground", "overhead", "emissive"):
+            composed.alpha_composite(layers[key].resize(reference.size, Image.Resampling.BILINEAR))
+        deficit = ImageChops.subtract(reference.getchannel("A"), composed.getchannel("A"))
+        if deficit.getextrema()[1] > 1:
+            raise RuntimeError(f"layer seam can expose background at {display_size}px")
+
+
 def compile_asset(asset_id: str, asset: dict[str, Any], spec: dict[str, Any], expected_source_sha: str):
     source_path = BUILDINGS / f"{asset_id}.png"
     source = Image.open(source_path).convert("RGBA")
@@ -56,7 +80,7 @@ def compile_asset(asset_id: str, asset: dict[str, Any], spec: dict[str, Any], ex
     ground_mask = ImageChops.subtract(region_mask(source.size, spec["groundRegions"]), overhead_mask)
     occupied = ImageChops.lighter(overhead_mask, ground_mask)
     midground_mask = ImageChops.invert(occupied)
-    layers = {
+    exact_layers = {
         "ground": masked(source, ground_mask),
         "midground": masked(source, midground_mask),
         "overhead": masked(source, overhead_mask),
@@ -64,9 +88,17 @@ def compile_asset(asset_id: str, asset: dict[str, Any], spec: dict[str, Any], ex
     }
     recomposed = Image.new("RGBA", source.size, (0, 0, 0, 0))
     for key in ("ground", "midground", "overhead", "emissive"):
-        recomposed.alpha_composite(layers[key])
+        recomposed.alpha_composite(exact_layers[key])
     if ImageChops.difference(source, recomposed).getbbox() is not None:
         raise RuntimeError(f"{asset_id} layer split changed approved artwork")
+
+    layers = {
+        "ground": masked(source, seam_guard(ground_mask)),
+        "midground": masked(source, seam_guard(midground_mask)),
+        "overhead": masked(source, seam_guard(overhead_mask)),
+        "emissive": exact_layers["emissive"],
+    }
+    assert_no_downsample_alpha_gaps(source, layers)
 
     normal = Image.new("RGBA", source.size, (128, 128, 255, 0))
     normal.putalpha(source.getchannel("A"))
@@ -84,6 +116,7 @@ def compile_asset(asset_id: str, asset: dict[str, Any], spec: dict[str, Any], ex
         "source": f"/assets/earthforge/buildings/{asset_id}.png",
         "sourceSha256": source_sha,
         "pixelSize": list(source.size),
+        "seamGuardPixels": SEAM_GUARD_PIXELS,
         "sortRow": asset["layers"]["sortRow"],
         "footprint": asset["footprint"],
         "entry": asset["entry"],
@@ -115,6 +148,7 @@ def main():
         "visualSystem": catalog["visualSystem"],
         "compiler": specs["system"],
         "gridSize": 32,
+        "seamGuardPixels": SEAM_GUARD_PIXELS,
         "sourcePolicy": specs["rules"]["source"],
         "assets": [{"assetId": item["assetId"], "sourceSha256": item["sourceSha256"], "sha256": item["sha256"]}
                    for item in manifests],

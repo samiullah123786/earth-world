@@ -49,10 +49,15 @@ backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
   partial footprint. `earthforge-layered-habitat-v3` is the structure visual contract:
   preserve the SHA-locked 512px approved renders, compile them into ground, Y-sorted
   facade, overhead, emissive, and normal passes, and use linear texture filtering.
-  Never re-quantize those structure sources. LPC terrain and citizens retain crisp
+  Runtime layer masks must retain the eight-source-pixel seam guard, and enclosed
+  sites reserve every row north of their south entry apron for navigation. Never
+  move a facade away from its authoritative collision or re-quantize those sources.
+  LPC terrain and citizens retain crisp
   nearest-neighbour sampling and LPC prefab actions remain read-compatible.
 - World growth is 16x16 persisted WFC chunks. Neighbor edge sockets are hard input
   constraints; roads, shores, water, and dense plots must pass adjacency validation.
+  New home allotments use `earth-settlement-v1`: 6x6 road-reachable buffered sites,
+  two at most per urban chunk, one per farmland chunk, and none in protected forest.
 - Routine autonomy is standing owner consent, not a validator bypass. Strict work must
   reach the founder approval center. Mayor appointments require founder and candidate
   owner consent.

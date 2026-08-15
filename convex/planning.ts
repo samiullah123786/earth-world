@@ -5,6 +5,7 @@ import {
 } from '../shared/wfc';
 import { TILED_LAYER_NAMES, TILED_MAP_FORMAT, TILED_MAP_VERSION, TILED_TILE_SIZE, tiledChunkForWfc } from '../shared/tiled-world';
 import { EARTHFORGE_SYSTEM } from '../shared/earthforge';
+import { EARTH_SETTLEMENT_POLICY, isHabitatReadyPlot, needsHabitatExpansion } from '../shared/settlement';
 
 export const WORLD_KEY = 'earth';
 const RING = WORLD_CHUNK_SIZE;
@@ -142,32 +143,76 @@ function opposite(side: Cardinal): Cardinal {
 function chunkPlots(chunk: { chunkX: number; chunkY: number; biome: DistrictBiome; tiles: string[] }, generation: number) {
   if (chunk.biome === 'Forest_Wilderness') return [];
   const candidates: Array<{ plotId: string; x: number; y: number; w: number; h: number; district: string }> = [];
-  const center = Math.floor(RING / 2);
-  const rows = chunk.biome === 'Farmland' ? [center + 1] : [center - 3, center + 1];
-  let districtOffset = generation * 5 + chunk.chunkX * 3 + chunk.chunkY;
-  for (const localY of rows) for (const localX of [1, 5, 9]) {
-    const cells = Array.from({ length: 9 }, (_unused, index) => ({ x: localX + index % 3, y: localY + Math.floor(index / 3) }));
-    if (cells.some((cell) => cell.x >= RING || cell.y < 0 || cell.y >= RING
-      || !wfcRule(chunk.tiles[cell.y * RING + cell.x]).walkable
-      || wfcRule(chunk.tiles[cell.y * RING + cell.x]).terrain === 'road')) continue;
-    const adjacentRoad = cells.some((cell) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
-      const nx = cell.x + dx, ny = cell.y + dy;
-      return nx >= 0 && ny >= 0 && nx < RING && ny < RING && wfcRule(chunk.tiles[ny * RING + nx]).terrain === 'road';
+  const { width: w, height: h, roadSearchDepth } = EARTH_SETTLEMENT_POLICY.homeSite;
+  const localCandidates: Array<{ x: number; y: number; roadDistance: number }> = [];
+  for (let localY = 1; localY <= RING - h - 1; localY++) for (let localX = 1; localX <= RING - w - 1; localX++) {
+    const cells = Array.from({ length: w * h }, (_unused, index) => ({
+      x: localX + index % w, y: localY + Math.floor(index / w),
     }));
-    if (!adjacentRoad) continue;
-    const x = chunk.chunkX * RING + localX, y = chunk.chunkY * RING + localY;
-    candidates.push({ plotId: `plot-g${generation}-${x}-${y}`, x, y, w: 3, h: 3,
+    if (cells.some((cell) => {
+      const rule = wfcRule(chunk.tiles[cell.y * RING + cell.x]);
+      return !rule.walkable || rule.terrain === 'road';
+    })) continue;
+    const greenBuffer = [
+      ...Array.from({ length: w + 2 }, (_unused, offset) => ({ x: localX - 1 + offset, y: localY - 1 })),
+      ...Array.from({ length: h }, (_unused, offset) => ({ x: localX - 1, y: localY + offset })),
+      ...Array.from({ length: h }, (_unused, offset) => ({ x: localX + w, y: localY + offset })),
+    ];
+    if (greenBuffer.some((cell) => {
+      const rule = wfcRule(chunk.tiles[cell.y * RING + cell.x]);
+      return !rule.walkable || rule.terrain === 'road';
+    })) continue;
+    const entryX = localX + Math.floor(w / 2), entryY = localY + h - 1;
+    const blockedCore = new Set(cells.filter((cell) => cell.y < entryY).map((cell) => `${cell.x},${cell.y}`));
+    const queue = [{ x: entryX, y: entryY, distance: 0 }];
+    const visited = new Set([`${entryX},${entryY}`]);
+    let roadDistance = 0;
+    while (queue.length && !roadDistance) {
+      const current = queue.shift()!;
+      if (current.distance >= roadSearchDepth) continue;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const x = current.x + dx, y = current.y + dy, key = `${x},${y}`;
+        if (x < 0 || y < 0 || x >= RING || y >= RING || visited.has(key) || blockedCore.has(key)) continue;
+        visited.add(key);
+        const rule = wfcRule(chunk.tiles[y * RING + x]);
+        if (rule.terrain === 'road') { roadDistance = current.distance + 1; break; }
+        if (rule.walkable) queue.push({ x, y, distance: current.distance + 1 });
+      }
+    }
+    if (roadDistance) localCandidates.push({ x: localX, y: localY, roadDistance });
+  }
+  localCandidates.sort((a, b) => a.roadDistance - b.roadDistance || a.y - b.y || a.x - b.x);
+  const selected: typeof localCandidates = [];
+  const buffer = EARTH_SETTLEMENT_POLICY.plotBufferTiles;
+  for (const candidate of localCandidates) {
+    const padded = { x: candidate.x - buffer, y: candidate.y - buffer, w: w + buffer * 2, h: h + buffer * 2 };
+    if (selected.some((other) => overlaps(padded, {
+      x: other.x - buffer, y: other.y - buffer, w: w + buffer * 2, h: h + buffer * 2,
+    }))) continue;
+    selected.push(candidate);
+    if (selected.length === (chunk.biome === 'Farmland' ? 1 : 2)) break;
+  }
+  let districtOffset = generation * 5 + chunk.chunkX * 3 + chunk.chunkY;
+  for (const site of selected) {
+    const x = chunk.chunkX * RING + site.x, y = chunk.chunkY * RING + site.y;
+    candidates.push({ plotId: `plot-g${generation}-${x}-${y}`, x, y, w, h,
       district: DISTRICTS[(districtOffset++) % DISTRICTS.length] });
   }
   return candidates;
 }
 
-export async function expandWorld(ctx: any, reason: string, force = false) {
+function settlementCapacity(plots: any[]) {
+  return plots.filter((plot) => plot.ownerAgentId || isHabitatReadyPlot(plot)).length;
+}
+
+export async function expandWorld(ctx: any, reason: string, force = false, maintainHabitatReserve = false) {
   const state = await ensureWorldState(ctx);
   const plots = await ctx.db.query('plots').collect();
   const citizens = await ctx.db.query('citizens').collect();
   const occupied = plots.filter((plot: any) => plot.ownerAgentId).length;
-  const needsRoom = citizens.length >= state.capacity - 5 || occupied >= Math.floor(plots.length * 0.8);
+  const needsRoom = citizens.length >= state.capacity - EARTH_SETTLEMENT_POLICY.reserveHomeSites
+    || occupied >= Math.floor(plots.length * EARTH_SETTLEMENT_POLICY.claimedExpansionRatio)
+    || (maintainHabitatReserve && needsHabitatExpansion(plots));
   if (!force && !needsRoom) return { expanded: false, state, plotsAdded: 0 };
 
   const width = state.width + RING, height = state.height + RING;
@@ -216,7 +261,7 @@ export async function expandWorld(ctx: any, reason: string, force = false) {
   for (const plot of accepted) await ctx.db.insert('plots', plot);
   await ctx.db.patch(state._id, {
     width, height, generation,
-    capacity: plots.length + accepted.length, updatedAt: Date.now(),
+    capacity: settlementCapacity([...plots, ...accepted]), updatedAt: Date.now(),
   });
   await ctx.db.insert('events', {
     kind: 'world_expand', actorId: 'agent:atlas-boundary',
@@ -236,7 +281,9 @@ export async function planExpansion(ctx: any, reason: string, force = false) {
   const plots = await ctx.db.query('plots').collect();
   const citizens = await ctx.db.query('citizens').collect();
   const occupied = plots.filter((plot: any) => plot.ownerAgentId).length;
-  const needsRoom = citizens.length >= state.capacity - 5 || occupied >= Math.floor(plots.length * 0.8);
+  const needsRoom = citizens.length >= state.capacity - EARTH_SETTLEMENT_POLICY.reserveHomeSites
+    || occupied >= Math.floor(plots.length * EARTH_SETTLEMENT_POLICY.claimedExpansionRatio)
+    || needsHabitatExpansion(plots);
   if (!force && !needsRoom) return { planned: false, state };
 
   const width = state.width + RING, height = state.height + RING;
@@ -312,7 +359,7 @@ async function commitExpansion(ctx: any, state: any, pending: any) {
   for (const plot of accepted) await ctx.db.insert('plots', plot);
   await ctx.db.patch(state._id, {
     width: pending.width, height: pending.height, generation: pending.generation,
-    capacity: plots.length + accepted.length, pendingExpansion: undefined, updatedAt: Date.now(),
+    capacity: settlementCapacity([...plots, ...accepted]), pendingExpansion: undefined, updatedAt: Date.now(),
   });
   await ctx.db.insert('events', {
     kind: 'world_expand', actorId: 'agent:atlas-boundary',

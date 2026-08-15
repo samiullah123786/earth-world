@@ -2,6 +2,7 @@ import { H, W } from './tiledFounding';
 import { walkableInWorld, type WorldBounds } from './pathfinding';
 import { WORLD_CHUNK_SIZE } from '../shared/wfc';
 import { normalizeTiledChunk } from '../shared/tiled-world';
+import { EARTHFORGE_ASSETS, earthForgeAssetFor, earthForgeSiteContract } from '../shared/earthforge';
 
 /**
  * Terrain chunks, cached per isolate and keyed by the world's own size.
@@ -17,7 +18,7 @@ let cachedChunks: { key: string; rows: any[] } | null = null;
 
 export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
   const chunkKey = `${bounds.width}x${bounds.height}`;
-  const [chunks, builds] = await Promise.all([
+  const [chunks, builds, plots] = await Promise.all([
     cachedChunks?.key === chunkKey
       ? Promise.resolve(cachedChunks.rows)
       : ctx.db.query('worldChunks').collect().then((rows: any[]) => {
@@ -25,9 +26,11 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
           return rows;
         }),
     ctx.db.query('builds').collect(),
+    ctx.db.query('plots').collect(),
   ]);
   const chunkMap = new Map(chunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
   const dynamicBlocked = new Set<string>();
+  const plotsById = new Map(plots.map((plot: any) => [plot.plotId, plot]));
   for (const build of builds) {
     // Only a structure that actually stands can block a tile. Asking which
     // states DO stand - rather than listing the ones that do not - means the
@@ -35,7 +38,15 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
     // is exactly how a razed building came to block its own replacement.
     if (build.state !== 'building' && build.state !== 'built') continue;
     if (build.x === undefined || build.y === undefined) continue;
-    const collision = Array.isArray(build.blueprint?.collision) ? build.blueprint.collision : [];
+    const explicitAsset = EARTHFORGE_ASSETS[String(build.blueprint?.earthForge?.assetId ?? '')];
+    const kind = build.buildId === 'build:earth-bank' ? 'bank' : String(build.blueprint?.kind ?? build.structure);
+    const resolved = explicitAsset ? { asset: explicitAsset } : earthForgeAssetFor(kind, build.buildId);
+    const plot: any = plotsById.get(build.plotId);
+    const siteWidth = resolved?.asset.kind === 'home' && plot ? plot.w : Number(build.w ?? resolved?.asset.footprint[0] ?? 1);
+    const siteHeight = resolved?.asset.kind === 'home' && plot ? plot.h : Number(build.h ?? resolved?.asset.footprint[1] ?? 1);
+    const collision = resolved
+      ? earthForgeSiteContract(resolved.asset, siteWidth, siteHeight).collision.map(([x, y]) => ({ x, y }))
+      : Array.isArray(build.blueprint?.collision) ? build.blueprint.collision : [];
     for (const cell of collision) {
       const x = build.x + Number(cell.x), y = build.y + Number(cell.y);
       if (Number.isInteger(x) && Number.isInteger(y)) dynamicBlocked.add(`${x},${y}`);

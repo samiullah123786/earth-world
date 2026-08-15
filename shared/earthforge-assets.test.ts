@@ -37,6 +37,12 @@ describe('EarthForge compiled asset files', () => {
     }
   });
 
+  it('ships seam-guarded manifests for smooth linear downsampling', () => {
+    const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'public/assets/earthforge/buildings/layers/manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ seamGuardPixels: 8, sourcePolicy: 'catalog-owned-approved-render' });
+    for (const asset of manifest.assets) expect(asset.sha256).toHaveProperty('midground');
+  });
+
   it('refuses the previously quantized building sources', () => {
     expect(sourceLock).toMatchObject({ version: 1, sourceRelease: 'c295cb9', policy: 'smooth-pre-quantization-only' });
     expect(Object.keys(sourceLock.sha256).sort()).toEqual(Object.keys(EARTHFORGE_ASSETS).sort());
