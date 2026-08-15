@@ -8,18 +8,63 @@
       "structureType": "home",
       "width": 3,
       "height": 3,
-      "entry": { "x": 1, "y": 2 },
+      "entry": {
+        "x": 1,
+        "y": 2
+      },
       "collision": [
-        { "x": 0, "y": 1 }, { "x": 1, "y": 1 }, { "x": 2, "y": 1 },
-        { "x": 0, "y": 2 }, { "x": 2, "y": 2 }
+        {
+          "x": 0,
+          "y": 1
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 2,
+          "y": 1
+        },
+        {
+          "x": 0,
+          "y": 2
+        },
+        {
+          "x": 2,
+          "y": 2
+        }
       ],
       "placements": [
-        { "assetId": "dirt_path", "layer": "ground", "xOffset": 0, "yOffset": 2 },
-        { "assetId": "wood_wall", "layer": "midground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "window", "layer": "midground", "xOffset": 0, "yOffset": 1 },
-        { "assetId": "wood_door", "layer": "midground", "xOffset": 1, "yOffset": 1 },
-        { "assetId": "window", "layer": "midground", "xOffset": 2, "yOffset": 1 },
-        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 0, "yOffset": 0 }
+        {
+          "assetId": "dirt_path",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 2
+        },
+        {
+          "assetId": "wood_wall",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 1
+        },
+        {
+          "assetId": "wood_door",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 1
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 1
+        }
       ]
     },
     "garden_native_2x1": {
@@ -28,11 +73,24 @@
       "structureType": "garden",
       "width": 2,
       "height": 1,
-      "entry": { "x": 0, "y": 0 },
+      "entry": {
+        "x": 0,
+        "y": 0
+      },
       "collision": [],
       "placements": [
-        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "crop_stage_2", "layer": "ground", "xOffset": 1, "yOffset": 0 }
+        {
+          "assetId": "plowed_dirt",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "crop_stage_2",
+          "layer": "ground",
+          "xOffset": 1,
+          "yOffset": 0
+        }
       ]
     },
     "bench_native_2x1": {
@@ -41,10 +99,23 @@
       "structureType": "bench",
       "width": 2,
       "height": 1,
-      "entry": { "x": 1, "y": 0 },
-      "collision": [{ "x": 0, "y": 0 }],
+      "entry": {
+        "x": 1,
+        "y": 0
+      },
+      "collision": [
+        {
+          "x": 0,
+          "y": 0
+        }
+      ],
       "placements": [
-        { "assetId": "wooden_bench", "layer": "midground", "xOffset": 0, "yOffset": 0 }
+        {
+          "assetId": "wooden_bench",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 0
+        }
       ]
     },
     "meeting_table_3x2": {
@@ -53,10 +124,31 @@
       "structureType": "meeting_table",
       "width": 3,
       "height": 2,
-      "entry": { "x": 1, "y": 1 },
-      "collision": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }, { "x": 2, "y": 0 }],
+      "entry": {
+        "x": 1,
+        "y": 1
+      },
+      "collision": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 2,
+          "y": 0
+        }
+      ],
       "placements": [
-        { "assetId": "desk", "layer": "midground", "xOffset": 0, "yOffset": 0 }
+        {
+          "assetId": "desk",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 0
+        }
       ]
     },
     "training_green_3x3": {
@@ -65,14 +157,59 @@
       "structureType": "training_ground",
       "width": 3,
       "height": 3,
-      "entry": { "x": 1, "y": 2 },
-      "collision": [{ "x": 0, "y": 0 }, { "x": 2, "y": 0 }, { "x": 0, "y": 2 }, { "x": 2, "y": 2 }],
+      "entry": {
+        "x": 1,
+        "y": 2
+      },
+      "collision": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 2,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 2
+        },
+        {
+          "x": 2,
+          "y": 2
+        }
+      ],
       "placements": [
-        { "assetId": "grass", "layer": "ground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "wooden_fence", "layer": "midground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "wooden_fence", "layer": "midground", "xOffset": 2, "yOffset": 0 },
-        { "assetId": "wooden_fence", "layer": "midground", "xOffset": 0, "yOffset": 2 },
-        { "assetId": "wooden_fence", "layer": "midground", "xOffset": 2, "yOffset": 2 }
+        {
+          "assetId": "grass",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "wooden_fence",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "wooden_fence",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 0
+        },
+        {
+          "assetId": "wooden_fence",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 2
+        },
+        {
+          "assetId": "wooden_fence",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 2
+        }
       ]
     },
     "plaza_fountain_3x3": {
@@ -81,12 +218,47 @@
       "structureType": "plaza",
       "width": 3,
       "height": 3,
-      "entry": { "x": 1, "y": 2 },
-      "collision": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0 }, { "x": 0, "y": 1 }, { "x": 1, "y": 1 }],
+      "entry": {
+        "x": 1,
+        "y": 2
+      },
+      "collision": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 1
+        },
+        {
+          "x": 1,
+          "y": 1
+        }
+      ],
       "placements": [
-        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 0, "yOffset": 2 },
-        { "assetId": "fountain", "layer": "midground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "streetlamp", "layer": "midground", "xOffset": 2, "yOffset": 1 }
+        {
+          "assetId": "cobblestone_road",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 2
+        },
+        {
+          "assetId": "fountain",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "streetlamp",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 1
+        }
       ]
     },
     "community_garden": {
@@ -95,18 +267,65 @@
       "structureType": "community_garden",
       "width": 3,
       "height": 3,
-      "entry": { "x": 1, "y": 2 },
+      "entry": {
+        "x": 1,
+        "y": 2
+      },
       "collision": [
-        { "x": 2, "y": 0 }, { "x": 0, "y": 1 },
-        { "x": 1, "y": 1 }, { "x": 2, "y": 1 }
+        {
+          "x": 2,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 1
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 2,
+          "y": 1
+        }
       ],
       "placements": [
-        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "crop_stage_1", "layer": "ground", "xOffset": 1, "yOffset": 0 },
-        { "assetId": "wooden_fence", "layer": "midground", "xOffset": 2, "yOffset": 0 },
-        { "assetId": "water_barrel", "layer": "midground", "xOffset": 0, "yOffset": 1 },
-        { "assetId": "crop_stage_2", "layer": "ground", "xOffset": 1, "yOffset": 1 },
-        { "assetId": "wooden_bench", "layer": "midground", "xOffset": 1, "yOffset": 1 }
+        {
+          "assetId": "plowed_dirt",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "crop_stage_1",
+          "layer": "ground",
+          "xOffset": 1,
+          "yOffset": 0
+        },
+        {
+          "assetId": "wooden_fence",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 0
+        },
+        {
+          "assetId": "water_barrel",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 1
+        },
+        {
+          "assetId": "crop_stage_2",
+          "layer": "ground",
+          "xOffset": 1,
+          "yOffset": 1
+        },
+        {
+          "assetId": "wooden_bench",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 1
+        }
       ]
     },
     "park": {
@@ -115,12 +334,59 @@
       "structureType": "park",
       "width": 5,
       "height": 2,
-      "entry": { "x": 2, "y": 1 },
-      "collision": [{ "x": 0, "y": 1 }, { "x": 1, "y": 1 }, { "x": 2, "y": 0 }, { "x": 3, "y": 0 }, { "x": 4, "y": 0 }, { "x": 3, "y": 1 }, { "x": 4, "y": 1 }],
+      "entry": {
+        "x": 2,
+        "y": 1
+      },
+      "collision": [
+        {
+          "x": 0,
+          "y": 1
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 2,
+          "y": 0
+        },
+        {
+          "x": 3,
+          "y": 0
+        },
+        {
+          "x": 4,
+          "y": 0
+        },
+        {
+          "x": 3,
+          "y": 1
+        },
+        {
+          "x": 4,
+          "y": 1
+        }
+      ],
       "placements": [
-        { "assetId": "wooden_bench", "layer": "midground", "xOffset": 0, "yOffset": 1 },
-        { "assetId": "streetlamp", "layer": "midground", "xOffset": 2, "yOffset": 0 },
-        { "assetId": "fountain", "layer": "midground", "xOffset": 3, "yOffset": 0 }
+        {
+          "assetId": "wooden_bench",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 1
+        },
+        {
+          "assetId": "streetlamp",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 0
+        },
+        {
+          "assetId": "fountain",
+          "layer": "midground",
+          "xOffset": 3,
+          "yOffset": 0
+        }
       ]
     },
     "farm_row": {
@@ -129,13 +395,36 @@
       "structureType": "farm_plot",
       "width": 4,
       "height": 1,
-      "entry": { "x": 2, "y": 0 },
+      "entry": {
+        "x": 2,
+        "y": 0
+      },
       "collision": [],
       "placements": [
-        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 1, "yOffset": 0 },
-        { "assetId": "plowed_dirt", "layer": "ground", "xOffset": 2, "yOffset": 0 },
-        { "assetId": "field_bucket", "layer": "midground", "xOffset": 3, "yOffset": 0 }
+        {
+          "assetId": "plowed_dirt",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "plowed_dirt",
+          "layer": "ground",
+          "xOffset": 1,
+          "yOffset": 0
+        },
+        {
+          "assetId": "plowed_dirt",
+          "layer": "ground",
+          "xOffset": 2,
+          "yOffset": 0
+        },
+        {
+          "assetId": "field_bucket",
+          "layer": "midground",
+          "xOffset": 3,
+          "yOffset": 0
+        }
       ]
     },
     "house_small_brick": {
@@ -144,18 +433,63 @@
       "structureType": "cottage",
       "width": 5,
       "height": 5,
-      "entry": { "x": 2, "y": 4 },
+      "entry": {
+        "x": 2,
+        "y": 4
+      },
       "collision": [
-        { "x": 1, "y": 2 }, { "x": 2, "y": 2 }, { "x": 3, "y": 2 },
-        { "x": 1, "y": 3 }, { "x": 3, "y": 3 }
+        {
+          "x": 1,
+          "y": 2
+        },
+        {
+          "x": 2,
+          "y": 2
+        },
+        {
+          "x": 3,
+          "y": 2
+        },
+        {
+          "x": 1,
+          "y": 3
+        },
+        {
+          "x": 3,
+          "y": 3
+        }
       ],
       "placements": [
-        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 1, "yOffset": 4 },
-        { "assetId": "stone_wall", "layer": "midground", "xOffset": 1, "yOffset": 1 },
-        { "assetId": "window", "layer": "midground", "xOffset": 1, "yOffset": 2 },
-        { "assetId": "wood_door", "layer": "midground", "xOffset": 2, "yOffset": 2 },
-        { "assetId": "window", "layer": "midground", "xOffset": 3, "yOffset": 2 },
-        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 1, "yOffset": 0 }
+        {
+          "assetId": "cobblestone_road",
+          "layer": "ground",
+          "xOffset": 1,
+          "yOffset": 4
+        },
+        {
+          "assetId": "stone_wall",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 1
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 2
+        },
+        {
+          "assetId": "wood_door",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 2
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 3,
+          "yOffset": 2
+        }
       ]
     },
     "store_wooden": {
@@ -164,18 +498,63 @@
       "structureType": "workshop",
       "width": 5,
       "height": 5,
-      "entry": { "x": 2, "y": 4 },
+      "entry": {
+        "x": 2,
+        "y": 4
+      },
       "collision": [
-        { "x": 1, "y": 2 }, { "x": 2, "y": 2 }, { "x": 3, "y": 2 },
-        { "x": 1, "y": 3 }, { "x": 3, "y": 3 }
+        {
+          "x": 1,
+          "y": 2
+        },
+        {
+          "x": 2,
+          "y": 2
+        },
+        {
+          "x": 3,
+          "y": 2
+        },
+        {
+          "x": 1,
+          "y": 3
+        },
+        {
+          "x": 3,
+          "y": 3
+        }
       ],
       "placements": [
-        { "assetId": "dirt_path", "layer": "ground", "xOffset": 1, "yOffset": 4 },
-        { "assetId": "wood_wall", "layer": "midground", "xOffset": 1, "yOffset": 1 },
-        { "assetId": "window", "layer": "midground", "xOffset": 1, "yOffset": 2 },
-        { "assetId": "wood_door", "layer": "midground", "xOffset": 2, "yOffset": 2 },
-        { "assetId": "signpost", "layer": "midground", "xOffset": 4, "yOffset": 3 },
-        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 1, "yOffset": 0 }
+        {
+          "assetId": "dirt_path",
+          "layer": "ground",
+          "xOffset": 1,
+          "yOffset": 4
+        },
+        {
+          "assetId": "wood_wall",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 1
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 2
+        },
+        {
+          "assetId": "wood_door",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 2
+        },
+        {
+          "assetId": "signpost",
+          "layer": "midground",
+          "xOffset": 4,
+          "yOffset": 3
+        }
       ]
     },
     "bank_lpc_grand": {
@@ -184,22 +563,107 @@
       "structureType": "industrial_structure",
       "width": 6,
       "height": 5,
-      "entry": { "x": 2, "y": 4 },
+      "entry": {
+        "x": 2,
+        "y": 4
+      },
       "collision": [
-        { "x": 0, "y": 2 }, { "x": 1, "y": 2 }, { "x": 2, "y": 2 },
-        { "x": 3, "y": 2 }, { "x": 4, "y": 2 }, { "x": 5, "y": 2 },
-        { "x": 0, "y": 3 }, { "x": 1, "y": 3 }, { "x": 4, "y": 3 }, { "x": 5, "y": 3 }
+        {
+          "x": 0,
+          "y": 2
+        },
+        {
+          "x": 1,
+          "y": 2
+        },
+        {
+          "x": 2,
+          "y": 2
+        },
+        {
+          "x": 3,
+          "y": 2
+        },
+        {
+          "x": 4,
+          "y": 2
+        },
+        {
+          "x": 5,
+          "y": 2
+        },
+        {
+          "x": 0,
+          "y": 3
+        },
+        {
+          "x": 1,
+          "y": 3
+        },
+        {
+          "x": 4,
+          "y": 3
+        },
+        {
+          "x": 5,
+          "y": 3
+        }
       ],
       "placements": [
-        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 0, "yOffset": 4 },
-        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 3, "yOffset": 4 },
-        { "assetId": "stone_wall", "layer": "midground", "xOffset": 0, "yOffset": 2 },
-        { "assetId": "stone_wall", "layer": "midground", "xOffset": 3, "yOffset": 2 },
-        { "assetId": "window", "layer": "midground", "xOffset": 1, "yOffset": 3 },
-        { "assetId": "wood_door", "layer": "midground", "xOffset": 2, "yOffset": 3 },
-        { "assetId": "window", "layer": "midground", "xOffset": 4, "yOffset": 3 },
-        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "roof_tile", "layer": "overhead", "xOffset": 3, "yOffset": 0 }
+        {
+          "assetId": "cobblestone_road",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 4
+        },
+        {
+          "assetId": "cobblestone_road",
+          "layer": "ground",
+          "xOffset": 3,
+          "yOffset": 4
+        },
+        {
+          "assetId": "stone_wall",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 2
+        },
+        {
+          "assetId": "stone_wall",
+          "layer": "midground",
+          "xOffset": 3,
+          "yOffset": 2
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 3
+        },
+        {
+          "assetId": "wood_door",
+          "layer": "midground",
+          "xOffset": 2,
+          "yOffset": 3
+        },
+        {
+          "assetId": "window",
+          "layer": "midground",
+          "xOffset": 4,
+          "yOffset": 3
+        },
+        {
+          "assetId": "roof_tile",
+          "layer": "overhead",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "roof_tile",
+          "layer": "overhead",
+          "xOffset": 3,
+          "yOffset": 0
+        }
       ]
     },
     "bank_forecourt": {
@@ -208,13 +672,45 @@
       "structureType": "road_segment",
       "width": 6,
       "height": 1,
-      "entry": { "x": 2, "y": 0 },
-      "collision": [{ "x": 0, "y": 0 }, { "x": 5, "y": 0 }],
+      "entry": {
+        "x": 2,
+        "y": 0
+      },
+      "collision": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 5,
+          "y": 0
+        }
+      ],
       "placements": [
-        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "cobblestone_road", "layer": "ground", "xOffset": 3, "yOffset": 0 },
-        { "assetId": "streetlamp", "layer": "midground", "xOffset": 0, "yOffset": 0 },
-        { "assetId": "streetlamp", "layer": "midground", "xOffset": 5, "yOffset": 0 }
+        {
+          "assetId": "cobblestone_road",
+          "layer": "ground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "cobblestone_road",
+          "layer": "ground",
+          "xOffset": 3,
+          "yOffset": 0
+        },
+        {
+          "assetId": "streetlamp",
+          "layer": "midground",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
+          "assetId": "streetlamp",
+          "layer": "midground",
+          "xOffset": 5,
+          "yOffset": 0
+        }
       ]
     }
   }
