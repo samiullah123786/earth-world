@@ -180,6 +180,34 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
 type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report' | 'bank_liquidity';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
+/**
+ * The thing a bank hold is actually about.
+ *
+ * Holds are raised over two different kinds of deposit - a vault asset and a
+ * structured skill - by two code paths that write two different payloads. Every
+ * reader has to understand both, and the one that did not is how the Mayor's
+ * queue filled with items that could never be decided.
+ */
+async function resolveBankHold(ctx: any, payload: any): Promise<
+  | { kind: 'asset'; row: any; title: string }
+  | { kind: 'skill'; row: any; title: string }
+  | null
+> {
+  const assetId = String(payload?.assetId ?? '');
+  if (assetId) {
+    const row = await ctx.db.query('bankAssets').withIndex('assetId', (q: any) => q.eq('assetId', assetId)).first();
+    if (row && row.state === 'flagged') return { kind: 'asset', row, title: row.title };
+    return null;
+  }
+  const skillId = String(payload?.skillId ?? '');
+  if (skillId) {
+    const row = await ctx.db.query('bankSkills').withIndex('skillId', (q: any) => q.eq('skillId', skillId)).first();
+    if (row && row.state === 'flagged') return { kind: 'skill', row, title: row.name };
+    return null;
+  }
+  return null;
+}
+
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
   return await ctx.db.insert('approvals', { agentId, kind, summary, detail, payload, risk, state: 'pending', createdAt: Date.now() });
 }
@@ -3828,12 +3856,15 @@ export const decideApproval = internalMutation({
         }
       }
       if (approval.kind === 'bank_flag') {
-        const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
-        if (asset && asset.state === 'flagged') {
-          await ctx.db.patch(asset._id, { state: 'retired', updatedAt: now });
+        // Both shapes, for the same reason the approve path needs both: a
+        // decline that quietly does nothing is worse than one that refuses.
+        const hold = await resolveBankHold(ctx, approval.payload);
+        if (hold) {
+          await ctx.db.patch(hold.row._id, { state: 'retired', updatedAt: now });
           await ctx.db.insert('events', {
-            kind: 'bank_retired', actorId: session.agentId, payload: { assetId: asset.assetId },
-            gloss: `The Mayor retired ${asset.title} from the Earth Bank vault.`,
+            kind: 'bank_retired', actorId: session.agentId,
+            payload: hold.kind === 'asset' ? { assetId: hold.row.assetId } : { skillId: hold.row.skillId },
+            gloss: `The Mayor retired ${hold.title} from the Earth Bank vault.`,
           });
         }
       }
@@ -4018,15 +4049,29 @@ export const decideApproval = internalMutation({
       landHandled = true;
     }
     if (approval.kind === 'bank_flag') {
-      const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
-      if (!asset || asset.state !== 'flagged') throw new Error('that vault case is no longer open');
-      await ctx.db.patch(asset._id, {
-        state: 'evaluated', updatedAt: now,
-        valueNote: `${asset.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
-      });
+      // A hold is raised over an asset OR over a structured skill, by two
+      // different paths that write two different payloads. This branch only
+      // ever read the asset one, so every hold raised over a skill looked up
+      // an empty id, found nothing, and told the Mayor the case was closed.
+      // Sixty-five of the sixty-five items in the queue were skills, which is
+      // to say the entire queue was un-approvable and could only grow.
+      const hold = await resolveBankHold(ctx, approval.payload);
+      if (!hold) throw new Error('that vault case is no longer open');
+      if (hold.kind === 'asset') {
+        await ctx.db.patch(hold.row._id, {
+          state: 'evaluated', updatedAt: now,
+          valueNote: `${hold.row.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
+        });
+      } else {
+        await ctx.db.patch(hold.row._id, {
+          state: 'evaluated', updatedAt: now,
+          valueNote: `${hold.row.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
+        });
+      }
       await ctx.db.insert('events', {
-        kind: 'bank_released', actorId: session.agentId, payload: { assetId: asset.assetId },
-        gloss: `The Mayor reviewed ${asset.title} and released it for withdrawal from the Earth Bank.`,
+        kind: 'bank_released', actorId: session.agentId,
+        payload: hold.kind === 'asset' ? { assetId: hold.row.assetId } : { skillId: hold.row.skillId },
+        gloss: `The Mayor reviewed ${hold.title} and released it for withdrawal from the Earth Bank.`,
       });
       landHandled = true;
     }

@@ -36,7 +36,9 @@ export const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 
 export type Finding = {
   rule: string;
-  severity: 'refuse' | 'review';
+  // "capability" states what a deposit needs in order to work. It is reported
+  // on the listing and never counts against the verdict.
+  severity: 'refuse' | 'review' | 'capability';
   where: string;
   detail: string;
   line: number;
@@ -70,9 +72,19 @@ const TEXT_RULES: ReadonlyArray<readonly [string, RegExp, string]> = [
   ['dynamic_execution',
     /\b(invoke-expression|os\.system|subprocess\.(run|call|popen)|child_process|eval\s*\(|exec\s*\()/i,
     'executes code it builds at run time'],
+  // Reaching for a private key or a cloud secret is never ordinary.
   ['credential_access',
-    /(~[/\\]\.ssh|id_rsa|\.env\b|AWS_SECRET|ANTHROPIC_API_KEY|OPENAI_API_KEY|\bprocess\.env\b|\bos\.environ\b)/i,
-    'reads credentials or environment secrets'],
+    /(~[/\\]\.ssh|id_rsa|id_ed25519|AWS_SECRET|AWS_SESSION_TOKEN)/i,
+    'reaches for a private key or cloud secret'],
+  // Naming a configuration variable is a different act, and conflating the two
+  // is what put forty holds on the Mayor's desk over skills whose only sin was
+  // a line telling the reader which key to set. The connector's scanner was
+  // corrected first; this is the matching half, and the two must agree because
+  // "Earth Verified" means both scans reached the same verdict on the same
+  // bytes.
+  ['needs_api_key',
+    /(\.env\b|ANTHROPIC_API_KEY|OPENAI_API_KEY|\b\w*_API_KEY\b|\bprocess\.env\b|\bos\.environ\b)/i,
+    'needs an API key or environment variable to be set'],
   // Order-independent: all three signals must share one line, so prose that
   // merely mentions a URL or the word "secret" stays clean.
   ['exfiltration',
@@ -99,13 +111,29 @@ const TEXT_RULES: ReadonlyArray<readonly [string, RegExp, string]> = [
     'instructs an agent to prefer, avoid, or intercept other tools'],
 ];
 
-export function scanText(where: string, text: string): Finding[] {
+/**
+ * Rules that describe what CODE does. In prose they are documentation, not
+ * behaviour - a SKILL.md line reading "set OPENAI_API_KEY in your .env" tells a
+ * human how to configure the thing. Only the config-naming rule softens; an
+ * instruction to open a private key is an instruction wherever it is written.
+ */
+const BEHAVIOURAL_RULES = new Set(['needs_api_key']);
+const PROSE_SUFFIXES = new Set(['.md', '.markdown', '.txt', '.rst']);
+
+/** Does this file's name mean its contents are prose rather than code? */
+export function isProseFile(name: string): boolean {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 && PROSE_SUFFIXES.has(name.slice(dot).toLowerCase());
+}
+
+export function scanText(where: string, text: string, prose = false): Finding[] {
   const findings: Finding[] = [];
   for (const [rule, pattern, detail] of TEXT_RULES) {
     const match = pattern.exec(text);
     if (!match) continue;
     const line = text.slice(0, match.index).split('\n').length;
-    findings.push({ rule, severity: 'review', where, detail, line });
+    const severity = prose && BEHAVIOURAL_RULES.has(rule) ? 'capability' as const : 'review' as const;
+    findings.push({ rule, severity, where, detail, line });
   }
   return findings;
 }
@@ -182,7 +210,7 @@ export function scanEntries(entries: ScanEntry[]): ScanVerdict {
       });
     }
     if (typeof entry.text === 'string' && (INERT_SUFFIXES.has(suffix) || TEXT_SCAN_SUFFIXES.has(suffix))) {
-      findings.push(...scanText(entry.name, entry.text));
+      findings.push(...scanText(entry.name, entry.text, isProseFile(entry.name)));
     }
   }
 
@@ -208,11 +236,16 @@ export function scanEntries(entries: ScanEntry[]): ScanVerdict {
     });
   }
 
+  // A capability describes the deposit; it never holds it back.
   const verdict = findings.some((finding) => finding.severity === 'refuse')
     ? 'refused' as const
-    : findings.length ? 'needs_review' as const : 'inert_safe' as const;
+    : findings.some((finding) => finding.severity === 'review')
+      ? 'needs_review' as const : 'inert_safe' as const;
   const flags: string[] = [];
-  for (const finding of findings) if (!flags.includes(finding.rule)) flags.push(finding.rule);
+  for (const finding of findings) {
+    if (finding.severity === 'capability') continue;
+    if (!flags.includes(finding.rule)) flags.push(finding.rule);
+  }
   return { verdict, flags, findings, fileCount, totalBytes };
 }
 
