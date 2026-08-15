@@ -351,16 +351,32 @@ export const ambientTick = internalMutation({
         const route = timedRoute(path, now);
         movesPlanned += 1;
         const activity = goal ? goal.why : STROLLS[Math.floor(Math.random() * STROLLS.length)];
+        const wasDoing = citizen.activity;
         await ctx.db.patch(citizen._id, {
           fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: route[0].at,
           t1: route[route.length - 1].at, route, state: 'ambient', activity,
         });
-        // Day-plan steps always narrate (max 8/day); ordinary moves stay sampled.
-        // Ambient strolling is the loudest, least meaningful thing a citizen
-        // does, and every narration is a row that lives forever. Purposeful
-        // walks (a day plan, a need being answered) still speak; idle wandering
-        // is simply seen, not written down.
-        if (planStep || (goal && Math.random() < 0.2)) {
+        // A walk is news when it is a NEW thing to be doing, and not otherwise.
+        //
+        // This used to narrate one purposeful move in five, chosen at random -
+        // and because a citizen keeps the same aspiration for a long stretch,
+        // that meant writing "Quill is looking for ground to call home" several
+        // hundred times over. Move rows were 94% of everything the world
+        // recorded, eleven and a half thousand a day against a retention pass
+        // that could only clear fourteen, so the table grew a backlog and every
+        // reader paid for it.
+        //
+        // Sampling was a guess at what mattered. The real signal was sitting in
+        // the row already: whether the sentence changed. A citizen who starts
+        // doing something different is worth a line; a citizen still doing what
+        // they were doing a minute ago is not, and the map already shows them
+        // walking. The feed gets shorter and every line in it means something.
+        // Both conditions, and the first draft of this kept only the second:
+        // with no goal the activity is a stroll line picked at random, so a
+        // "did it change" test is true almost every time and aimless wandering
+        // started writing rows it had never written before. Purposeful first,
+        // then new.
+        if ((planStep || goal) && activity !== wasDoing) {
           await ctx.db.insert('events', {
             kind: 'move', actorId: citizen.agentId, payload: { x: nx, y: ny, steps: path.length },
             gloss: `${citizen.name} is ${activity}.`,
