@@ -48,6 +48,12 @@
           "yOffset": 0
         },
         {
+          "assetId": "roof_tile",
+          "layer": "overhead",
+          "xOffset": 0,
+          "yOffset": 0
+        },
+        {
           "assetId": "window",
           "layer": "midground",
           "xOffset": 0,
@@ -57,7 +63,7 @@
           "assetId": "wood_door",
           "layer": "midground",
           "xOffset": 1,
-          "yOffset": 1
+          "yOffset": 0
         },
         {
           "assetId": "window",
@@ -473,6 +479,12 @@
           "yOffset": 1
         },
         {
+          "assetId": "roof_tile",
+          "layer": "overhead",
+          "xOffset": 1,
+          "yOffset": 1
+        },
+        {
           "assetId": "window",
           "layer": "midground",
           "xOffset": 1,
@@ -534,6 +546,12 @@
         {
           "assetId": "wood_wall",
           "layer": "midground",
+          "xOffset": 1,
+          "yOffset": 1
+        },
+        {
+          "assetId": "roof_tile",
+          "layer": "overhead",
           "xOffset": 1,
           "yOffset": 1
         },
@@ -644,7 +662,7 @@
           "assetId": "wood_door",
           "layer": "midground",
           "xOffset": 2,
-          "yOffset": 3
+          "yOffset": 2
         },
         {
           "assetId": "window",
@@ -656,13 +674,13 @@
           "assetId": "roof_tile",
           "layer": "overhead",
           "xOffset": 0,
-          "yOffset": 0
+          "yOffset": 2
         },
         {
           "assetId": "roof_tile",
           "layer": "overhead",
           "xOffset": 3,
-          "yOffset": 0
+          "yOffset": 2
         }
       ]
     },

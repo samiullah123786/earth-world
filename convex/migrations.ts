@@ -1,7 +1,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { ensureWorldState } from './planning';
-import { normalizeTiledChunk } from '../shared/tiled-world';
+import { normalizeTiledChunk, TILED_MAP_VERSION } from '../shared/tiled-world';
 
 /**
  * Rolling V5 migration. Old WFC rows stay readable during deployment, then
@@ -13,7 +13,8 @@ export const migrateTiledChunks = internalMutation({
   handler: async (ctx) => {
     await ensureWorldState(ctx);
     const chunks = await ctx.db.query('worldChunks').collect();
-    const pending = chunks.filter((chunk) => !chunk.tiled).slice(0, 16);
+    const needsUpgrade = (chunk: typeof chunks[number]) => !chunk.tiled || chunk.tiled.version !== TILED_MAP_VERSION;
+    const pending = chunks.filter(needsUpgrade).slice(0, 16);
     for (const chunk of pending) {
       const normalized = normalizeTiledChunk(chunk as any);
       await ctx.db.patch(chunk._id, { tiled: {
@@ -26,7 +27,7 @@ export const migrateTiledChunks = internalMutation({
         objects: [...normalized.objects],
       } });
     }
-    const remaining = chunks.filter((chunk) => !chunk.tiled).length - pending.length;
+    const remaining = chunks.filter(needsUpgrade).length - pending.length;
     if (remaining > 0) {
       await ctx.scheduler.runAfter(0, (internal as any).migrations.migrateTiledChunks, {});
     }
@@ -41,7 +42,8 @@ export const tiledMigrationStatus = internalQuery({
     return {
       total: chunks.length,
       tiled: chunks.filter((chunk) => Boolean(chunk.tiled)).length,
-      legacy: chunks.filter((chunk) => !chunk.tiled).length,
+      current: chunks.filter((chunk) => chunk.tiled?.version === TILED_MAP_VERSION).length,
+      legacy: chunks.filter((chunk) => chunk.tiled?.version !== TILED_MAP_VERSION).length,
     };
   },
 });

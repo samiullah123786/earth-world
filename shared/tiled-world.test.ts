@@ -19,12 +19,24 @@ describe('Tiled V5 world contract', () => {
     for (const name of TILED_LAYER_NAMES) expect(tiled.layers[name]).toHaveLength(64);
     expect(tiled.layers.GroundLayer.every((gid) => gid > 0)).toBe(true);
     collapsed.tiles.forEach((tileId, index) => {
-      if (tileId === 'forest') {
-        expect(tiled.layers.CollisionLayer[index]).toBe(TILED_GIDS.grass);
-        expect(tiled.layers.OverheadLayer[index]).toBe(TILED_GIDS.forestCanopy);
-      }
+      if (tileId.startsWith('road_')) expect(tiled.layers.GroundLayer[index]).toBe(TILED_GIDS.cobbleFill);
     });
   }, 20_000);
+
+  it('stamps only complete 3x3 LPC tree macros, never isolated canopy fragments', () => {
+    const tiled = tiledChunkForWfc(new Array(25).fill('forest'), 5);
+    const canopy = tiled.layers.OverheadLayer.filter((gid) => gid > 0);
+    expect(canopy).toHaveLength(9);
+    const validMacroTiles = new Set([
+      TILED_GIDS.treeFirst, TILED_GIDS.treeFirst + 1, TILED_GIDS.treeFirst + 2,
+      TILED_GIDS.treeFirst + 3, TILED_GIDS.treeFirst + 4, TILED_GIDS.treeFirst + 5,
+      TILED_GIDS.treeFirst + 6, TILED_GIDS.treeFirst + 7, TILED_GIDS.treeFirst + 8,
+      TILED_GIDS.treeFirst + 9, TILED_GIDS.treeFirst + 10, TILED_GIDS.treeFirst + 11,
+      TILED_GIDS.treeFirst + 12, TILED_GIDS.treeFirst + 13, TILED_GIDS.treeFirst + 14,
+      TILED_GIDS.treeFirst + 15, TILED_GIDS.treeFirst + 16, TILED_GIDS.treeFirst + 17,
+    ]);
+    expect(canopy.every((gid) => validMacroTiles.has(gid))).toBe(true);
+  });
 
   it('normalizes pre-V5 chunks without accepting malformed native payloads', () => {
     const legacy = { size: 4, tiles: new Array(16).fill('grass') };

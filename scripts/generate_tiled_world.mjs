@@ -19,9 +19,7 @@ const MAP_HEIGHT = 256;
 const TILE = 32;
 const GID = {
   grass: 16,
-  cobbleLeft: 63,
-  cobbleMiddle: 64,
-  cobbleRight: 65,
+  cobbleFill: 69,
   treeFirst: 75,
   waterFirst: 37,
   // The canopy sheet's dense centre tile, used at ground level as undergrowth.
@@ -150,7 +148,7 @@ line(46, 9, 46, 42);
 line(32, 14, 46, 14);
 for (const key of avenueCells) {
   const [x, y] = key.split(',').map(Number);
-  ground[at(x, y)] = [GID.cobbleLeft, GID.cobbleMiddle, GID.cobbleRight][(x + y) % 3];
+  ground[at(x, y)] = GID.cobbleFill;
 }
 
 /**
@@ -268,7 +266,7 @@ const map = {
   type: 'map',
   version: '1.10',
   width: MAP_WIDTH,
-  properties: properties({ mapFormat: 'tiled-v1', mapVersion: 1, foundingWidth: width, foundingHeight: height }),
+  properties: properties({ mapFormat: 'tiled-v1', mapVersion: 2, foundingWidth: width, foundingHeight: height }),
   tilesets: [
     tileset(1, 'lpc-grass', '../lpc_framework/world_tiles/terrain/grass.png', 96, 192, {
       tiles: [{ id: 15, properties: properties({ collides: true }) }],
@@ -278,9 +276,9 @@ const map = {
     tileset(55, 'lpc-cobble', '../lpc_framework/world_tiles/terrain/castlefloors_outside.png', 128, 160),
     tileset(75, 'lpc-trees', '../lpc_framework/world_tiles/props_outdoor/treetop.png', 192, 224),
     tileset(117, 'lpc-house', '../lpc_framework/world_tiles/architecture/house.png', 288, 224),
-    tileset(230, 'lpc-bridges', '../lpc_framework/world_tiles/architecture/bridges.png', 192, 224),
-    tileset(200, 'lpc-trunks', '../lpc_framework/world_tiles/props_outdoor/trunk.png', 192, 96),
     tileset(180, 'lpc-farming', '../lpc_framework/world_tiles/farming/crop_growth.png', 160, 32),
+    tileset(200, 'lpc-trunks', '../lpc_framework/world_tiles/props_outdoor/trunk.png', 192, 96),
+    tileset(230, 'lpc-bridges', '../lpc_framework/world_tiles/architecture/bridges.png', 192, 224),
   ],
 };
 

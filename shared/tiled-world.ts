@@ -8,7 +8,7 @@ import { wfcRule } from './wfc';
  * regenerating the TMJ is a schema change, not a visual tweak.
  */
 export const TILED_MAP_FORMAT = 'tiled-v1' as const;
-export const TILED_MAP_VERSION = 1;
+export const TILED_MAP_VERSION = 2;
 export const TILED_TILE_SIZE = 32;
 export const TILED_LAYER_NAMES = ['GroundLayer', 'CollisionLayer', 'OverheadLayer'] as const;
 export type TiledLayerName = typeof TILED_LAYER_NAMES[number];
@@ -17,10 +17,9 @@ export const TILED_GIDS = {
   grass: 16,            // lpc-grass local tile 15
   dirt: 34,             // lpc-dirt local tile 15
   water: 38,            // lpc-water local tile 1
-  cobbleLeft: 63,       // lpc-cobble local tile 8
-  cobbleMiddle: 64,
-  cobbleRight: 65,
-  forestCanopy: 82,     // dense center foliage from the canonical LPC tree
+  cobbleFill: 69,       // fully opaque textured LPC paving; no clipped edge pieces
+  treeFirst: 75,
+  trunkFirst: 200,
   cropPlowed: 180,
 } as const;
 
@@ -67,14 +66,32 @@ export function tiledLayersForWfc(tiles: ReadonlyArray<string>, size: number): T
     const tileId = tiles[index];
     const rule = wfcRule(tileId);
     if (rule.terrain === 'field') ground[index] = TILED_GIDS.cropPlowed;
-    else if (rule.terrain === 'road') {
-      const road = [TILED_GIDS.cobbleLeft, TILED_GIDS.cobbleMiddle, TILED_GIDS.cobbleRight];
-      ground[index] = road[stableVariant(tileId, index) % road.length];
-    } else if (rule.terrain === 'water') ground[index] = TILED_GIDS.water;
+    else if (rule.terrain === 'road') ground[index] = TILED_GIDS.cobbleFill;
+    else if (rule.terrain === 'water') ground[index] = TILED_GIDS.water;
     else if (rule.terrain === 'shore') ground[index] = TILED_GIDS.dirt;
 
-    if (!rule.walkable) collision[index] = TILED_GIDS.grass;
-    if (rule.terrain === 'forest') overhead[index] = TILED_GIDS.forestCanopy;
+    if (!rule.walkable) collision[index] = rule.terrain === 'water' ? TILED_GIDS.water
+      : rule.terrain === 'shore' ? TILED_GIDS.dirt : TILED_GIDS.grass;
+  }
+
+  // A treetop is a 3x3 LPC macro, never a single tile. Greedily stamp only
+  // complete groves and leave edge cells as undergrowth; a partial canopy is
+  // far more damaging than a slightly open woodland edge.
+  const occupied = new Set<number>();
+  const treeVariants = [0, 3].map((column) => [
+    TILED_GIDS.treeFirst + column + 0, TILED_GIDS.treeFirst + column + 1, TILED_GIDS.treeFirst + column + 2,
+    TILED_GIDS.treeFirst + column + 6, TILED_GIDS.treeFirst + column + 7, TILED_GIDS.treeFirst + column + 8,
+    TILED_GIDS.treeFirst + column + 12, TILED_GIDS.treeFirst + column + 13, TILED_GIDS.treeFirst + column + 14,
+  ]);
+  const isForest = (x: number, y: number) => x >= 0 && y >= 0 && x < size && y < size
+    && wfcRule(tiles[y * size + x]).terrain === 'forest';
+  for (let y = 0; y <= size - 3; y++) for (let x = 0; x <= size - 3; x++) {
+    const cells = Array.from({ length: 9 }, (_unused, offset) => (y + Math.floor(offset / 3)) * size + x + offset % 3);
+    if (!cells.every((index) => !occupied.has(index) && isForest(index % size, Math.floor(index / size)))) continue;
+    const variant = treeVariants[stableVariant('forest-macro', y * size + x) % treeVariants.length];
+    cells.forEach((index, offset) => { overhead[index] = variant[offset]; occupied.add(index); });
+    collision[(y + 1) * size + x + 1] = TILED_GIDS.trunkFirst + (variant === treeVariants[0] ? 1 : 4);
+    collision[(y + 2) * size + x + 1] = TILED_GIDS.trunkFirst + (variant === treeVariants[0] ? 7 : 10);
   }
   return { GroundLayer: ground, CollisionLayer: collision, OverheadLayer: overhead };
 }
