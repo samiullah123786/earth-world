@@ -135,8 +135,23 @@ export const tick = internalAction({
         reasoning_effort: 'low',
         response_format: { type: 'json_object' },
         messages: [
-          // Static first, always identical: this is the block the prefix cache
-          // discounts, and it only works while nothing before it varies.
+          // Static first, always identical: this is the block a prefix cache
+          // would discount, and it only works while nothing before it varies.
+          //
+          // Measured, so nobody chases it again: `cached_tokens` is zero on
+          // every call, and that is correct rather than broken. OpenAI's
+          // automatic prompt caching only engages at 1024 tokens, and the whole
+          // prompt averages 601 - of which this static block is about 572. The
+          // ordering below is kept because it is free and because it is what
+          // makes caching work IF these prompts ever grow past the threshold.
+          //
+          // Do not pad them to reach it. Caching discounts input tokens by
+          // half; padding would add ~420 tokens billed at full price on the
+          // first call of every distinct prefix and half price thereafter,
+          // against paying nothing for them today. It is strictly more
+          // expensive, and the real saving already lives one layer up: the
+          // response cache above avoids the call entirely, at a measured 49%
+          // hit rate - 457 calls skipped against 485 made.
           { role: 'system', content: `${WORLD_RULES}\n\n${PERSONAS[authority.role] ?? ''}` },
           // Everything that changes goes last, and stays small.
           {
