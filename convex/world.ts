@@ -121,6 +121,7 @@ export const worldObjects = query({
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
       mapFormat: state.mapFormat ?? 'tiled-v1', mapVersion: state.mapVersion ?? 1,
       tileSize: state.tileSize ?? 32, mapLayers: state.mapLayers ?? ['GroundLayer', 'CollisionLayer', 'OverheadLayer'],
+      architectureSystem: state.architectureSystem ?? 'earthforge-semantic-v1',
     } : { width: 64, height: 48, generation: 0, capacity: 50, landPolicy: 'risk_based', mayorAgentId: 'agent:sam-cbf0499925' } };
   },
 });

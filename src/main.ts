@@ -7,6 +7,13 @@ import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSp
 import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, tileCenter, tileOrigin } from './world/grid';
 import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
 import { LPC_PREFABS, prefabForStructure, type LpcPrefab } from '../shared/lpc-prefabs';
+import {
+  EARTHFORGE_ASSETS,
+  EARTHFORGE_SYSTEM,
+  earthForgeAssetFor,
+  semanticIntent,
+  type EarthForgeAsset,
+} from '../shared/earthforge';
 import type { DistrictBiome } from '../shared/wfc';
 import { normalizeTiledChunk, tiledLayerMatrix, TILED_GIDS, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
 import { DynamicNavigationGrid } from './world/navigation';
@@ -141,12 +148,13 @@ type Plot = { plotId: string; x: number; y: number; w: number; h: number; distri
 type Build = { buildId: string; plotId: string; ownerAgentId: string; structure: string; state: string;
   blueprint?: { name: string; kind: string; style?: string; architecture?: string; features?: string[];
     offsetX?: number; offsetY?: number; w?: number; h?: number; assetFramework?: string;
+    earthForge?: ReturnType<typeof semanticIntent>;
     prefabId?: string; entry?: { x: number; y: number }; collision?: Array<{ x: number; y: number }>;
     placements?: Array<{ assetId: string; kind: 'tile' | 'prop'; layer?: WorldRenderLayer; xOffset: number; yOffset: number }> };
   x?: number; y?: number; w?: number; h?: number; constructionStartsAt?: number; constructionEndsAt?: number };
 type Venue = { venueId: string; name: string; kind: string; x: number; y: number; capacity: number };
 type WorldState = { width: number; height: number; generation: number; capacity: number; landPolicy: string; mayorAgentId?: string;
-  mapFormat?: string; mapVersion?: number; tileSize?: number; mapLayers?: string[] };
+  mapFormat?: string; mapVersion?: number; tileSize?: number; mapLayers?: string[]; architectureSystem?: string };
 type Meeting = { meetingId: string; venueId: string; requesterId: string; inviteeId: string; startsAt?: number; endsAt?: number; state: string };
 type CareTicket = { ticketId: string; reporterId: string; category: string; x: number; y: number; state: string; assignedAgentId?: string };
 type ActivityZone = { zoneId: string; kind: string; name: string; x: number; y: number; w: number; h: number; tool: string };
@@ -252,6 +260,9 @@ class EarthScene extends Phaser.Scene {
     for (const [componentId, component] of Object.entries(lpcManifest.components)) {
       this.load.image(`lpc-component-${componentId}`, component.webPath);
     }
+    for (const [assetId, asset] of Object.entries(EARTHFORGE_ASSETS)) {
+      this.load.image(`earthforge-${assetId}`, asset.image);
+    }
   }
 
   create() {
@@ -288,9 +299,12 @@ class EarthScene extends Phaser.Scene {
       .filter((tileset): tileset is Phaser.Tilemaps.Tileset => Boolean(tileset));
     if (tilesets.length !== 9) throw new Error('every Tiled LPC tileset must be loaded');
 
-    this.groundTileLayer = map.createLayer('GroundLayer', tilesets, 0, 0) ?? undefined;
-    this.collisionTileLayer = map.createLayer('CollisionLayer', tilesets, 0, 0) ?? undefined;
-    this.overheadTileLayer = map.createLayer('OverheadLayer', tilesets, 0, 0) ?? undefined;
+    // Phaser 4 may return a GPU tilemap layer. This world deliberately uses
+    // the classic TilemapLayer because dynamic chunk insertion and per-tile
+    // collision are part of the authoritative map contract.
+    this.groundTileLayer = map.createLayer('GroundLayer', tilesets, 0, 0) as Phaser.Tilemaps.TilemapLayer | undefined;
+    this.collisionTileLayer = map.createLayer('CollisionLayer', tilesets, 0, 0) as Phaser.Tilemaps.TilemapLayer | undefined;
+    this.overheadTileLayer = map.createLayer('OverheadLayer', tilesets, 0, 0) as Phaser.Tilemaps.TilemapLayer | undefined;
     if (!this.groundTileLayer || !this.collisionTileLayer || !this.overheadTileLayer) {
       throw new Error(`Tiled map must contain ${TILED_LAYER_NAMES.join(', ')}`);
     }
@@ -310,6 +324,7 @@ class EarthScene extends Phaser.Scene {
     this.overheadLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.overhead);
     document.documentElement.dataset.worldLayers = TILED_LAYER_NAMES.join(',');
     document.documentElement.dataset.mapFormat = TILED_MAP_FORMAT;
+    document.documentElement.dataset.worldArchitecture = EARTHFORGE_SYSTEM;
     if (import.meta.env.DEV || DEBUG_FLAGS.size > 0) {
       const debugWindow = window as unknown as Record<string, unknown>;
       debugWindow.earthGame = this.game;
@@ -673,27 +688,33 @@ class EarthScene extends Phaser.Scene {
         : venue.kind === 'bench' ? LPC_PREFABS.bench_native_2x1
           : venue.kind === 'table' ? LPC_PREFABS.meeting_table_3x2
             : LPC_PREFABS.plaza_fountain_3x3;
-    const x = Math.max(0, Math.round(venue.x - prefab.width / 2));
-    const y = Math.max(0, Math.round(venue.y - prefab.height / 2));
+    const semanticKind = venue.kind === 'table' ? 'library'
+      : venue.kind === 'bank' ? undefined : venue.kind;
+    const semantic = semanticKind ? earthForgeAssetFor(semanticKind, `venue:${venue.venueId}`) : undefined;
+    const visualWidth = semantic?.asset.footprint[0] ?? prefab.width;
+    const visualHeight = semantic?.asset.footprint[1] ?? prefab.height;
+    const x = Math.max(0, Math.round(venue.x - visualWidth / 2));
+    const y = Math.max(0, Math.round(venue.y - visualHeight / 2));
     // A venue is usually both an interaction zone and its visible furnishing.
     // The bank is different: its canonical facade is already a persisted
     // build. Stamping the generic plaza again put a second fountain and four
     // lamps inside the front door.
     if (venue.kind !== 'bank') {
-      this.stampLpcBuild({
+      const venueBuild: Build = {
         buildId: `venue:${venue.venueId}`, plotId: `venue:${venue.venueId}`, ownerAgentId: 'civic:earth',
-        structure: prefab.structureType, state: 'built', x, y, w: prefab.width, h: prefab.height,
+        structure: semanticKind ?? prefab.structureType, state: 'built', x, y, w: visualWidth, h: visualHeight,
         blueprint: {
-          name: prefab.name, kind: prefab.structureType, prefabId: prefab.id,
+          name: semantic?.asset.name ?? prefab.name, kind: semanticKind ?? prefab.structureType, prefabId: prefab.id,
           assetFramework: lpcManifest.standard,
           placements: prefab.placements.map((placement) => ({
             ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
           })),
         },
-      });
+      };
+      if (!this.stampEarthForgeBuild(venueBuild)) this.stampLpcBuild(venueBuild);
     }
     const cx = tileCenter(venue.x), cy = tileCenter(venue.y);
-    const zone = this.add.zone(cx, cy, Math.max(42, prefab.width * TILE), Math.max(42, prefab.height * TILE))
+    const zone = this.add.zone(cx, cy, Math.max(42, visualWidth * TILE), Math.max(42, visualHeight * TILE))
       .setInteractive({ useHandCursor: true });
     zone.on('pointerdown', () => { if (Date.now() >= this.uiInteractionUntil) this.showVenue(venue); });
     zone.setDepth(Math.round(cy));
@@ -720,6 +741,54 @@ class EarthScene extends Phaser.Scene {
         if (gameObject.getData('persistent-world') !== true) gameObject.destroy();
       }
     }
+  }
+
+  earthForgeForBuild(build: Build) {
+    const explicitId = build.blueprint?.earthForge?.assetId;
+    if (explicitId && EARTHFORGE_ASSETS[explicitId]) {
+      return { id: explicitId, asset: EARTHFORGE_ASSETS[explicitId] };
+    }
+    const kind = build.buildId === 'build:earth-bank'
+      ? 'bank'
+      : String(build.blueprint?.kind ?? build.structure);
+    return earthForgeAssetFor(kind, build.buildId);
+  }
+
+  /**
+   * Render one semantic structure as one authored composition. Agents choose
+   * purpose and features; this catalog owns all geometry, perspective,
+   * lighting, collision cells and the entrance. That boundary is what stops
+   * a bank from becoming a house-shaped pile of individually guessed tiles.
+   */
+  stampEarthForgeBuild(build: Build, plot?: Plot) {
+    const resolved = this.earthForgeForBuild(build);
+    if (!resolved || !this.objectLayer) return false;
+    const { id, asset } = resolved;
+    const originX = Math.round(build.x ?? plot?.x ?? 0);
+    const originY = Math.round(build.y ?? plot?.y ?? 0);
+    // Existing records keep their proven logical footprint during the rolling
+    // migration; newly-authored semantic records use the catalog footprint.
+    const width = Math.max(1, Math.round(build.w ?? asset.footprint[0]));
+    const height = Math.max(1, Math.round(build.h ?? asset.footprint[1]));
+    const displaySize = Math.round((width + 2) * TILE);
+    const image = this.add.image(
+      tileOrigin(originX) + Math.round(width * TILE / 2),
+      tileOrigin(originY + height),
+      `earthforge-${id}`,
+    ).setOrigin(asset.anchor[0], asset.anchor[1])
+      .setDisplaySize(displaySize, displaySize)
+      .setDepth(structureSortAnchor(originY, height));
+    if (build.state === 'building') image.setAlpha(0.62);
+    image.setData('prefab-id', id);
+    image.setData('earthforge-asset', id);
+    image.setData('earthforge-intent', build.blueprint?.earthForge
+      ?? semanticIntent(asset.kind, build.buildId));
+    image.setData('world-layer', 'midground');
+    image.setData('collision-cells', asset.collision
+      .filter(([x, y]) => x < width && y < height)
+      .map(([x, y]) => ({ x: originX + x, y: originY + y })));
+    this.objectLayer.add(image);
+    return true;
   }
 
 
@@ -793,12 +862,16 @@ class EarthScene extends Phaser.Scene {
     for (const build of selectRenderableBuilds(this.objects.builds)) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
-      const prefab = prefabForStructure(build.blueprint?.kind ?? build.structure);
       const kind = String(build.blueprint?.kind ?? build.structure);
+      const earthForge = this.earthForgeForBuild(build);
+      const footprint = earthForge
+        ? { width: build.w ?? earthForge.asset.footprint[0], height: build.h ?? earthForge.asset.footprint[1] }
+        : prefabForStructure(kind);
       const origin = kind === 'home' || kind === 'cottage'
-        ? siteOriginAwayFromRoad(plot, prefab, (x, y) => this.groundTileLayer?.getTileAt(x, y)?.index === TILED_GIDS.cobbleFill)
+        ? siteOriginAwayFromRoad(plot, footprint, (x, y) => this.groundTileLayer?.getTileAt(x, y)?.index === TILED_GIDS.cobbleFill)
         : { x: build.x ?? plot.x, y: build.y ?? plot.y };
-      this.stampLpcBuild({ ...build, ...origin }, plot);
+      const placed = this.stampEarthForgeBuild({ ...build, ...origin }, plot);
+      if (!placed) this.stampLpcBuild({ ...build, ...origin }, plot);
     }
     if (lpcRenderPreview) {
       const previewPrefab: LpcPrefab = LPC_PREFABS.house_small_brick;
@@ -868,6 +941,10 @@ class EarthScene extends Phaser.Scene {
       citizens: this.sprites.size,
       citizenPixelsAreWhole: [...this.sprites.values()].every((sprite) => Number.isInteger(sprite.x) && Number.isInteger(sprite.y)),
       persistedChunks: this.objects.chunks?.length ?? 0,
+      architectureSystem: EARTHFORGE_SYSTEM,
+      earthForgeAssets: prefabObjects.filter((child) => Boolean(
+        (child as Phaser.GameObjects.GameObject).getData('earthforge-asset'),
+      )).length,
       debugWfcPreview: DEBUG_WFC && !(this.objects.chunks?.length),
     };
   }

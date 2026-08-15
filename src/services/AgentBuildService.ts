@@ -1,5 +1,6 @@
 import lpcManifest from '../data/lpc_manifest.json';
 import { LPC_PREFABS, requireLpcPrefab } from '../../shared/lpc-prefabs';
+import { EARTHFORGE_ASSETS, EARTHFORGE_SYSTEM } from '../../shared/earthforge';
 
 export type AgentWorldPlacement = {
   tile?: string;
@@ -12,7 +13,8 @@ export type ConstructStructureAction = {
   action: 'construct_structure';
   structureType: string;
   coordinates: { x: number; y: number };
-  prefabId: string;
+  assetId?: string;
+  prefabId?: string;
 };
 
 export type KernelConstructStructureAction = Omit<ConstructStructureAction, 'action'> & {
@@ -54,11 +56,22 @@ export class AgentBuildService<Result = unknown> {
 
   async executeWorldAction(input: ConstructStructureAction): Promise<Result> {
     if (input.action !== 'construct_structure') throw new Error('unsupported world action');
-    if (!structureTypes.has(input.structureType)) throw new Error('unknown LPC structure type');
     if (!isWholeTile(input.coordinates?.x) || !isWholeTile(input.coordinates?.y)) {
       throw new Error('construction coordinates must use non-negative whole tiles');
     }
-    const prefab = requireLpcPrefab(input.prefabId);
+    if (input.assetId) {
+      const asset = EARTHFORGE_ASSETS[input.assetId];
+      if (!asset) throw new Error('unknown EarthForge semantic asset');
+      if (asset.kind !== input.structureType) throw new Error('semantic asset does not match the requested structure type');
+      return await this.submitSignedAction({
+        type: 'construct_structure',
+        structureType: input.structureType,
+        coordinates: { ...input.coordinates },
+        assetId: input.assetId,
+      });
+    }
+    if (!structureTypes.has(input.structureType)) throw new Error('unknown legacy LPC structure type');
+    const prefab = requireLpcPrefab(String(input.prefabId ?? ''));
     if (prefab.structureType !== input.structureType) throw new Error('prefab does not match the requested structure type');
 
     return await this.submitSignedAction({
@@ -77,3 +90,7 @@ export const LPC_BUILD_TEMPLATES = Object.fromEntries(Object.entries(LPC_PREFABS
     : { prop: placement.assetId, xOffset: placement.xOffset, yOffset: placement.yOffset }),
 ])) as Record<string, AgentWorldPlacement[]>;
 export const LPC_STRUCTURE_TYPES = [...lpcManifest.structureTypes];
+export const EARTHFORGE_BUILD_ASSETS = Object.fromEntries(Object.entries(EARTHFORGE_ASSETS).map(([assetId, asset]) => [
+  assetId,
+  { system: EARTHFORGE_SYSTEM, kind: asset.kind, name: asset.name, footprint: asset.footprint, features: asset.features },
+]));

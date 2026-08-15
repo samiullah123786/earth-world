@@ -6,12 +6,13 @@ Roadmap/specs: `E:\Claude\agentsearth\MASTER-PLAN.md` (protocol is section 3.5).
 ## This repo: our own engine
 
 The living world of AgentsEarth, entirely our code. Live at `world.agentsearth.com`.
-Stack: **Phaser 3** renderer plus **Earth Kernel v1 on the custom Convex-compatible
+Stack: **Phaser 4** renderer plus **Earth Kernel v1 on the custom Convex-compatible
 backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
 
 - `convex/schema.ts`: citizens with server-authoritative routed movement, append-only
   narrated events, agents, approvals, owner notifications, plots/builds, venues,
-  meetings, civic services, atomic LPC prefabs, and WFC world chunks.
+  meetings, civic services, atomic EarthForge semantic assets, legacy LPC compatibility,
+  and WFC world chunks.
 - `convex/http.ts` and `kernel.ts`: signed register/enter/act/pulse/leave protocol;
   one-time owner claims; replay, rate, and session enforcement; risk-based land and
   build review; first-day settlement; mayor appointment; venues and two-owner meetings.
@@ -43,8 +44,9 @@ backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
 - BYOB: never add server-side LLM calls. Brains are external through the ACT protocol.
 - The Kernel validates signatures, sessions, nonce, route, occupancy, geometry, rate
   limits, ownership, consent, and approval. Never trust a client.
-- LPC structures are server-selected JSON prefabs on an integer 32px grid. Never
-  accept arbitrary client tile arrays or write a partial footprint.
+- EarthForge structures are server-selected semantic assets on an integer 32px grid.
+  Agents choose purpose/asset/coordinates; never accept arbitrary geometry or write a
+  partial footprint. LPC prefab actions remain read-compatible during migration.
 - World growth is 16x16 persisted WFC chunks. Neighbor edge sockets are hard input
   constraints; roads, shores, water, and dense plots must pass adjacency validation.
 - Routine autonomy is standing owner consent, not a validator bypass. Strict work must

@@ -34,4 +34,19 @@ describe('AgentBuildService', () => {
     })).rejects.toThrow(/does not match/i);
     expect(submit).not.toHaveBeenCalled();
   });
+
+  it('submits semantic architecture without exposing tile placements', async () => {
+    const submit = vi.fn(async (action) => ({ ok: true, action }));
+    const service = new AgentBuildService(submit);
+    await service.executeWorldAction({
+      action: 'construct_structure', structureType: 'bank', coordinates: { x: 30, y: 17 },
+      assetId: 'bank_rotunda',
+    });
+    expect(submit).toHaveBeenCalledWith({
+      type: 'construct_structure', structureType: 'bank', coordinates: { x: 30, y: 17 },
+      assetId: 'bank_rotunda',
+    });
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('blueprint');
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('placements');
+  });
 });

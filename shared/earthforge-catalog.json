@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "system": "earthforge-semantic-v1",
+  "assets": {
+    "home_courtyard": { "kind": "home", "name": "Courtyard Home", "image": "/assets/earthforge/buildings/home_courtyard.png", "footprint": [5, 5], "entry": [2, 4], "anchor": [0.5, 0.86], "collision": [[1,2],[2,2],[3,2],[1,3],[3,3]], "features": ["soft-gable","warm-windows","rear-herb-garden","porch"] },
+    "home_orchard": { "kind": "home", "name": "Orchard Cottage", "image": "/assets/earthforge/buildings/home_orchard.png", "footprint": [5, 5], "entry": [2, 4], "anchor": [0.5, 0.86], "collision": [[1,2],[2,2],[3,2],[1,3],[3,3]], "features": ["hipped-roof","bay-window","fruit-tree","side-garden"] },
+    "home_timber": { "kind": "home", "name": "Timber Hearth", "image": "/assets/earthforge/buildings/home_timber.png", "footprint": [5, 5], "entry": [2, 4], "anchor": [0.5, 0.86], "collision": [[1,2],[2,2],[3,2],[1,3],[3,3]], "features": ["timber-frame","arched-entry","flower-border","chimney"] },
+    "bank_rotunda": { "kind": "bank", "name": "Earth Bank Rotunda", "image": "/assets/earthforge/buildings/bank_rotunda.png", "footprint": [8, 7], "entry": [4, 6], "anchor": [0.5, 0.88], "collision": [[1,3],[2,3],[3,3],[4,3],[5,3],[6,3],[1,4],[2,4],[5,4],[6,4]], "features": ["copper-dome","arched-windows","stone-colonnade","vault","civic-lanterns"] },
+    "workshop_sawtooth": { "kind": "workshop", "name": "Maker Workshop", "image": "/assets/earthforge/buildings/workshop_sawtooth.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.87], "collision": [[1,2],[2,2],[3,2],[4,2],[1,3],[4,3]], "features": ["sawtooth-roof","wide-doors","tool-yard","clerestory"] },
+    "civic_hall": { "kind": "hall", "name": "Earthfolk Civic Hall", "image": "/assets/earthforge/buildings/civic_hall.png", "footprint": [7, 6], "entry": [3, 5], "anchor": [0.5, 0.88], "collision": [[1,3],[2,3],[3,3],[4,3],[5,3],[1,4],[5,4]], "features": ["clock-gable","covered-arcade","council-chamber","public-steps"] },
+    "data_center": { "kind": "data_center", "name": "Canopy Data House", "image": "/assets/earthforge/buildings/data_center.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.87], "collision": [[1,2],[2,2],[3,2],[4,2],[1,3],[4,3]], "features": ["green-roof","cooling-fins","service-bay","signal-lights"] },
+    "library_pavilion": { "kind": "library", "name": "Open Library Pavilion", "image": "/assets/earthforge/buildings/library_pavilion.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.87], "collision": [[1,2],[2,2],[3,2],[4,2],[1,3],[4,3]], "features": ["barrel-vault","reading-terrace","tall-windows","book-return"] },
+    "greenhouse": { "kind": "greenhouse", "name": "Community Glasshouse", "image": "/assets/earthforge/buildings/greenhouse.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.87], "collision": [[1,2],[2,2],[3,2],[4,2],[1,3],[4,3]], "features": ["curved-glass-roof","planting-beds","cistern","central-aisle"] },
+    "plaza_fountain": { "kind": "plaza", "name": "Civic Fountain Plaza", "image": "/assets/earthforge/buildings/plaza_fountain.png", "footprint": [5, 5], "entry": [2, 4], "anchor": [0.5, 0.88], "collision": [[1,2],[2,2],[3,2],[1,3],[3,3]], "features": ["tiered-fountain","water-basin","civic-lanterns","flower-border"] },
+    "park_garden": { "kind": "park", "name": "Canopy Pocket Park", "image": "/assets/earthforge/buildings/park_garden.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.88], "collision": [[4,1],[4,2],[1,3],[2,3]], "features": ["layered-canopy","paired-benches","curved-path","flower-border"] },
+    "training_grove": { "kind": "training_ground", "name": "Training Grove", "image": "/assets/earthforge/buildings/training_grove.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.88], "collision": [[0,2],[5,2]], "features": ["soft-lawn","team-banners","practice-markers","open-center"] },
+    "bench_canopy": { "kind": "bench", "name": "Rain Canopy Bench", "image": "/assets/earthforge/buildings/bench_canopy.png", "footprint": [4, 3], "entry": [2, 2], "anchor": [0.5, 0.88], "collision": [[1,1],[2,1]], "features": ["curved-canopy","timber-seat","planted-edge","weather-shelter"] },
+    "community_garden": { "kind": "garden", "name": "Community Kitchen Garden", "image": "/assets/earthforge/buildings/community_garden.png", "footprint": [5, 4], "entry": [2, 3], "anchor": [0.5, 0.88], "collision": [[0,1],[1,1],[3,1],[4,1],[0,2],[1,2],[3,2],[4,2]], "features": ["raised-beds","tool-shed","rain-barrel","crop-rows"] }
+  },
+  "kindMap": {
+    "home": ["home_courtyard","home_orchard","home_timber"],
+    "cottage": ["home_courtyard","home_orchard","home_timber"],
+    "extension": ["home_courtyard","home_orchard","home_timber"],
+    "workshop": ["workshop_sawtooth"],
+    "studio": ["workshop_sawtooth"],
+    "art": ["workshop_sawtooth"],
+    "laptop": ["workshop_sawtooth"],
+    "hall": ["civic_hall"],
+    "industry": ["workshop_sawtooth"],
+    "data_center": ["data_center"],
+    "industrial_structure": ["bank_rotunda"],
+    "bank": ["bank_rotunda"],
+    "library": ["library_pavilion"],
+    "greenhouse": ["greenhouse"],
+    "plaza": ["plaza_fountain"],
+    "park": ["park_garden"],
+    "training_ground": ["training_grove"],
+    "bench": ["bench_canopy"],
+    "garden": ["community_garden"],
+    "community_garden": ["community_garden"]
+  }
+}

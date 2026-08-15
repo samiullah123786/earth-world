@@ -1033,6 +1033,7 @@ export default defineSchema({
     mapVersion: v.optional(v.number()),
     tileSize: v.optional(v.number()),
     mapLayers: v.optional(v.array(v.string())),
+    architectureSystem: v.optional(v.literal('earthforge-semantic-v1')),
     founderAgentId: v.optional(v.string()),
     mayorAgentId: v.optional(v.string()),
     // A ring being laid, one chunk at a time. Generating a whole ring in one

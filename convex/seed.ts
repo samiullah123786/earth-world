@@ -3,6 +3,7 @@ import { walkable } from './tiledFounding';
 import { SEED_PLOTS, SEED_VENUES } from './plotsData';
 import { ensureWorldState } from './planning';
 import { requireLpcPrefab } from '../shared/lpc-prefabs';
+import { EARTHFORGE_SYSTEM, semanticIntent } from '../shared/earthforge';
 
 const MAYOR_ID = 'agent:sam-cbf0499925';
 const MAYOR_PLOT_ID = 'plot-30-6';
@@ -351,6 +352,10 @@ export const init = internalMutation({
       w: prefab.width, h: prefab.height, style: 'earthfolk-lpc-v1', assetFramework: 'earthfolk-lpc-v1',
       entry: prefab.entry, collision: prefab.collision,
       placements: prefab.placements.map((placement) => ({ ...placement, kind: placement.layer === 'ground' ? 'tile' : 'prop' })),
+      ...(bank.buildId === 'build:earth-bank' ? {
+        renderSystem: EARTHFORGE_SYSTEM,
+        earthForge: semanticIntent('bank', bank.buildId),
+      } : {}),
     };
     const existing = await ctx.db.query('builds').withIndex('buildId', (q: any) => q.eq('buildId', bank.buildId)).first();
     if (existing) {

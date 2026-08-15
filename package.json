@@ -14,7 +14,7 @@
     "@noble/hashes": "^2.3.0",
     "convex": "^1.16.0",
     "easystarjs": "^0.4.4",
-    "phaser": "^3.85.0"
+    "phaser": "^4.2.1"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

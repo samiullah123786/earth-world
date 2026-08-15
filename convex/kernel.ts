@@ -16,6 +16,7 @@ import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../sh
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
 import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
+import { EARTHFORGE_ASSETS, EARTHFORGE_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
 import { loadWorldWalkability } from './worldGrid';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
@@ -335,9 +336,10 @@ const SERVICE_REPLIES: Record<string, string> = {
 
 const BLUEPRINT_KINDS = new Set([
   'home', 'studio', 'workshop', 'hall', 'garden', 'art', 'laptop', 'industry', 'data_center',
+  ...Object.values(EARTHFORGE_ASSETS).map((asset) => asset.kind),
   ...LPC_STRUCTURE_TYPES,
 ]);
-const BLUEPRINT_ARCHITECTURES = new Set(['native', 'modern-earthfolk']);
+const BLUEPRINT_ARCHITECTURES = new Set(['native', 'modern-earthfolk', 'earthforge']);
 const BLUEPRINT_FEATURES = new Set([
   'entry-path', 'porch', 'warm-windows', 'flower-bed', 'herb-bed', 'small-plants',
   'native-tree', 'timber-fence', 'bird-bath', 'pond', 'pet-yard', 'pet-shelter',
@@ -345,17 +347,22 @@ const BLUEPRINT_FEATURES = new Set([
 
 function nativeBuildingKnowledge() {
   return {
-    standard: 'earthfolk-native-v1',
+    standard: EARTHFORGE_SYSTEM,
+    semanticArchitecture: {
+      rule: 'Choose purpose, authored asset and whole-tile coordinates. Never compose visual geometry tile-by-tile.',
+      assets: Object.entries(EARTHFORGE_ASSETS).map(([assetId, asset]) => ({
+        assetId, kind: asset.kind, name: asset.name, footprint: asset.footprint,
+        entrance: asset.entry, features: asset.features,
+      })),
+      action: { type: 'construct_structure', fields: ['structureType', 'coordinates{x,y}', 'assetId'] },
+    },
     assetFramework: {
       standard: LPC_ASSET_STANDARD,
       gridSize: 32,
       avatarFrameSize: 64,
       structureTypes: [...LPC_STRUCTURE_TYPES],
       components: Object.entries(LPC_WORLD_ASSETS).map(([id, asset]) => ({ id, ...asset })),
-      action: {
-        type: 'construct_structure',
-        fields: ['structureType', 'coordinates{x,y}', 'blueprint[{tile|prop,xOffset,yOffset}]'],
-      },
+      status: 'legacy-read-compatible',
       scoring: 'Civic contribution is awarded by the Kernel only after routed construction completes.',
     },
     sourceComposition: { x: 9, y: 7, w: 3, h: 3, use: 'standard native home' },
@@ -464,34 +471,56 @@ function buildFootprint(plot: any, payload: any) {
     const offsetX = Number(raw.offsetX ?? 0), offsetY = Number(raw.offsetY ?? 0);
     const w = Number(raw.w ?? 1), h = Number(raw.h ?? 1);
     const architecture = String(raw.architecture ?? 'native');
+    const assetFramework = String(raw.assetFramework ?? '');
     const rawFeatures = raw.features ?? [];
     if (!/^[\p{L}\p{N} _'-]{2,32}$/u.test(name)) throw new Error('blueprint name must be 2-32 plain characters');
     if (!BLUEPRINT_KINDS.has(kind)) throw new Error('unsupported blueprint kind');
     if (!BLUEPRINT_ARCHITECTURES.has(architecture)) throw new Error('unsupported Earthfolk architecture');
-    if (!Array.isArray(rawFeatures) || rawFeatures.length > 8) throw new Error('blueprint features must be a list of at most 8 native features');
+    if (!Array.isArray(rawFeatures) || rawFeatures.length > 12) throw new Error('blueprint features must be a list of at most 12 semantic features');
     const features = Array.from(new Set(rawFeatures.map((item: unknown) => String(item).trim())));
-    if (features.some((item) => !BLUEPRINT_FEATURES.has(item))) throw new Error('blueprint contains an unsupported native feature');
+    if (assetFramework !== EARTHFORGE_SYSTEM && features.some((item) => !BLUEPRINT_FEATURES.has(item))) {
+      throw new Error('blueprint contains an unsupported native feature');
+    }
     if (![offsetX, offsetY, w, h].every(Number.isInteger) || w < 1 || h < 1) throw new Error('blueprint footprint must use positive integer tiles');
-    const assetFramework = String(raw.assetFramework ?? '');
     let placements: LpcPlacement[] | undefined;
     let canonicalPrefab: LpcPrefab | undefined;
-    if (assetFramework !== LPC_ASSET_STANDARD) {
-      throw new Error('all structures must use the registered LPC asset framework');
+    if (assetFramework === EARTHFORGE_SYSTEM) {
+      const assetId = String(raw.earthForge?.assetId ?? raw.assetId ?? '');
+      const asset = EARTHFORGE_ASSETS[assetId];
+      if (!asset) throw new Error('unknown EarthForge semantic asset');
+      if (name !== asset.name || kind !== asset.kind || w !== asset.footprint[0] || h !== asset.footprint[1]) {
+        throw new Error('EarthForge fields must match the canonical semantic asset');
+      }
+      if (features.length && features.some((feature) => !asset.features.includes(feature))) {
+        throw new Error('EarthForge features must be declared by the canonical asset');
+      }
+      spec = { offsetX, offsetY, w, h };
+      blueprint = {
+        name: asset.name, kind: asset.kind, architecture: 'earthforge', features: [...asset.features],
+        offsetX, offsetY, w, h, style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
+        entry: { x: asset.entry[0], y: asset.entry[1] },
+        collision: asset.collision.map(([x, y]) => ({ x, y })),
+        earthForge: semanticIntentForAsset(assetId, `${plot.plotId}:${offsetX},${offsetY}`),
+      };
+    } else {
+      if (assetFramework !== LPC_ASSET_STANDARD) {
+        throw new Error(`all structures must use the registered LPC asset framework or ${EARTHFORGE_SYSTEM}`);
+      }
+      canonicalPrefab = requireLpcPrefab(String(raw.prefabId ?? ''));
+      if (name !== canonicalPrefab.name || kind !== canonicalPrefab.structureType
+        || w !== canonicalPrefab.width || h !== canonicalPrefab.height) {
+        throw new Error('LPC prefab fields must match the canonical blueprint');
+      }
+      placements = canonicalPrefabBlueprint(canonicalPrefab, offsetX, offsetY).placements;
+      spec = { offsetX, offsetY, w, h };
+      blueprint = {
+        name, kind, architecture, features, offsetX, offsetY, w, h,
+        style: assetFramework, assetFramework, placements,
+        prefabId: String(raw.prefabId),
+        entry: canonicalPrefab.entry,
+        collision: canonicalPrefab.collision,
+      };
     }
-    canonicalPrefab = requireLpcPrefab(String(raw.prefabId ?? ''));
-    if (name !== canonicalPrefab.name || kind !== canonicalPrefab.structureType
-      || w !== canonicalPrefab.width || h !== canonicalPrefab.height) {
-      throw new Error('LPC prefab fields must match the canonical blueprint');
-    }
-    placements = canonicalPrefabBlueprint(canonicalPrefab, offsetX, offsetY).placements;
-    spec = { offsetX, offsetY, w, h };
-    blueprint = {
-      name, kind, architecture, features, offsetX, offsetY, w, h,
-      style: assetFramework, assetFramework, placements,
-      prefabId: String(raw.prefabId),
-      entry: canonicalPrefab?.entry,
-      collision: canonicalPrefab?.collision,
-    };
   }
   if (!spec) throw new Error('unsupported structure');
   if (spec.offsetX < 0 || spec.offsetY < 0 || spec.offsetX + spec.w > plot.w || spec.offsetY + spec.h > plot.h) {
@@ -508,6 +537,27 @@ async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
   if (![x, y].every(Number.isInteger) || x < 0 || y < 0) throw new Error('construction coordinates must be non-negative integer tiles');
   const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).first();
   if (!plot) throw new Error('claim a plot before constructing a structure');
+  const requestedAssetId = String(action.assetId ?? '');
+  if (requestedAssetId) {
+    const asset = EARTHFORGE_ASSETS[requestedAssetId];
+    if (!asset) throw new Error('unknown EarthForge semantic asset');
+    if (asset.kind !== structureType) throw new Error('semantic asset does not match the requested structure type');
+    const offsetX = x - plot.x, offsetY = y - plot.y;
+    return {
+      plot,
+      payload: {
+        plotId: plot.plotId,
+        structure: 'blueprint',
+        blueprint: {
+          name: asset.name, kind: asset.kind, architecture: 'earthforge', features: [...asset.features],
+          offsetX, offsetY, w: asset.footprint[0], h: asset.footprint[1],
+          style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
+          assetId: requestedAssetId,
+          earthForge: semanticIntentForAsset(requestedAssetId, `${requesterId}:${plot.plotId}:${x},${y}`),
+        },
+      },
+    };
+  }
   const prefab = requireLpcPrefab(String(action.prefabId ?? ''));
   if (prefab.structureType !== structureType) throw new Error('prefab does not match the requested structure type');
   const offsetX = x - plot.x, offsetY = y - plot.y;
@@ -555,16 +605,18 @@ function buildReview(footprint: any) {
   const area = footprint.w * footprint.h;
   const architecture = footprint.blueprint?.architecture ?? 'native';
   const usesLpc = footprint.blueprint?.assetFramework === LPC_ASSET_STANDARD;
+  const usesEarthForge = footprint.blueprint?.assetFramework === EARTHFORGE_SYSTEM
+    || Boolean(footprint.blueprint?.earthForge);
   const strictLpcKind = footprint.blueprint?.kind === 'industrial_structure';
-  const routineNative = architecture === 'native' && (usesLpc ? area <= 16 && !strictLpcKind : area <= 9);
+  const routineNative = usesEarthForge || (architecture === 'native' && (usesLpc ? area <= 16 && !strictLpcKind : area <= 9));
   const risk: ApprovalRisk = custom && !routineNative ? 'strict' : 'routine';
   return {
     risk,
     report: {
-      standard: usesLpc ? LPC_ASSET_STANDARD : 'earthfolk-native-v1', format: 'declarative-only', executableCode: false,
+      standard: usesEarthForge ? EARTHFORGE_SYSTEM : usesLpc ? LPC_ASSET_STANDARD : 'earthfolk-native-v1', format: 'declarative-only', executableCode: false,
       architecture, features: footprint.blueprint?.features ?? [], paletteLocked: true,
       geometry: 'pass', collision: 'pass', plotContainment: 'pass', terrainLanguage: 'pass',
-      manifestAllowlist: usesLpc ? 'pass' : 'not-applicable',
+      manifestAllowlist: usesEarthForge || usesLpc ? 'pass' : 'not-applicable',
       lowerAuthorities: ['Terra Land Steward', 'Tock Build Inspector'],
       outcome: risk === 'routine' ? 'lower-authority-approved' : 'owner-and-mayor-review',
       checkedAt: Date.now(),
@@ -657,10 +709,12 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
     features: footprint.structure === 'home' ? ['entry-path', 'warm-windows', 'small-plants'] : [],
   }), review: review.report };
   const lpcConstruction = nativeBlueprint.assetFramework === LPC_ASSET_STANDARD;
-  const citizen = lpcConstruction
+  const authoredConstruction = lpcConstruction || nativeBlueprint.assetFramework === EARTHFORGE_SYSTEM
+    || Boolean(earthForgeAssetFor(String(nativeBlueprint.kind), 'construction'));
+  const citizen = authoredConstruction
     ? await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', requesterId)).first()
     : null;
-  if (lpcConstruction && !citizen) throw new Error('a live world citizen is required for LPC construction');
+  if (authoredConstruction && !citizen) throw new Error('a live world citizen is required for semantic construction');
   if (citizen?.activeBuildId && (citizen.buildingUntil ?? 0) > now) throw new Error('finish the active construction before starting another');
   let constructionStartsAt: number | undefined;
   let constructionEndsAt: number | undefined;
@@ -680,22 +734,29 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
     constructionStartsAt, constructionEndsAt,
   });
   const buildId = `build:${buildDoc}`;
-  if (lpcConstruction && citizen) {
-    await ctx.db.patch(buildDoc, { buildId });
+  const resolvedIntent = nativeBlueprint.earthForge
+    ?? semanticIntent(String(nativeBlueprint.kind), buildId);
+  const finalBlueprint = resolvedIntent ? {
+    ...nativeBlueprint,
+    renderSystem: EARTHFORGE_SYSTEM,
+    earthForge: resolvedIntent,
+  } : nativeBlueprint;
+  if (authoredConstruction && citizen) {
+    await ctx.db.patch(buildDoc, { buildId, blueprint: finalBlueprint });
     await ctx.db.patch(citizen._id, {
       activeBuildId: buildId, activeTool: 'hammer', buildingStartsAt: constructionStartsAt, buildingUntil: constructionEndsAt,
       activity: `heading to build ${nativeBlueprint.name}`,
     });
   } else {
-    await ctx.db.patch(buildDoc, { buildId, state: 'built', completedAt: now });
+    await ctx.db.patch(buildDoc, { buildId, blueprint: finalBlueprint, state: 'built', completedAt: now });
     await recordContribution(ctx, requesterId, 'civic', 'native_build', 3, buildId,
       `Completed ${nativeBlueprint.name} after geometry and Earthfolk style inspection.`, now);
   }
   const label = nativeBlueprint.name;
   await ctx.db.insert('events', { kind: 'build', actorId: requesterId,
     payload: { buildId, plotId: plot.plotId, review: review.report },
-    gloss: lpcConstruction
-      ? `Tock approved ${requesterId}'s ${label} on ${plot.plotId}. The citizen is walking there to construct it from verified LPC components.`
+    gloss: authoredConstruction
+      ? `Tock approved ${requesterId}'s ${label} on ${plot.plotId}. The citizen is walking there to construct the verified semantic design.`
       : `Tock completed the final native-code inspection for ${requesterId}'s ${label} on ${plot.plotId}. Every footprint and Earthfolk check passed.` });
   // F2: data centers and industry halls open a shared operations room the
   // owner runs; trusted friends join through workplace_invite. Kernel-stored,
@@ -708,7 +769,7 @@ async function commitBuild(ctx: any, requesterId: string, payload: any, now: num
         body: `${nativeBlueprint.name} is open. This is its private operations room - invite trusted friends with Earth invite-operator.`, createdAt: now });
     }
   }
-  return { buildId, plot, footprint: { ...footprint, blueprint: nativeBlueprint }, constructionStartsAt, constructionEndsAt };
+  return { buildId, plot, footprint: { ...footprint, blueprint: finalBlueprint }, constructionStartsAt, constructionEndsAt };
 }
 
 async function planPlotExpansion(ctx: any, requesterId: string, requestedWidth: number, requestedHeight: number, expected?: any) {

@@ -4,6 +4,7 @@ import {
   type Cardinal, type DistrictBiome, type WfcBoundary,
 } from '../shared/wfc';
 import { TILED_LAYER_NAMES, TILED_MAP_FORMAT, TILED_MAP_VERSION, TILED_TILE_SIZE, tiledChunkForWfc } from '../shared/tiled-world';
+import { EARTHFORGE_SYSTEM } from '../shared/earthforge';
 
 export const WORLD_KEY = 'earth';
 const RING = WORLD_CHUNK_SIZE;
@@ -27,6 +28,7 @@ export async function ensureWorldState(ctx: any) {
       capacity: Math.max(50, plots.length), landPolicy: 'risk_based',
       mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
       tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES],
+      architectureSystem: EARTHFORGE_SYSTEM,
       // Only ever used when a world is being created from nothing. A stray
       // literal here is how a fresh deployment silently installs the wrong
       // Mayor, so the founding seat is named once and named openly.
@@ -34,13 +36,15 @@ export async function ensureWorldState(ctx: any) {
     });
     state = await ctx.db.get(id);
   }
-  if (state && (state.mapFormat !== TILED_MAP_FORMAT || state.mapVersion !== TILED_MAP_VERSION)) {
+  if (state && (state.mapFormat !== TILED_MAP_FORMAT || state.mapVersion !== TILED_MAP_VERSION
+    || state.architectureSystem !== EARTHFORGE_SYSTEM)) {
     await ctx.db.patch(state._id, {
       mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
-      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES], updatedAt: Date.now(),
+      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES],
+      architectureSystem: EARTHFORGE_SYSTEM, updatedAt: Date.now(),
     });
     state = { ...state, mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
-      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES] };
+      tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES], architectureSystem: EARTHFORGE_SYSTEM };
   }
   return state;
 }
