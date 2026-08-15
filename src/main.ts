@@ -292,7 +292,13 @@ class EarthScene extends Phaser.Scene {
       throw new Error(`Tiled map must contain ${TILED_LAYER_NAMES.join(', ')}`);
     }
     this.groundTileLayer.setDepth(WORLD_LAYER_DEPTH.ground).setData('persistent-world', true);
-    this.collisionTileLayer.setDepth(WORLD_LAYER_DEPTH.midground).setVisible(false).setData('persistent-world', true);
+    // Visible, because it is walls, water and undergrowth - not a mask. It was
+    // hidden while it held nothing but a repeated grass tile, and the result
+    // was a world with a floor and a canopy and absolutely nothing in between:
+    // rivers you could not see but could not cross, and trees that hovered.
+    // Now that every blocked cell carries the art of the thing that blocks it,
+    // hiding this layer would be hiding the world.
+    this.collisionTileLayer.setDepth(WORLD_LAYER_DEPTH.midground).setData('persistent-world', true);
     this.collisionTileLayer.setCollisionByProperty({ collides: true });
     this.overheadTileLayer.setDepth(WORLD_LAYER_DEPTH.overhead).setData('persistent-world', true);
 

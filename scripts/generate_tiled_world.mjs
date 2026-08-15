@@ -24,6 +24,9 @@ const GID = {
   cobbleRight: 65,
   treeFirst: 75,
   waterFirst: 37,
+  // The canopy sheet's dense centre tile, used at ground level as undergrowth.
+  forestFloor: 75 + 7,
+  trunkFirst: 200,
 };
 
 /**
@@ -73,7 +76,6 @@ const blocked = (x, y) => x < 0 || y < 0 || x >= width || y >= height || rows[y]
 
 for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
   ground[at(x, y)] = GRASS_FILL[vary(x, y, 11) % GRASS_FILL.length];
-  if (blocked(x, y)) collision[at(x, y)] = GID.grass;
 }
 
 /**
@@ -87,19 +89,38 @@ for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
  * sheet's own nine-slice draws its banks, so the river reads as a river again
  * without a single collision cell moving.
  */
-const waterMask = JSON.parse(readFileSync(new URL('./founding-water.json', import.meta.url), 'utf8'));
-const isWater = (x, y) => x >= 0 && y >= 0 && x < waterMask.width && y < waterMask.height
-  && waterMask.rows[y][x] === '1';
+const terrain = JSON.parse(readFileSync(new URL('./founding-terrain.json', import.meta.url), 'utf8'));
+const kindAt = (x, y) => (x >= 0 && y >= 0 && x < terrain.width && y < terrain.height
+  ? terrain.rows[y][x] : '.');
+const isWater = (x, y) => kindAt(x, y) === 'w';
+const isForest = (x, y) => kindAt(x, y) === 'f';
 // The sheet's nine-slice edges are deliberately part-transparent so they can
 // be laid OVER a base terrain, and the ground layer has room for exactly one
 // tile per cell - so an edge tile here would show the void through its corners
 // rather than grass. Until there is a terrain overlay layer to hold them, the
 // river is drawn from the sheet's opaque fill row: solid water, honest edges.
-let waterPainted = 0;
+/**
+ * The collision layer, drawn.
+ *
+ * It shipped invisible and filled with a grass tile - a pure mask - which is
+ * why the world had nothing standing in it: the only visible layers were the
+ * ground under everything and the canopies above it, with the entire middle of
+ * the world blank. The engine spec always called this layer "walls, furniture";
+ * this makes it so. Every blocked cell now carries the art of the thing that
+ * blocks it, which also means the mask can never drift from what a player sees:
+ * if you can see it, it stops you, and if it stops you, you can see it.
+ */
+let waterPainted = 0, forestPainted = 0;
 for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-  if (!isWater(x, y)) continue;
-  ground[at(x, y)] = WATER.fill[vary(x, y, 23) % WATER.fill.length];
-  waterPainted += 1;
+  if (!blocked(x, y)) continue;
+  if (isWater(x, y)) {
+    collision[at(x, y)] = WATER.fill[vary(x, y, 23) % WATER.fill.length];
+    waterPainted += 1;
+  } else {
+    // Undergrowth at eye level; the canopy pass lays crowns over the top.
+    collision[at(x, y)] = GID.forestFloor;
+    forestPainted += 1;
+  }
 }
 
 // A small number of deliberate avenues connect the existing neighborhoods.
@@ -136,15 +157,22 @@ const treeVariants = [0, 3].map((column) => [
   GID.treeFirst + column + 12, GID.treeFirst + column + 13, GID.treeFirst + column + 14,
 ]);
 const occupied = new Set();
+let trunksPlanted = 0;
 for (let y = 0; y <= height - 3; y += 2) for (let x = 0; x <= width - 3; x += 2) {
   const cells = Array.from({ length: 9 }, (_unused, index) => ({ x: x + index % 3, y: y + Math.floor(index / 3) }));
   if (!cells.every((cell) => blocked(cell.x, cell.y) && !occupied.has(`${cell.x},${cell.y}`)
     && !isWater(cell.x, cell.y))) continue;
-  const treeTiles = treeVariants[vary(x, y, 37) % treeVariants.length];
+  const variant = vary(x, y, 37) % treeVariants.length;
+  const treeTiles = treeVariants[variant];
   cells.forEach((cell, index) => {
     overhead[at(cell.x, cell.y)] = treeTiles[index];
     occupied.add(`${cell.x},${cell.y}`);
   });
+  // A trunk, one tile wide and two tall, under the middle of the crown.
+  const trunkTop = GID.trunkFirst + (variant === 0 ? 1 : 4);
+  collision[at(x + 1, y + 1)] = trunkTop;
+  collision[at(x + 1, y + 2)] = trunkTop + 6;
+  trunksPlanted += 1;
 }
 
 const properties = (values) => Object.entries(values).map(([name, value]) => ({
@@ -220,6 +248,7 @@ const map = {
     tileset(55, 'lpc-cobble', '../lpc_framework/world_tiles/terrain/castlefloors_outside.png', 128, 160),
     tileset(75, 'lpc-trees', '../lpc_framework/world_tiles/props_outdoor/treetop.png', 192, 224),
     tileset(117, 'lpc-house', '../lpc_framework/world_tiles/architecture/house.png', 288, 224),
+    tileset(200, 'lpc-trunks', '../lpc_framework/world_tiles/props_outdoor/trunk.png', 192, 96),
     tileset(180, 'lpc-farming', '../lpc_framework/world_tiles/farming/crop_growth.png', 160, 32),
   ],
 };
