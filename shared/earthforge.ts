@@ -1,6 +1,7 @@
 import rawCatalog from './earthforge-catalog.json';
 
 export const EARTHFORGE_SYSTEM = 'earthforge-semantic-v1' as const;
+export const EARTHFORGE_VISUAL_SYSTEM = 'earthforge-pixel-habitat-v2' as const;
 
 export type EarthForgeAsset = Readonly<{
   kind: string;
@@ -23,10 +24,29 @@ export type EarthForgeIntent = Readonly<{
   seed: number;
 }>;
 
+export type EarthForgeTerrainAsset = Readonly<{
+  name: string;
+  image: string;
+  tileset: readonly [number, number];
+  layer: 'ground' | 'collision' | 'overhead';
+  features: ReadonlyArray<string>;
+}>;
+
+export type EarthForgePropAsset = Readonly<{
+  name: string;
+  image: string;
+  footprint: readonly [number, number];
+  layer: 'midground';
+  features: ReadonlyArray<string>;
+}>;
+
 const catalog = rawCatalog as unknown as {
   version: number;
   system: string;
+  visualSystem: string;
   assets: Record<string, EarthForgeAsset>;
+  terrain: Record<string, EarthForgeTerrainAsset>;
+  props: Record<string, EarthForgePropAsset>;
   kindMap: Record<string, string[]>;
 };
 
@@ -53,6 +73,9 @@ function validateAsset(id: string, asset: EarthForgeAsset) {
 export const EARTHFORGE_ASSETS = Object.freeze(Object.fromEntries(
   Object.entries(catalog.assets).map(([id, asset]) => [id, validateAsset(id, asset)]),
 ));
+
+export const EARTHFORGE_TERRAIN = Object.freeze(catalog.terrain);
+export const EARTHFORGE_PROPS = Object.freeze(catalog.props);
 
 export function earthForgeAssetFor(kind: string, stableId: string): { id: string; asset: EarthForgeAsset } | undefined {
   const choices = catalog.kindMap[kind] ?? [];
@@ -83,7 +106,14 @@ export function semanticIntentForAsset(assetId: string, stableId: string): Earth
 }
 
 export function assertEarthForgeCatalog() {
-  if (catalog.system !== EARTHFORGE_SYSTEM || catalog.version !== 1) throw new Error('unsupported EarthForge catalog');
+  if (catalog.system !== EARTHFORGE_SYSTEM || catalog.visualSystem !== EARTHFORGE_VISUAL_SYSTEM || catalog.version !== 1) {
+    throw new Error('unsupported EarthForge catalog');
+  }
+  for (const [id, asset] of [...Object.entries(EARTHFORGE_TERRAIN), ...Object.entries(EARTHFORGE_PROPS)]) {
+    if (!id || !asset.image.startsWith('/assets/earthforge/') || !asset.features.length) {
+      throw new Error(`${id} has an invalid EarthForge world asset`);
+    }
+  }
   for (const [kind, ids] of Object.entries(catalog.kindMap)) {
     if (!ids.length || ids.some((id) => !EARTHFORGE_ASSETS[id])) throw new Error(`${kind} maps to an unknown EarthForge asset`);
   }

@@ -46,7 +46,10 @@ backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
   limits, ownership, consent, and approval. Never trust a client.
 - EarthForge structures are server-selected semantic assets on an integer 32px grid.
   Agents choose purpose/asset/coordinates; never accept arbitrary geometry or write a
-  partial footprint. LPC prefab actions remain read-compatible during migration.
+  partial footprint. `earthforge-pixel-habitat-v2` is the one visual compiler/catalog
+  for ground, paths, water, trees, crops, resource props, and structures; do not mix a
+  smooth composition back into the hard-pixel world. LPC prefab actions remain
+  read-compatible during migration and LPC citizens retain their identity animations.
 - World growth is 16x16 persisted WFC chunks. Neighbor edge sockets are hard input
   constraints; roads, shores, water, and dense plots must pass adjacency validation.
 - Routine autonomy is standing owner consent, not a validator bypass. Strict work must

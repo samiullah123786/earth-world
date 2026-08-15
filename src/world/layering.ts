@@ -40,6 +40,19 @@ export function midgroundDepth(tileY: number, height = 1): number {
   return structureSortAnchor(tileY, height);
 }
 
+/**
+ * A semantic building image includes a visually open south-facing entry row.
+ * Sort the facade from the row immediately north of that apron: citizens on
+ * the entry row render in front, while citizens north of the wall still pass
+ * behind it. Using the footprint's final row as the anchor made people at a
+ * doorway look crushed underneath the entire building composition.
+ */
+export function semanticStructureDepth(tileY: number, height: number): number {
+  const rows = assertTileInteger(height, 'semantic structure height');
+  if (rows < 1) throw new Error('semantic structure height must be positive');
+  return structureSortAnchor(tileY, Math.max(1, rows - 1));
+}
+
 export function citizenDepth(renderedFootY: number): number {
   if (!Number.isInteger(renderedFootY)) throw new Error('citizen foot depth must use an integer pixel');
   return renderedFootY;

@@ -16,7 +16,7 @@ import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../sh
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
 import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
-import { EARTHFORGE_ASSETS, EARTHFORGE_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
+import { EARTHFORGE_ASSETS, EARTHFORGE_PROPS, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
 import { loadWorldWalkability } from './worldGrid';
 
 const AGENT_SESSION_MS = 12 * 60 * 60 * 1000;
@@ -355,6 +355,12 @@ function nativeBuildingKnowledge() {
         entrance: asset.entry, features: asset.features,
       })),
       action: { type: 'construct_structure', fields: ['structureType', 'coordinates{x,y}', 'assetId'] },
+    },
+    visualHabitat: {
+      standard: EARTHFORGE_VISUAL_SYSTEM,
+      rule: 'Use only catalogued habitat materials and authored props; all output is compiled to the same 32px hard-pixel grammar as citizens.',
+      terrain: Object.entries(EARTHFORGE_TERRAIN).map(([assetId, asset]) => ({ assetId, ...asset })),
+      props: Object.entries(EARTHFORGE_PROPS).map(([assetId, asset]) => ({ assetId, ...asset })),
     },
     assetFramework: {
       standard: LPC_ASSET_STANDARD,

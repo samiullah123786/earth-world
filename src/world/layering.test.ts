@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { componentRenderContract } from './layering';
+import { citizenDepth, componentRenderContract, isCitizenInFront, semanticStructureDepth } from './layering';
+import { tileCenter } from './grid';
 
 describe('LPC visual anchoring', () => {
   it('lifts roofs into the facade and bottom-aligns tall props to their footprint', () => {
@@ -12,5 +13,11 @@ describe('LPC visual anchoring', () => {
     expect(componentRenderContract('grass', {
       width: 3, height: 1, solid: false, frame: { height: 32 },
     }).visualOffsetY).toBe(0);
+  });
+
+  it('puts a citizen on the south entry apron in front of a semantic facade', () => {
+    const facadeDepth = semanticStructureDepth(17, 5);
+    expect(isCitizenInFront(citizenDepth(tileCenter(21)), facadeDepth)).toBe(true);
+    expect(isCitizenInFront(citizenDepth(tileCenter(20)), facadeDepth)).toBe(false);
   });
 });

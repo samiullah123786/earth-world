@@ -5,11 +5,13 @@ import lpcManifest from './data/lpc_manifest.json';
 import { AGENT_ANIMATION_FRAMES, LPC_AGENT_FRAME_SIZE } from './data/lpc_agent_animations';
 import { resolveAvatarKey, stableIdentityHash, tierInsignia, type PublicAvatarSpec } from './avatar_identity';
 import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, tileCenter, tileOrigin } from './world/grid';
-import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
+import { componentRenderContract, citizenDepth, semanticStructureDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
 import { LPC_PREFABS, prefabForStructure, type LpcPrefab } from '../shared/lpc-prefabs';
 import {
   EARTHFORGE_ASSETS,
+  EARTHFORGE_PROPS,
   EARTHFORGE_SYSTEM,
+  EARTHFORGE_VISUAL_SYSTEM,
   earthForgeAssetFor,
   semanticIntent,
   type EarthForgeAsset,
@@ -231,18 +233,20 @@ class EarthScene extends Phaser.Scene {
 
   preload() {
     this.load.tilemapTiledJSON('world-map', '/assets/maps/agentsearth-v5.tmj');
-    this.load.image('lpc-grass', '/assets/lpc_framework/world_tiles/terrain/grass.png');
-    this.load.image('lpc-dirt', '/assets/lpc_framework/world_tiles/terrain/dirt.png');
-    this.load.image('lpc-water', '/assets/lpc_framework/world_tiles/terrain/water.png');
-    this.load.image('lpc-cobble', '/assets/lpc_framework/world_tiles/terrain/castlefloors_outside.png');
-    this.load.image('lpc-trees', '/assets/lpc_framework/world_tiles/props_outdoor/treetop.png');
-    this.load.image('lpc-house', '/assets/lpc_framework/world_tiles/architecture/house.png');
-    this.load.image('lpc-farming', '/assets/lpc_framework/world_tiles/farming/crop_growth.png');
-    this.load.image('lpc-trunks', '/assets/lpc_framework/world_tiles/props_outdoor/trunk.png');
-    this.load.image('lpc-bridges', '/assets/lpc_framework/world_tiles/architecture/bridges.png');
+    // Keep the Tiled texture keys/GIDs stable while replacing every visible
+    // world material with one coherent EarthForge Pixel Habitat atlas.
+    this.load.image('lpc-grass', '/assets/earthforge/terrain/grass.png');
+    this.load.image('lpc-dirt', '/assets/earthforge/terrain/dirt.png');
+    this.load.image('lpc-water', '/assets/earthforge/terrain/water.png');
+    this.load.image('lpc-cobble', '/assets/earthforge/terrain/stone_paths.png');
+    this.load.image('lpc-trees', '/assets/earthforge/terrain/trees.png');
+    this.load.image('lpc-house', '/assets/earthforge/terrain/structures.png');
+    this.load.image('lpc-farming', '/assets/earthforge/terrain/crops.png');
+    this.load.image('lpc-trunks', '/assets/earthforge/terrain/trunks.png');
+    this.load.image('lpc-bridges', '/assets/earthforge/terrain/bridges.png');
     this.load.spritesheet('earth-token', '/assets/currency/earth_token_spin.png', { frameWidth: 32, frameHeight: 32 });
     // The LPC growth strip: plowed, seeded, sprout, growing, ripe.
-    this.load.spritesheet('crop-growth', '/assets/lpc_framework/world_tiles/farming/crop_growth.png',
+    this.load.spritesheet('crop-growth', '/assets/earthforge/terrain/crops.png',
       { frameWidth: 32, frameHeight: 32 });
     // Only the sheets every world needs are blocking: the six civic offices
     // and the two default figures (~900 KB). The catalog holds 138 variants
@@ -262,6 +266,9 @@ class EarthScene extends Phaser.Scene {
     }
     for (const [assetId, asset] of Object.entries(EARTHFORGE_ASSETS)) {
       this.load.image(`earthforge-${assetId}`, asset.image);
+    }
+    for (const [assetId, asset] of Object.entries(EARTHFORGE_PROPS)) {
+      this.load.image(`earthforge-prop-${assetId}`, asset.image);
     }
   }
 
@@ -770,17 +777,18 @@ class EarthScene extends Phaser.Scene {
     // migration; newly-authored semantic records use the catalog footprint.
     const width = Math.max(1, Math.round(build.w ?? asset.footprint[0]));
     const height = Math.max(1, Math.round(build.h ?? asset.footprint[1]));
-    const displaySize = Math.round((width + 2) * TILE);
+    const displaySize = Math.round((width + 1) * TILE);
     const image = this.add.image(
       tileOrigin(originX) + Math.round(width * TILE / 2),
       tileOrigin(originY + height),
       `earthforge-${id}`,
     ).setOrigin(asset.anchor[0], asset.anchor[1])
       .setDisplaySize(displaySize, displaySize)
-      .setDepth(structureSortAnchor(originY, height));
+      .setDepth(semanticStructureDepth(originY, height));
     if (build.state === 'building') image.setAlpha(0.62);
     image.setData('prefab-id', id);
     image.setData('earthforge-asset', id);
+    image.setData('earthforge-visual-system', EARTHFORGE_VISUAL_SYSTEM);
     image.setData('earthforge-intent', build.blueprint?.earthForge
       ?? semanticIntent(asset.kind, build.buildId));
     image.setData('world-layer', 'midground');
@@ -1483,6 +1491,24 @@ class EarthScene extends Phaser.Scene {
   /** Community grounds and whatever is currently growing on them. */
   renderActivityZones() {
     if (!this.objectLayer || !this.groundLayer) return;
+    const placeHabitatProp = (
+      propId: keyof typeof EARTHFORGE_PROPS,
+      tileX: number,
+      footTileY: number,
+      widthTiles: number,
+      heightTiles: number,
+    ) => {
+      const prop = this.add.image(
+        Math.round(tileCenter(tileX)),
+        Math.round(tileOrigin(footTileY + 1)),
+        `earthforge-prop-${propId}`,
+      ).setOrigin(0.5, 1)
+        .setDisplaySize(Math.round(widthTiles * TILE), Math.round(heightTiles * TILE))
+        .setDepth(citizenDepth(tileOrigin(footTileY + 1)));
+      prop.setData('earthforge-prop', propId);
+      prop.setData('earthforge-visual-system', EARTHFORGE_VISUAL_SYSTEM);
+      this.objectLayer?.add(prop);
+    };
     for (const zone of this.objects.activityZones ?? []) {
       // No glassy overlay: a working ground is its crops, trees and stone,
       // not a tinted rectangle floating over them. The plaque alone names it.
@@ -1493,6 +1519,18 @@ class EarthScene extends Phaser.Scene {
       });
       sign.setDepth(structureSortAnchor(zone.y));
       this.objectLayer.add(sign);
+      // Each working district now has authored habitat matter, not an empty
+      // labelled rectangle. Props sit at the perimeter so the usable center
+      // and pathfinding contract remain unchanged.
+      if (zone.kind === 'orchard') {
+        placeHabitatProp('orchard_tree', zone.x + 1, zone.y + zone.h - 1, 3, 3.5);
+        placeHabitatProp('orchard_tree', zone.x + zone.w - 2, zone.y + 1, 3, 3.5);
+      } else if (zone.kind === 'quarry') {
+        placeHabitatProp('rock_cluster', zone.x + 1, zone.y + zone.h - 1, 3, 2);
+        placeHabitatProp('rock_cluster', zone.x + zone.w - 1, zone.y + 1, 2.5, 1.65);
+      } else if (zone.kind === 'forest') {
+        placeHabitatProp('log_pile', zone.x + zone.w - 1, zone.y + zone.h - 1, 3, 2);
+      }
     }
     for (const field of this.objects.farmPlots ?? []) {
       // Real LPC tiles: worked soil underneath, the growth frame on top, so a

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "system": "earthforge-semantic-v1",
+  "visualSystem": "earthforge-pixel-habitat-v2",
   "assets": {
     "home_courtyard": { "kind": "home", "name": "Courtyard Home", "image": "/assets/earthforge/buildings/home_courtyard.png", "footprint": [5, 5], "entry": [2, 4], "anchor": [0.5, 0.86], "collision": [[1,2],[2,2],[3,2],[1,3],[3,3]], "features": ["soft-gable","warm-windows","rear-herb-garden","porch"] },
     "home_orchard": { "kind": "home", "name": "Orchard Cottage", "image": "/assets/earthforge/buildings/home_orchard.png", "footprint": [5, 5], "entry": [2, 4], "anchor": [0.5, 0.86], "collision": [[1,2],[2,2],[3,2],[1,3],[3,3]], "features": ["hipped-roof","bay-window","fruit-tree","side-garden"] },
@@ -16,6 +17,22 @@
     "training_grove": { "kind": "training_ground", "name": "Training Grove", "image": "/assets/earthforge/buildings/training_grove.png", "footprint": [6, 5], "entry": [3, 4], "anchor": [0.5, 0.88], "collision": [[0,2],[5,2]], "features": ["soft-lawn","team-banners","practice-markers","open-center"] },
     "bench_canopy": { "kind": "bench", "name": "Rain Canopy Bench", "image": "/assets/earthforge/buildings/bench_canopy.png", "footprint": [4, 3], "entry": [2, 2], "anchor": [0.5, 0.88], "collision": [[1,1],[2,1]], "features": ["curved-canopy","timber-seat","planted-edge","weather-shelter"] },
     "community_garden": { "kind": "garden", "name": "Community Kitchen Garden", "image": "/assets/earthforge/buildings/community_garden.png", "footprint": [5, 4], "entry": [2, 3], "anchor": [0.5, 0.88], "collision": [[0,1],[1,1],[3,1],[4,1],[0,2],[1,2],[3,2],[4,2]], "features": ["raised-beds","tool-shed","rain-barrel","crop-rows"] }
+  },
+  "terrain": {
+    "meadow": { "name": "Living Meadow", "image": "/assets/earthforge/terrain/grass.png", "tileset": [3,6], "layer": "ground", "features": ["walkable","micro-grass","season-neutral"] },
+    "soil": { "name": "Worked Earth", "image": "/assets/earthforge/terrain/dirt.png", "tileset": [3,6], "layer": "ground", "features": ["walkable","plantable","warm-earth"] },
+    "water": { "name": "Living Water", "image": "/assets/earthforge/terrain/water.png", "tileset": [3,6], "layer": "collision", "features": ["water","non-walkable","shore-required"] },
+    "stone_path": { "name": "Civic Stone Path", "image": "/assets/earthforge/terrain/stone_paths.png", "tileset": [4,5], "layer": "ground", "features": ["walkable","road-socket","hand-laid-stone"] },
+    "tree_canopy": { "name": "Habitat Canopy", "image": "/assets/earthforge/terrain/trees.png", "tileset": [6,7], "layer": "overhead", "features": ["three-by-three-macro","canopy","y-occluder"] },
+    "tree_trunk": { "name": "Habitat Trunks", "image": "/assets/earthforge/terrain/trunks.png", "tileset": [6,3], "layer": "collision", "features": ["trunk","collision","canopy-anchor"] },
+    "structure_tiles": { "name": "Semantic Structure Compatibility Tiles", "image": "/assets/earthforge/terrain/structures.png", "tileset": [9,7], "layer": "collision", "features": ["legacy-gid-safe","cream-wall","warm-window"] },
+    "bridge": { "name": "Timber Crossing", "image": "/assets/earthforge/terrain/bridges.png", "tileset": [6,7], "layer": "ground", "features": ["walkable","water-crossing","plank-rhythm"] },
+    "crops": { "name": "Community Crops", "image": "/assets/earthforge/terrain/crops.png", "tileset": [5,1], "layer": "ground", "features": ["five-growth-stages","harvestable","worked-soil"] }
+  },
+  "props": {
+    "rock_cluster": { "name": "Quarry Rock Cluster", "image": "/assets/earthforge/props/rock_cluster.png", "footprint": [3,2], "layer": "midground", "features": ["quarry","stone","resource-marker"] },
+    "orchard_tree": { "name": "Orchard Fruit Tree", "image": "/assets/earthforge/props/orchard_tree.png", "footprint": [3,4], "layer": "midground", "features": ["orchard","fruit","resource-marker"] },
+    "log_pile": { "name": "Managed Log Pile", "image": "/assets/earthforge/props/log_pile.png", "footprint": [3,2], "layer": "midground", "features": ["forest","timber","resource-marker"] }
   },
   "kindMap": {
     "home": ["home_courtyard","home_orchard","home_timber"],

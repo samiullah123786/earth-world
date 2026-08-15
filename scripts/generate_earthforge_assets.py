@@ -4,6 +4,8 @@ Usage:
   blender --background --python scripts/generate_earthforge_assets.py -- --output public/assets/earthforge/buildings
 
 The committed PNGs are runtime artifacts. Blender is a build-time compiler only.
+After Blender, run ``python scripts/generate_earthforge_pixel_world.py`` to
+compile buildings and habitat materials into the shared 32px pixel grammar.
 """
 from __future__ import annotations
 
