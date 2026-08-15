@@ -2,6 +2,8 @@ node_modules/
 dist/
 .env.local
 .vercel/
+__pycache__/
+*.py[cod]
 
 # The chunk preview harness writes its scratch output here.
 preview-chunks.json
