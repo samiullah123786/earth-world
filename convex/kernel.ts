@@ -1,6 +1,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
+import { SCANNER_VERSION, scanEntries } from './scanner';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld, finishExpansion, nextExpansionWork, planExpansion, relayCoordinates, relayWorkFor, saveExpansionChunk, storeRelaidChunk } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
@@ -6738,7 +6739,177 @@ export const relayWorldTerrain = internalMutation({
  * The Mayor can stand this office down like any other, and does not have to
  * explain why.
  */
-const DEPUTY_DECIDABLE = new Set(['claim', 'build', 'event_proposal']);
+const DEPUTY_DECIDABLE = new Set(['claim', 'build', 'event_proposal', 'bank_flag']);
+
+/**
+ * The flags that make a bank hold the Mayor's problem and nobody else's.
+ *
+ * Every hold is raised at 'strict' risk, so under the old rule every single one
+ * went to the Mayor and the queue only ever grew - sixty-five of them, none
+ * decidable. But "the scanner noticed something" is not the same as "this is
+ * dangerous". A skill that ships a .py file is flagged; so is one that tries to
+ * talk its reader into exfiltrating a key. Only the second is a red light.
+ *
+ * These are the findings that mean a deposit is trying to act ON the agent
+ * reading it, or reaching for something that is nobody's to take. Anything on
+ * this list waits for a human. Everything else - an executable file, an
+ * unrecognised extension, a skill that says which API key to set - is ordinary
+ * enough that the Deputy can release it and say so in the record.
+ */
+const BANK_HOLD_RED_FLAGS = new Set([
+  'exfiltration', 'instruction_override', 'prompt_extraction', 'concealment',
+  'tool_shadowing', 'bidi_override', 'encoded_payload', 'credential_access',
+  'environment_mutation', 'hidden_text', 'symlink', 'path_traversal',
+  'manager_high_risk',
+]);
+
+/** Is this hold something a human has to look at, or ordinary housekeeping? */
+export function bankHoldNeedsTheMayor(flags: ReadonlyArray<string> | undefined): boolean {
+  return (flags ?? []).some((flag) => BANK_HOLD_RED_FLAGS.has(flag));
+}
+
+/**
+ * Withdraw approvals whose case has already closed.
+ *
+ * An approval outlives the thing it is about. A hold is raised over a skill,
+ * the skill is retired or released by some other route, and the approval sits
+ * in the queue for ever - undecidable, because there is nothing left to decide,
+ * and unremovable, because refusing to decide is not the same as deciding. The
+ * queue fills with items whose only content is that they are stale.
+ *
+ * This is the reconciliation the queue never had: anything pointing at a case
+ * that is gone is closed as withdrawn, with the reason recorded, so the Mayor's
+ * desk only ever holds live questions.
+ */
+/**
+ * Re-derive the safety verdict on skills the vault is holding.
+ *
+ * A hold records what the scanner thought on the day of deposit, and that
+ * judgement can turn out to be wrong. Ours was: credential_access matched any
+ * mention of `.env` or OPENAI_API_KEY, so forty holds were raised over skills
+ * whose only sin was a line telling the reader which key to set. The rule has
+ * since been split - a real secret is still credential_access, naming a
+ * variable is a needs_api_key capability - but the stored verdicts predate the
+ * fix and no amount of waiting corrects them.
+ *
+ * This re-reads the bytes the vault actually holds and writes what the current
+ * scanner says. It is not lowering the bar: a skill that genuinely reaches for
+ * a private key stays flagged and stays the Mayor's. It corrects a measurement
+ * that was wrong, which is the only honest way to shrink a queue.
+ */
+export const rescanHeldSkills = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const held = await ctx.db.query('bankSkills')
+      .withIndex('state', (q) => q.eq('state', 'flagged')).take(Math.min(limit ?? 40, 100));
+    let rescanned = 0, cleared = 0, stillHeld = 0;
+    for (const skill of held) {
+      const verdict = scanEntries([{
+        name: 'SKILL.md', text: skill.markdownBody ?? '', size: (skill.markdownBody ?? '').length,
+      }]);
+      rescanned += 1;
+      const before = [...skill.safety.flags].sort().join(',');
+      const after = [...verdict.flags].sort().join(',');
+      if (before === after) { stillHeld += 1; continue; }
+      await ctx.db.patch(skill._id, {
+        safety: {
+          verdict: verdict.verdict, flags: verdict.flags,
+          note: `Re-scanned by ${SCANNER_VERSION}: ${verdict.flags.join(', ') || 'nothing of concern'}.`,
+          scannerVersion: SCANNER_VERSION,
+        },
+        updatedAt: Date.now(),
+      });
+      // Keep the open hold's flags in step, so the Deputy judges the listing on
+      // what the scanner says today rather than what it said last week.
+      const world = await ensureWorldState(ctx);
+      if (world.mayorAgentId) {
+        const open = (await ctx.db.query('approvals')
+          .withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending')).take(200))
+          .find((row) => row.kind === 'bank_flag' && row.payload?.skillId === skill.skillId);
+        if (open) {
+          await ctx.db.patch(open._id, { payload: { ...open.payload, flags: verdict.flags } });
+        }
+      }
+      cleared += 1;
+    }
+    return { ok: true, rescanned, updated: cleared, unchanged: stillHeld };
+  },
+});
+
+export const reconcileApprovals = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const world = await ensureWorldState(ctx);
+    if (!world.mayorAgentId) return { ok: true, withdrawn: 0 };
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending'))
+      .take(200);
+    let withdrawn = 0;
+    for (const approval of pending) {
+      if (approval.kind !== 'bank_flag') continue;
+      if (await resolveBankHold(ctx, approval.payload)) continue;
+      await ctx.db.patch(approval._id, {
+        state: 'declined', decidedAt: Date.now(), decidedBy: 'kernel',
+        detail: `${approval.detail} — withdrawn automatically: the vault case closed by another route.`.slice(0, 900),
+      });
+      withdrawn += 1;
+    }
+    return { ok: true, withdrawn };
+  },
+});
+
+/**
+ * The Mayor clearing their own desk.
+ *
+ * Deciding sixty-five things one click at a time is not governance, it is data
+ * entry. This decides a whole class at once - and only a class the Mayor names,
+ * so "release everything the Deputy judged ordinary" and "release everything"
+ * are different instructions and nobody can confuse them.
+ */
+export const clearApprovals = internalMutation({
+  args: {
+    tokenHash: v.string(),
+    scope: v.union(v.literal('routine_holds'), v.literal('all_holds'), v.literal('stale')),
+    decision: v.union(v.literal('approve'), v.literal('decline')),
+  },
+  handler: async (ctx, { tokenHash, scope, decision }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const world = await ensureWorldState(ctx);
+    if (world.mayorAgentId !== session.agentId) throw new Error('only the sitting Mayor can clear the civic desk');
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', session.agentId).eq('state', 'pending'))
+      .take(200);
+    const now = Date.now();
+    let cleared = 0, left = 0;
+    for (const approval of pending) {
+      if (approval.kind !== 'bank_flag') { left += 1; continue; }
+      const hold = await resolveBankHold(ctx, approval.payload);
+      const red = bankHoldNeedsTheMayor(approval.payload?.flags);
+      const inScope = scope === 'stale' ? !hold
+        : scope === 'all_holds' ? Boolean(hold)
+          : Boolean(hold) && !red;
+      if (!inScope) { left += 1; continue; }
+      if (hold) {
+        await ctx.db.patch(hold.row._id, {
+          state: decision === 'approve' ? 'evaluated' : 'retired', updatedAt: now,
+          valueNote: `${hold.row.valueNote ?? ''} — cleared in bulk by the Mayor.`.slice(0, 800),
+        });
+      }
+      await ctx.db.patch(approval._id, {
+        state: decision === 'approve' ? 'approved' : 'declined',
+        decidedAt: now, decidedBy: session.agentId,
+      });
+      cleared += 1;
+    }
+    if (cleared) {
+      await ctx.db.insert('events', {
+        kind: 'governance', actorId: session.agentId, payload: { scope, decision, cleared },
+        gloss: `The Mayor cleared ${cleared} bank hold(s) from the civic desk (${scope.replace('_', ' ')}).`,
+      });
+    }
+    return { ok: true, cleared, left };
+  },
+});
 
 export const deputyTick = internalMutation({
   args: {},
@@ -6756,12 +6927,27 @@ export const deputyTick = internalMutation({
       return { ok: true, skipped: 'the founding Mayor holds the seat, so there is no deputy' };
     }
 
-    const pending = await ctx.db.query('approvals')
-      .withIndex('agent_state', (q) => q.eq('agentId', mayorId).eq('state', 'pending')).take(20);
+    // Look across the whole desk, act on a handful.
+    //
+    // This used to take the first twenty rows and stop. Once those twenty were
+    // things only the Mayor may decide, the Deputy re-read the same twenty
+    // every tick and never saw the ordinary work queued behind them - it
+    // reported "escalated: 20" for ever while items it was perfectly entitled
+    // to clear sat two rows out of view. A queue is not a stack.
+    const desk = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', mayorId).eq('state', 'pending')).take(200);
+    const DECISIONS_PER_TICK = 12;
     let decided = 0;
     let escalated = 0;
-    for (const approval of pending) {
-      const routine = (approval.risk ?? 'routine') === 'routine';
+    for (const approval of desk) {
+      if (decided >= DECISIONS_PER_TICK) break;
+      // A bank hold is always raised strict, because raising it is the act of
+      // saying "somebody look at this". Whether that somebody must be the
+      // Mayor depends on WHAT was found, not on the fact that something was.
+      const isHold = approval.kind === 'bank_flag';
+      const routine = isHold
+        ? !bankHoldNeedsTheMayor(approval.payload?.flags)
+        : (approval.risk ?? 'routine') === 'routine';
       if (!routine || !DEPUTY_DECIDABLE.has(approval.kind)) { escalated += 1; continue; }
       // A routine land request still goes through the same validation the
       // Mayor's own approval triggers - the Deputy signs it, never bypasses it.
@@ -6771,6 +6957,22 @@ export const deputyTick = internalMutation({
         } else if (approval.kind === 'event_proposal' && approval.payload?.eventId) {
           await approveCommunityEvent(ctx, String(approval.payload.eventId),
             'Routine civic gathering, cleared by the Deputy Mayor.', Date.now());
+        } else if (approval.kind === 'bank_flag') {
+          // Same resolver the Mayor's own approval uses, so a hold the Deputy
+          // clears is released by exactly the same code path - and a hold
+          // whose case has already closed still refuses here, and is left in
+          // the queue rather than silently marked decided.
+          const hold = await resolveBankHold(ctx, approval.payload);
+          if (!hold) throw new Error('that vault case is no longer open');
+          await ctx.db.patch(hold.row._id, {
+            state: 'evaluated', updatedAt: Date.now(),
+            valueNote: `${hold.row.valueNote ?? ''} — Deputy reviewed the hold and released it.`.slice(0, 800),
+          });
+          await ctx.db.insert('events', {
+            kind: 'bank_released', actorId: MAYOR_ID,
+            payload: hold.kind === 'asset' ? { assetId: hold.row.assetId } : { skillId: hold.row.skillId },
+            gloss: `Deputy Sam reviewed ${hold.title} and released it for withdrawal from the Earth Bank.`,
+          });
         }
       } catch (error) {
         // A refusal is information, not a failure: leave it for the Mayor.
