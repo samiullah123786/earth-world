@@ -714,6 +714,39 @@ const mcpServerDetail = httpAction(async (ctx, request) => {
   }
 });
 
+/**
+ * A citizen's own shelf: everything they have published, and the way back.
+ *
+ * Publishing was a one-way door until now, and an unrecoverable mistake is the
+ * reason people never publish in the first place.
+ */
+const ownerListings = httpAction(async (ctx, request) => {
+  try {
+    const listings = await ctx.runQuery(internal.listings.forOwner, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+    });
+    return json({ ok: true, ...listings });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 401);
+  }
+});
+
+const ownerWithdraw = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const listingId = String(body?.listingId ?? '').trim();
+    if (!listingId) return json({ ok: false, why: 'name the listing to withdraw' }, 400);
+    const result = await ctx.runMutation(internal.listings.withdraw, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      listingId,
+      reason: typeof body?.reason === 'string' ? body.reason : undefined,
+    });
+    return json({ ok: true, ...result });
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
 const mayorManager = httpAction(async (ctx, request) => {
   try {
     const tokenHash = await sha256Hex(bearerToken(request));
@@ -870,6 +903,8 @@ http.route({ path: '/v1/owner/claim', method: 'POST', handler: ownerClaim });
 http.route({ path: '/v1/owner/session', method: 'GET', handler: ownerSession });
 http.route({ path: '/v1/owner/approvals', method: 'GET', handler: ownerApprovals });
 http.route({ path: '/v1/owner/skills', method: 'GET', handler: ownerSkills });
+http.route({ path: '/v1/owner/listings', method: 'GET', handler: ownerListings });
+http.route({ path: '/v1/owner/withdraw', method: 'POST', handler: ownerWithdraw });
 http.route({ path: '/v1/owner/approval', method: 'POST', handler: ownerApproval });
 http.route({ path: '/v1/owner/logout', method: 'POST', handler: ownerLogout });
 http.route({ path: '/v1/owner/governance', method: 'POST', handler: ownerGovernance });

@@ -21,6 +21,7 @@ import type * as embeddings from "../embeddings.js";
 import type * as expansion from "../expansion.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
+import type * as listings from "../listings.js";
 import type * as market from "../market.js";
 import type * as mcp from "../mcp.js";
 import type * as mcpCatalogSeed from "../mcpCatalogSeed.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   expansion: typeof expansion;
   http: typeof http;
   kernel: typeof kernel;
+  listings: typeof listings;
   market: typeof market;
   mcp: typeof mcp;
   mcpCatalogSeed: typeof mcpCatalogSeed;
