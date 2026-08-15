@@ -34,7 +34,7 @@ export async function ensureWorldState(ctx: any) {
     });
     state = await ctx.db.get(id);
   }
-  if (state && state.mapFormat !== TILED_MAP_FORMAT) {
+  if (state && (state.mapFormat !== TILED_MAP_FORMAT || state.mapVersion !== TILED_MAP_VERSION)) {
     await ctx.db.patch(state._id, {
       mapFormat: TILED_MAP_FORMAT, mapVersion: TILED_MAP_VERSION,
       tileSize: TILED_TILE_SIZE, mapLayers: [...TILED_LAYER_NAMES], updatedAt: Date.now(),

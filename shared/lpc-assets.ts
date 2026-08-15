@@ -29,7 +29,7 @@ export const LPC_WORLD_ASSETS = {
   "water": { width: 2, height: 2, solid: true, category: "terrain" },
   "water_barrel": { width: 1, height: 1, solid: true, category: "farming" },
   "window": { width: 1, height: 2, solid: true, category: "architecture" },
-  "wood_door": { width: 1, height: 2, solid: true, category: "architecture" },
+  "wood_door": { width: 1, height: 3, solid: true, category: "architecture" },
   "wood_wall": { width: 3, height: 3, solid: true, category: "architecture" },
   "wooden_bench": { width: 2, height: 1, solid: true, category: "park" },
   "wooden_bridge": { width: 3, height: 2, solid: false, category: "architecture" },

@@ -8,8 +8,9 @@ import { LPC_GRID_SIZE, assertGridSize, renderRoutePoint, structureSortAnchor, t
 import { componentRenderContract, citizenDepth, WORLD_LAYER_DEPTH, type WorldRenderLayer } from './world/layering';
 import { LPC_PREFABS, prefabForStructure, type LpcPrefab } from '../shared/lpc-prefabs';
 import type { DistrictBiome } from '../shared/wfc';
-import { normalizeTiledChunk, tiledLayerMatrix, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
+import { normalizeTiledChunk, tiledLayerMatrix, TILED_GIDS, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
 import { DynamicNavigationGrid } from './world/navigation';
+import { selectRenderableBuilds, siteOriginAwayFromRoad } from './world/scene-layout';
 
 const RENDER_DELAY_MS = 140;
 const LPC_AGENT_KEYS = new Set(Object.keys(AGENT_ANIMATION_FRAMES));
@@ -229,6 +230,8 @@ class EarthScene extends Phaser.Scene {
     this.load.image('lpc-trees', '/assets/lpc_framework/world_tiles/props_outdoor/treetop.png');
     this.load.image('lpc-house', '/assets/lpc_framework/world_tiles/architecture/house.png');
     this.load.image('lpc-farming', '/assets/lpc_framework/world_tiles/farming/crop_growth.png');
+    this.load.image('lpc-trunks', '/assets/lpc_framework/world_tiles/props_outdoor/trunk.png');
+    this.load.image('lpc-bridges', '/assets/lpc_framework/world_tiles/architecture/bridges.png');
     this.load.spritesheet('earth-token', '/assets/currency/earth_token_spin.png', { frameWidth: 32, frameHeight: 32 });
     // The LPC growth strip: plowed, seeded, sprout, growing, ripe.
     this.load.spritesheet('crop-growth', '/assets/lpc_framework/world_tiles/farming/crop_growth.png',
@@ -280,10 +283,10 @@ class EarthScene extends Phaser.Scene {
     const tilesets = [
       ['lpc-grass', 'lpc-grass'], ['lpc-dirt', 'lpc-dirt'], ['lpc-water', 'lpc-water'],
       ['lpc-cobble', 'lpc-cobble'], ['lpc-trees', 'lpc-trees'], ['lpc-house', 'lpc-house'],
-      ['lpc-farming', 'lpc-farming'],
+      ['lpc-farming', 'lpc-farming'], ['lpc-trunks', 'lpc-trunks'], ['lpc-bridges', 'lpc-bridges'],
     ].map(([tiledName, textureKey]) => map.addTilesetImage(tiledName, textureKey))
       .filter((tileset): tileset is Phaser.Tilemaps.Tileset => Boolean(tileset));
-    if (tilesets.length !== 7) throw new Error('every Tiled LPC tileset must be loaded');
+    if (tilesets.length !== 9) throw new Error('every Tiled LPC tileset must be loaded');
 
     this.groundTileLayer = map.createLayer('GroundLayer', tilesets, 0, 0) ?? undefined;
     this.collisionTileLayer = map.createLayer('CollisionLayer', tilesets, 0, 0) ?? undefined;
@@ -664,24 +667,31 @@ class EarthScene extends Phaser.Scene {
 
   renderVenue(venue: Venue) {
     if (!this.objectLayer) return;
-    const prefab = venue.kind === 'training_ground' ? LPC_PREFABS.training_green_3x3
+    const prefab = venue.kind === 'bank' ? LPC_PREFABS.bank_lpc_grand
+      : venue.kind === 'training_ground' ? LPC_PREFABS.training_green_3x3
       : venue.kind === 'park' ? LPC_PREFABS.park
         : venue.kind === 'bench' ? LPC_PREFABS.bench_native_2x1
           : venue.kind === 'table' ? LPC_PREFABS.meeting_table_3x2
             : LPC_PREFABS.plaza_fountain_3x3;
     const x = Math.max(0, Math.round(venue.x - prefab.width / 2));
     const y = Math.max(0, Math.round(venue.y - prefab.height / 2));
-    this.stampLpcBuild({
-      buildId: `venue:${venue.venueId}`, plotId: `venue:${venue.venueId}`, ownerAgentId: 'civic:earth',
-      structure: prefab.structureType, state: 'built', x, y, w: prefab.width, h: prefab.height,
-      blueprint: {
-        name: prefab.name, kind: prefab.structureType, prefabId: prefab.id,
-        assetFramework: lpcManifest.standard,
-        placements: prefab.placements.map((placement) => ({
-          ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
-        })),
-      },
-    });
+    // A venue is usually both an interaction zone and its visible furnishing.
+    // The bank is different: its canonical facade is already a persisted
+    // build. Stamping the generic plaza again put a second fountain and four
+    // lamps inside the front door.
+    if (venue.kind !== 'bank') {
+      this.stampLpcBuild({
+        buildId: `venue:${venue.venueId}`, plotId: `venue:${venue.venueId}`, ownerAgentId: 'civic:earth',
+        structure: prefab.structureType, state: 'built', x, y, w: prefab.width, h: prefab.height,
+        blueprint: {
+          name: prefab.name, kind: prefab.structureType, prefabId: prefab.id,
+          assetFramework: lpcManifest.standard,
+          placements: prefab.placements.map((placement) => ({
+            ...placement, kind: placement.layer === 'ground' ? 'tile' as const : 'prop' as const,
+          })),
+        },
+      });
+    }
     const cx = tileCenter(venue.x), cy = tileCenter(venue.y);
     const zone = this.add.zone(cx, cy, Math.max(42, prefab.width * TILE), Math.max(42, prefab.height * TILE))
       .setInteractive({ useHandCursor: true });
@@ -692,7 +702,9 @@ class EarthScene extends Phaser.Scene {
       const label = this.add.text(cx, tileOrigin(y) - 5, venue.name, {
         fontFamily: 'Consolas, monospace', fontSize: '9px', color: '#FDF6EC',
         backgroundColor: '#3A2A1E', padding: { x: 3, y: 1 },
-      }).setOrigin(0.5).setDepth(structureSortAnchor(y));
+      }).setOrigin(0.5).setDepth(structureSortAnchor(y))
+        .setData('world-detail', true)
+        .setVisible(this.cameras.main.zoom >= 0.85);
       this.objectLayer.add(label);
     }
   }
@@ -735,7 +747,7 @@ class EarthScene extends Phaser.Scene {
       const tileY = (build.y ?? plot?.y ?? 0) + placement.yOffset;
       const image = this.add.image(
         tileOrigin(tileX),
-        tileOrigin(tileY),
+        tileOrigin(tileY + render.visualOffsetY),
         `lpc-component-${placement.assetId}`,
         'blueprint-frame',
       ).setOrigin(0);
@@ -778,10 +790,15 @@ class EarthScene extends Phaser.Scene {
         this.objectLayer.add(zone);
       }
     }
-    for (const build of this.objects.builds) {
+    for (const build of selectRenderableBuilds(this.objects.builds)) {
       const plot = this.objects.plots.find((candidate) => candidate.plotId === build.plotId);
       if (!plot) continue;
-      this.stampLpcBuild(build, plot);
+      const prefab = prefabForStructure(build.blueprint?.kind ?? build.structure);
+      const kind = String(build.blueprint?.kind ?? build.structure);
+      const origin = kind === 'home' || kind === 'cottage'
+        ? siteOriginAwayFromRoad(plot, prefab, (x, y) => this.groundTileLayer?.getTileAt(x, y)?.index === TILED_GIDS.cobbleFill)
+        : { x: build.x ?? plot.x, y: build.y ?? plot.y };
+      this.stampLpcBuild({ ...build, ...origin }, plot);
     }
     if (lpcRenderPreview) {
       const previewPrefab: LpcPrefab = LPC_PREFABS.house_small_brick;
@@ -1473,6 +1490,11 @@ class EarthScene extends Phaser.Scene {
   }
 
   update() {
+    const detailedWorld = this.cameras.main.zoom >= 0.85;
+    for (const child of this.objectLayer?.getChildren() ?? []) {
+      const object = child as Phaser.GameObjects.GameObject & { setVisible?: (visible: boolean) => unknown };
+      if (object.getData('world-detail') === true) object.setVisible?.(detailedWorld);
+    }
     if (this.coinArcs.length) {
       const flightNow = Date.now();
       this.coinArcs = this.coinArcs.filter((arc) => {
@@ -1580,7 +1602,8 @@ class EarthScene extends Phaser.Scene {
         bubble.setVisible(active);
         // The bubble replaces the plate while talking; both never fight for
         // the same pixels again.
-        (sprite.getByName('name-plate') as Phaser.GameObjects.Text | null)?.setVisible(!active);
+        (sprite.getByName('name-plate') as Phaser.GameObjects.Text | null)
+          ?.setVisible(!active && (detailedWorld || citizen.agentId === this.ownerAgentId));
         if (active) for (let i = 0; i < 3; i++) {
           const dot = bubble.getByName(`talk-dot-${i}`) as Phaser.GameObjects.Arc | null;
           // Anchored to the SAME constant the box was drawn from. The old code
@@ -1593,8 +1616,8 @@ class EarthScene extends Phaser.Scene {
       const sleepBubble = sprite.getByName('sleep-bubble') as Phaser.GameObjects.Container | null;
       if (sleepBubble) {
         const sleeping = !citizen.online && !citizen.serviceRole;
-        sleepBubble.setVisible(sleeping);
-        if (sleeping) for (let i = 0; i < 3; i++) {
+        sleepBubble.setVisible(sleeping && detailedWorld);
+        if (sleeping && detailedWorld) for (let i = 0; i < 3; i++) {
           const mark = sleepBubble.getByName(`sleep-z-${i}`) as Phaser.GameObjects.Text | null;
           if (mark) {
             mark.y = BUBBLE_GEOM.sleepBaseY - i * 7 - ((now / 500 + i * 0.8) % 3);

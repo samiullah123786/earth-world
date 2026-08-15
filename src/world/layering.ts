@@ -6,6 +6,7 @@ export type WorldRenderLayer = 'ground' | 'midground' | 'overhead';
 export type ComponentRenderContract = Readonly<{
   layer: WorldRenderLayer;
   anchorRow: number;
+  visualOffsetY: number;
   collisionCells: ReadonlyArray<Readonly<{ x: number; y: number }>>;
 }>;
 
@@ -15,7 +16,7 @@ export function renderLayerForComponent(componentId: string): WorldRenderLayer {
 
 export function componentRenderContract(
   componentId: string,
-  component: { width: number; height: number; solid: boolean },
+  component: { width: number; height: number; solid: boolean; frame?: { height: number } },
 ): ComponentRenderContract {
   const width = assertTileInteger(component.width, `${componentId}.width`);
   const height = assertTileInteger(component.height, `${componentId}.height`);
@@ -26,7 +27,13 @@ export function componentRenderContract(
   const collisionCells = component.solid && layer !== 'overhead'
     ? Array.from({ length: width * height }, (_unused, index) => ({ x: index % width, y: Math.floor(index / width) }))
     : [];
-  return { layer, anchorRow: height, collisionCells };
+  // LPC props are authored from their visual top but placed by the tile where
+  // their feet touch the ground. Bottom-align any art taller than its logical
+  // footprint; roofs get one extra row of lift so their eaves overlap the
+  // facade instead of sitting below it like a detached second building.
+  const visualRows = Math.ceil(Number(component.frame?.height ?? height * LPC_GRID_SIZE) / LPC_GRID_SIZE);
+  const visualOffsetY = componentId === 'roof_tile' ? -2 : Math.min(0, height - visualRows);
+  return { layer, anchorRow: height, visualOffsetY, collisionCells };
 }
 
 export function midgroundDepth(tileY: number, height = 1): number {

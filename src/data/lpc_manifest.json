@@ -15096,9 +15096,9 @@
     },
     "stone_wall": {
       "id": "stone_wall",
-      "sourceAssetId": "lpc_world_tiles_architecture_castlewalls",
-      "path": "world_tiles/architecture/castlewalls.png",
-      "webPath": "/assets/lpc_framework/world_tiles/architecture/castlewalls.png",
+      "sourceAssetId": "lpc_world_tiles_architecture_house",
+      "path": "world_tiles/architecture/house.png",
+      "webPath": "/assets/lpc_framework/world_tiles/architecture/house.png",
       "frame": {
         "x": 0,
         "y": 0,
@@ -15244,20 +15244,20 @@
       "path": "world_tiles/architecture/house.png",
       "webPath": "/assets/lpc_framework/world_tiles/architecture/house.png",
       "frame": {
-        "x": 192,
+        "x": 160,
         "y": 0,
         "width": 32,
-        "height": 64
+        "height": 96
       },
       "width": 1,
-      "height": 2,
+      "height": 3,
       "solid": true,
       "category": "architecture",
       "boundingBox": {
         "x": 0,
         "y": 0,
         "width": 1,
-        "height": 2
+        "height": 3
       },
       "license": "CC-BY-SA-3.0 OR GPL-3.0",
       "credits": "licenses/LPC_BASE_CREDITS.txt"
