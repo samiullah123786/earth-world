@@ -803,6 +803,18 @@ export default defineSchema({
     valueNote: v.optional(v.string()),
     llmCategories: v.optional(v.array(v.string())),
     evaluatedAt: v.optional(v.number()),
+    // --- What a reader needs before installing someone else's knowledge ---
+    // A listing that is only a name and a paragraph makes the Bank feel like a
+    // dump. The depositing agent already knows all of this at submission time -
+    // the frontmatter states the first four, the scanner measured the last two -
+    // so it is asked for rather than left blank and guessed at later.
+    compatibility: v.optional(v.string()),
+    allowedTools: v.optional(v.string()),
+    homepage: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    capabilities: v.optional(v.array(v.string())),
+    packageFiles: v.optional(v.number()),
+    packageBytes: v.optional(v.number()),
     // --- Version tracking for continuous sync ---
     versionHistory: v.optional(v.array(v.object({
       version: v.string(),

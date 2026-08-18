@@ -132,6 +132,26 @@ export const internalSearch = internalAction({
 import { internalQuery } from './_generated/server';
 
 /**
+ * The listing detail a depositing agent supplied, in the shape a reader wants.
+ *
+ * Both projections below spread this so a field added at deposit time cannot
+ * appear in search results and go missing from the manifest, or the reverse.
+ * Everything here is optional - skills banked before the connector started
+ * asking for it simply do not have it, and a listing must render either way.
+ */
+function detailView(doc: any) {
+  return {
+    compatibility: doc.compatibility ?? null,
+    allowedTools: doc.allowedTools ?? null,
+    homepage: doc.homepage ?? null,
+    repository: doc.repository ?? null,
+    capabilities: doc.capabilities ?? [],
+    packageFiles: doc.packageFiles ?? null,
+    packageBytes: doc.packageBytes ?? null,
+  };
+}
+
+/**
  * Internal query to hydrate a bankSkills document as a public manifest.
  * Strips markdownBody and embedding — manifests only cross the boundary.
  */
@@ -161,6 +181,7 @@ export const textSearch = internalQuery({
         safety: { verdict: doc.safety.verdict, flags: doc.safety.flags },
         state: doc.state, valueRank: doc.valueRank, valueNote: doc.valueNote?.slice(0, 200),
         llmCategories: doc.llmCategories, createdAt: doc.createdAt, updatedAt: doc.updatedAt,
+        ...detailView(doc),
         _match: 'text' as const,
       }));
   },
@@ -193,6 +214,7 @@ export const skillManifest = internalQuery({
       llmCategories: doc.llmCategories,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
+      ...detailView(doc),
     };
   },
 });

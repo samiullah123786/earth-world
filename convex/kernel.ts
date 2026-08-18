@@ -37,6 +37,45 @@ const MAX_EVIDENCED_SKILLS = 100_000;
 const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 const MAX_PACKAGE_QUOTA_BYTES = 250 * 1024 * 1024;
 
+/**
+ * The extra listing detail a depositing agent supplies alongside a skill.
+ *
+ * All of it is optional: an older connector sends none of it, and a deposit
+ * must not fail over a missing nicety. What does arrive is trimmed and capped,
+ * and the two links must be real web addresses - a listing is rendered on a
+ * page somebody will click, so `javascript:` and `data:` never survive here.
+ */
+function skillDetailFrom(action: Record<string, unknown>) {
+  const text = (value: unknown, limit: number) => {
+    const trimmed = String(value ?? '').trim();
+    return trimmed ? trimmed.slice(0, limit) : undefined;
+  };
+  const link = (value: unknown) => {
+    const raw = text(value, 300);
+    if (!raw) return undefined;
+    try {
+      const url = new URL(raw);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+    } catch { return undefined; }
+  };
+  const capabilities = (Array.isArray(action.capabilities) ? action.capabilities : [])
+    .map((item) => String(item).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''))
+    .filter(Boolean).slice(0, 12);
+  const count = (value: unknown, limit: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.round(parsed), limit) : undefined;
+  };
+  return {
+    compatibility: text(action.compatibility, 200),
+    allowedTools: text(action.allowedTools, 400),
+    homepage: link(action.homepage),
+    repository: link(action.repository),
+    capabilities: capabilities.length ? capabilities : undefined,
+    packageFiles: count(action.fileCount, 100_000),
+    packageBytes: count(action.sizeBytes, MAX_PACKAGE_QUOTA_BYTES),
+  };
+}
+
 // Extracurricular life. Tools are earned through contribution, so a citizen
 // carrying an axe has demonstrably done something for the town first. These
 // are weighted rank scores, on the same scale as the civic roles (2-15), not
@@ -1842,6 +1881,13 @@ export const act = internalMutation({
       if (!['local', 'plugin', 'github'].includes(sourceKind)) throw new Error('sourceKind must be local, plugin, or github');
       if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 100_000) throw new Error('price must be 0-100,000 Earth Tokens');
 
+      // The listing detail. Every field is optional because older connectors
+      // do not send them, and a deposit must never fail over a missing nicety -
+      // but what does arrive is bounded and, for the two links, checked to be a
+      // real web address so a listing cannot smuggle a javascript: URL onto a
+      // page somebody will click.
+      const detail = skillDetailFrom(action);
+
       const safetyInput = action.safety ?? {};
       const verdict = String(safetyInput.verdict ?? 'inert_safe');
       if (!['inert_safe', 'needs_review'].includes(verdict)) throw new Error('refused skills are never banked');
@@ -1888,7 +1934,7 @@ export const act = internalMutation({
         depositorAgentId: agentId, alsoDepositedBy: [],
         sourceKind: sourceKind as 'local' | 'plugin' | 'github',
         embedding: zeroEmbedding,
-        sizeBytes, license, priceTokens, safety,
+        sizeBytes, license, priceTokens, safety, ...detail,
         state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
         createdAt: now, updatedAt: now,
       });
@@ -1955,6 +2001,10 @@ export const act = internalMutation({
         version,
         name: frontmatter.name ? String(frontmatter.name).trim() : skill.name,
         description: frontmatter.description ? String(frontmatter.description).trim() : skill.description,
+        // An edit to the frontmatter is an edit to the listing. Patching with
+        // undefined clears the field, which is what a citizen who deleted
+        // `homepage:` from their skill meant to happen.
+        ...skillDetailFrom(action),
         versionHistory: history.slice(-20), // keep last 20 versions
         state: 'deposited', // re-evaluate after sync
         evaluatedAt: undefined,

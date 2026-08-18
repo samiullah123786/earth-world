@@ -602,8 +602,14 @@ const publicCommunityEvents = httpAction(async (ctx) => {
   });
 });
 
-const publicFeed = httpAction(async (ctx) => {
+const publicFeed = httpAction(async (ctx, request) => {
   const rows = await ctx.runQuery(internal.kernel.publicFeed, {});
+  // `?limit=` was accepted and ignored, so every caller asking for two events
+  // got ten. Honour it here rather than making each caller trim the reply.
+  const asked = Number(new URL(request.url).searchParams.get('limit'));
+  if (Number.isFinite(asked) && asked > 0 && Array.isArray(rows?.feed)) {
+    rows.feed = rows.feed.slice(0, Math.min(Math.round(asked), 40));
+  }
   return new Response(JSON.stringify(rows), {
     headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=4', 'access-control-allow-origin': '*' },
   });

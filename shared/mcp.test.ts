@@ -81,9 +81,25 @@ describe('install snippets', () => {
     const matrix = mcpInstallMatrix(manifest);
     expect(matrix).toHaveLength(MCP_CLIENTS.length);
     for (const entry of matrix) {
-      expect(() => JSON.parse(entry.snippet), entry.client.id).not.toThrow();
+      // Each snippet must be valid in the dialect its client actually reads.
+      // Handing someone a JSON block for a TOML config is worse than handing
+      // them nothing: it looks right until the client silently ignores it.
+      if (entry.client.format === 'toml') {
+        expect(entry.snippet, entry.client.id).toMatch(/^\[mcp_servers\.[a-z0-9-]+\]$/m);
+        expect(entry.snippet, entry.client.id).toMatch(/^command = "/m);
+      } else {
+        expect(() => JSON.parse(entry.snippet), entry.client.id).not.toThrow();
+      }
       expect(entry.configPath).toBeTruthy();
     }
+  });
+
+  it('writes Codex a TOML table, not a JSON object', () => {
+    const snippet = mcpInstallSnippet(validateMcpManifest(STDIO), 'codex').snippet;
+    expect(snippet.startsWith('[mcp_servers.')).toBe(true);
+    expect(snippet).not.toContain('"mcpServers"');
+    // Arrays are inline TOML arrays of quoted strings, not JSON fragments.
+    expect(snippet).toMatch(/^args = \[".*"\]$/m);
   });
 
   it('uses each client\'s own key, because they genuinely differ', () => {
