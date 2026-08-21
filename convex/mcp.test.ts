@@ -112,7 +112,10 @@ describe('the detail page', () => {
     expect(page.tools).toHaveLength(1);
     expect(page.install.length).toBeGreaterThan(4);
     for (const entry of page.install) {
-      expect(() => JSON.parse(entry.snippet)).not.toThrow();
+      // Codex reads TOML; everyone else reads JSON. Both must be valid in the
+      // dialect the client actually parses.
+      if (entry.client.format === 'toml') expect(entry.snippet).toMatch(/^\[mcp_servers\./);
+      else expect(() => JSON.parse(entry.snippet)).not.toThrow();
     }
     const cursor = page.install.find((entry: any) => entry.client.id === 'cursor');
     expect(JSON.parse(cursor.snippet).mcpServers['weather-lookup'].command).toBe('npx');

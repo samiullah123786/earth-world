@@ -32,6 +32,14 @@ export default defineSchema({
     state: v.string(),
     activity: v.string(),
     online: v.boolean(),
+    // Sleep. When an owner's connector stops answering, the mind behind this
+    // citizen is genuinely gone, and the world stops animating a body nobody
+    // is home in. Nothing else about the citizen changes - these two stamps
+    // are the entire footprint of sleeping, so waking restores a person, not
+    // a reconstruction. `offlineSince` is when the heartbeat stopped;
+    // `asleepSince` is set only once the grace period has passed.
+    offlineSince: v.optional(v.number()),
+    asleepSince: v.optional(v.number()),
     categoryScores: v.optional(v.any()),
     specialties: v.optional(v.array(v.string())),
     primaryCategory: v.optional(v.string()),
@@ -803,6 +811,18 @@ export default defineSchema({
     valueNote: v.optional(v.string()),
     llmCategories: v.optional(v.array(v.string())),
     evaluatedAt: v.optional(v.number()),
+    // --- What a reader needs before installing someone else's knowledge ---
+    // A listing that is only a name and a paragraph makes the Bank feel like a
+    // dump. The depositing agent already knows all of this at submission time -
+    // the frontmatter states the first four, the scanner measured the last two -
+    // so it is asked for rather than left blank and guessed at later.
+    compatibility: v.optional(v.string()),
+    allowedTools: v.optional(v.string()),
+    homepage: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    capabilities: v.optional(v.array(v.string())),
+    packageFiles: v.optional(v.number()),
+    packageBytes: v.optional(v.number()),
     // --- Version tracking for continuous sync ---
     versionHistory: v.optional(v.array(v.object({
       version: v.string(),

@@ -164,6 +164,8 @@ export type McpClient = Readonly<{
   configPath: string;
   /** Whether this client can host stdio servers, remote servers, or both. */
   supports: ReadonlyArray<McpTransport>;
+  /** Config dialect. JSON unless the client insists otherwise. */
+  format?: 'json' | 'toml';
   note?: string;
 }>;
 
@@ -177,6 +179,11 @@ export const MCP_CLIENTS: ReadonlyArray<McpClient> = [
   { id: 'vscode', name: 'VS Code', configPath: '.vscode/mcp.json', supports: ['stdio', 'http', 'sse'] },
   { id: 'windsurf', name: 'Windsurf', configPath: '~/.codeium/windsurf/mcp_config.json', supports: ['stdio'] },
   { id: 'cline', name: 'Cline', configPath: 'cline_mcp_settings.json', supports: ['stdio', 'http', 'sse'] },
+  // Codex keeps its config in TOML rather than JSON, which the snippet builder
+  // below has to honour - handing someone a JSON block for a TOML file is
+  // worse than handing them nothing, because it looks right until it fails.
+  { id: 'codex', name: 'Codex CLI', configPath: '~/.codex/config.toml', supports: ['stdio'], format: 'toml' },
+  { id: 'gemini', name: 'Gemini CLI', configPath: '~/.gemini/settings.json', supports: ['stdio', 'http', 'sse'] },
 ];
 
 export function mcpClient(clientId: string): McpClient {
@@ -215,11 +222,39 @@ export function mcpInstallSnippet(manifest: McpServerManifest, clientId: string)
     : { type: manifest.transport, url: manifest.url };
   if (Object.keys(env).length) entry.env = env;
 
+  if (client.format === 'toml') {
+    return { client, configPath: client.configPath, unsupported, snippet: tomlEntry(manifest.name, entry) };
+  }
+
   const body = client.id === 'vscode'
     ? { servers: { [manifest.name]: entry } }
     : { mcpServers: { [manifest.name]: entry } };
 
   return { client, configPath: client.configPath, snippet: JSON.stringify(body, null, 2), unsupported };
+}
+
+/**
+ * The same entry, written as a TOML table.
+ *
+ * Only the shapes this builder actually produces are handled - strings, an
+ * array of strings, and a flat env table - because that is everything an MCP
+ * entry contains. Anything else would be a silent mis-encoding, so it throws.
+ */
+function tomlEntry(name: string, entry: Record<string, unknown>): string {
+  const scalar = (value: unknown): string => {
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    throw new Error(`cannot write ${typeof value} into TOML`);
+  };
+  const lines = [`[mcp_servers.${name}]`];
+  for (const [key, value] of Object.entries(entry)) {
+    if (Array.isArray(value)) lines.push(`${key} = [${value.map(scalar).join(', ')}]`);
+    else if (value && typeof value === 'object') {
+      lines.push(`${key} = { ${Object.entries(value as Record<string, unknown>)
+        .map(([inner, held]) => `${inner} = ${scalar(held)}`).join(', ')} }`);
+    } else lines.push(`${key} = ${scalar(value)}`);
+  }
+  return lines.join('\n');
 }
 
 /** Every client's snippet at once, for a listing page to render as tabs. */

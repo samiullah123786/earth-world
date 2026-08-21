@@ -29,6 +29,10 @@ crons.interval('civic committee', { minutes: 30 }, internal.committee.tick, {});
 // The Deputy Mayor clears routine civic work so a sleeping Mayor never
 // becomes a stalled town. Consequential decisions are never touched.
 crons.interval('deputy mayor', { minutes: 4 }, internal.kernel.deputyTick, {});
+// An approval outlives the case it is about, and a queue full of items that
+// cannot be decided is worse than an empty one. Anything pointing at a closed
+// case is withdrawn on its own.
+crons.interval('approval reconciliation', { minutes: 30 }, internal.kernel.reconcileApprovals, {});
 
 // The Chronicler writes at most one town bulletin per calendar day, under the
 // same switches and budgets as every other always-on mind. A quiet day earns

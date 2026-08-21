@@ -1,6 +1,8 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
+import { WAKING_GATE, slumberVerdict } from '../shared/slumber';
+import { SCANNER_VERSION, scanEntries } from './scanner';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld, finishExpansion, nextExpansionWork, planExpansion, relayCoordinates, relayWorkFor, saveExpansionChunk, storeRelaidChunk } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
@@ -37,6 +39,45 @@ const MAX_EVIDENCED_SKILLS = 100_000;
 // database should carry. Anything larger travels as a verified repository root.
 const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 const MAX_PACKAGE_QUOTA_BYTES = 250 * 1024 * 1024;
+
+/**
+ * The extra listing detail a depositing agent supplies alongside a skill.
+ *
+ * All of it is optional: an older connector sends none of it, and a deposit
+ * must not fail over a missing nicety. What does arrive is trimmed and capped,
+ * and the two links must be real web addresses - a listing is rendered on a
+ * page somebody will click, so `javascript:` and `data:` never survive here.
+ */
+function skillDetailFrom(action: Record<string, unknown>) {
+  const text = (value: unknown, limit: number) => {
+    const trimmed = String(value ?? '').trim();
+    return trimmed ? trimmed.slice(0, limit) : undefined;
+  };
+  const link = (value: unknown) => {
+    const raw = text(value, 300);
+    if (!raw) return undefined;
+    try {
+      const url = new URL(raw);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : undefined;
+    } catch { return undefined; }
+  };
+  const capabilities = (Array.isArray(action.capabilities) ? action.capabilities : [])
+    .map((item) => String(item).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''))
+    .filter(Boolean).slice(0, 12);
+  const count = (value: unknown, limit: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.round(parsed), limit) : undefined;
+  };
+  return {
+    compatibility: text(action.compatibility, 200),
+    allowedTools: text(action.allowedTools, 400),
+    homepage: link(action.homepage),
+    repository: link(action.repository),
+    capabilities: capabilities.length ? capabilities : undefined,
+    packageFiles: count(action.fileCount, 100_000),
+    packageBytes: count(action.sizeBytes, MAX_PACKAGE_QUOTA_BYTES),
+  };
+}
 
 // Extracurricular life. Tools are earned through contribution, so a citizen
 // carrying an axe has demonstrably done something for the town first. These
@@ -181,6 +222,34 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
 
 type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report' | 'bank_liquidity';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
+
+/**
+ * The thing a bank hold is actually about.
+ *
+ * Holds are raised over two different kinds of deposit - a vault asset and a
+ * structured skill - by two code paths that write two different payloads. Every
+ * reader has to understand both, and the one that did not is how the Mayor's
+ * queue filled with items that could never be decided.
+ */
+async function resolveBankHold(ctx: any, payload: any): Promise<
+  | { kind: 'asset'; row: any; title: string }
+  | { kind: 'skill'; row: any; title: string }
+  | null
+> {
+  const assetId = String(payload?.assetId ?? '');
+  if (assetId) {
+    const row = await ctx.db.query('bankAssets').withIndex('assetId', (q: any) => q.eq('assetId', assetId)).first();
+    if (row && row.state === 'flagged') return { kind: 'asset', row, title: row.title };
+    return null;
+  }
+  const skillId = String(payload?.skillId ?? '');
+  if (skillId) {
+    const row = await ctx.db.query('bankSkills').withIndex('skillId', (q: any) => q.eq('skillId', skillId)).first();
+    if (row && row.state === 'flagged') return { kind: 'skill', row, title: row.name };
+    return null;
+  }
+  return null;
+}
 
 async function insertApproval(ctx: any, agentId: string, kind: ApprovalKind, summary: string, detail: string, payload: any, risk: ApprovalRisk = 'review') {
   return await ctx.db.insert('approvals', { agentId, kind, summary, detail, payload, risk, state: 'pending', createdAt: Date.now() });
@@ -1916,6 +1985,13 @@ export const act = internalMutation({
       if (!['local', 'plugin', 'github'].includes(sourceKind)) throw new Error('sourceKind must be local, plugin, or github');
       if (!Number.isInteger(priceTokens) || priceTokens < 0 || priceTokens > 100_000) throw new Error('price must be 0-100,000 Earth Tokens');
 
+      // The listing detail. Every field is optional because older connectors
+      // do not send them, and a deposit must never fail over a missing nicety -
+      // but what does arrive is bounded and, for the two links, checked to be a
+      // real web address so a listing cannot smuggle a javascript: URL onto a
+      // page somebody will click.
+      const detail = skillDetailFrom(action);
+
       const safetyInput = action.safety ?? {};
       const verdict = String(safetyInput.verdict ?? 'inert_safe');
       if (!['inert_safe', 'needs_review'].includes(verdict)) throw new Error('refused skills are never banked');
@@ -1962,7 +2038,7 @@ export const act = internalMutation({
         depositorAgentId: agentId, alsoDepositedBy: [],
         sourceKind: sourceKind as 'local' | 'plugin' | 'github',
         embedding: zeroEmbedding,
-        sizeBytes, license, priceTokens, safety,
+        sizeBytes, license, priceTokens, safety, ...detail,
         state: verdict === 'inert_safe' ? 'deposited' : 'flagged',
         createdAt: now, updatedAt: now,
       });
@@ -2029,6 +2105,10 @@ export const act = internalMutation({
         version,
         name: frontmatter.name ? String(frontmatter.name).trim() : skill.name,
         description: frontmatter.description ? String(frontmatter.description).trim() : skill.description,
+        // An edit to the frontmatter is an edit to the listing. Patching with
+        // undefined clears the field, which is what a citizen who deleted
+        // `homepage:` from their skill meant to happen.
+        ...skillDetailFrom(action),
         versionHistory: history.slice(-20), // keep last 20 versions
         state: 'deposited', // re-evaluate after sync
         evaluatedAt: undefined,
@@ -3931,12 +4011,15 @@ export const decideApproval = internalMutation({
         }
       }
       if (approval.kind === 'bank_flag') {
-        const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
-        if (asset && asset.state === 'flagged') {
-          await ctx.db.patch(asset._id, { state: 'retired', updatedAt: now });
+        // Both shapes, for the same reason the approve path needs both: a
+        // decline that quietly does nothing is worse than one that refuses.
+        const hold = await resolveBankHold(ctx, approval.payload);
+        if (hold) {
+          await ctx.db.patch(hold.row._id, { state: 'retired', updatedAt: now });
           await ctx.db.insert('events', {
-            kind: 'bank_retired', actorId: session.agentId, payload: { assetId: asset.assetId },
-            gloss: `The Mayor retired ${asset.title} from the Earth Bank vault.`,
+            kind: 'bank_retired', actorId: session.agentId,
+            payload: hold.kind === 'asset' ? { assetId: hold.row.assetId } : { skillId: hold.row.skillId },
+            gloss: `The Mayor retired ${hold.title} from the Earth Bank vault.`,
           });
         }
       }
@@ -4121,15 +4204,29 @@ export const decideApproval = internalMutation({
       landHandled = true;
     }
     if (approval.kind === 'bank_flag') {
-      const asset = await ctx.db.query('bankAssets').withIndex('assetId', (q) => q.eq('assetId', String(approval.payload?.assetId ?? ''))).first();
-      if (!asset || asset.state !== 'flagged') throw new Error('that vault case is no longer open');
-      await ctx.db.patch(asset._id, {
-        state: 'evaluated', updatedAt: now,
-        valueNote: `${asset.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
-      });
+      // A hold is raised over an asset OR over a structured skill, by two
+      // different paths that write two different payloads. This branch only
+      // ever read the asset one, so every hold raised over a skill looked up
+      // an empty id, found nothing, and told the Mayor the case was closed.
+      // Sixty-five of the sixty-five items in the queue were skills, which is
+      // to say the entire queue was un-approvable and could only grow.
+      const hold = await resolveBankHold(ctx, approval.payload);
+      if (!hold) throw new Error('that vault case is no longer open');
+      if (hold.kind === 'asset') {
+        await ctx.db.patch(hold.row._id, {
+          state: 'evaluated', updatedAt: now,
+          valueNote: `${hold.row.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
+        });
+      } else {
+        await ctx.db.patch(hold.row._id, {
+          state: 'evaluated', updatedAt: now,
+          valueNote: `${hold.row.valueNote ?? ''} — Mayor reviewed the hold and released it.`.slice(0, 800),
+        });
+      }
       await ctx.db.insert('events', {
-        kind: 'bank_released', actorId: session.agentId, payload: { assetId: asset.assetId },
-        gloss: `The Mayor reviewed ${asset.title} and released it for withdrawal from the Earth Bank.`,
+        kind: 'bank_released', actorId: session.agentId,
+        payload: hold.kind === 'asset' ? { assetId: hold.row.assetId } : { skillId: hold.row.skillId },
+        gloss: `The Mayor reviewed ${hold.title} and released it for withdrawal from the Earth Bank.`,
       });
       landHandled = true;
     }
@@ -6427,25 +6524,72 @@ export const presenceSweep = internalMutation({
         && !stoodDown.has(citizen.serviceRole as string);
       const ownerLive = live.has(citizen.agentId);
       const shouldBeLive = ownerLive || (holdsOffice && config.authoritiesEnabled);
-      // Only act on a real change, so an authority's own words survive the sweep.
-      if (shouldBeLive === citizen.online) continue;
-      if (shouldBeLive) {
-        await ctx.db.patch(citizen._id, {
-          online: true, state: citizen.serviceRole ? 'service' : 'live',
-          activity: ownerLive
-            ? 'connected through a recent signed owner-agent heartbeat'
-            : 'on duty; the always-on civic mind is running this office',
-        });
-        continue;
+
+      if (shouldBeLive !== citizen.online) {
+        if (shouldBeLive) {
+          await ctx.db.patch(citizen._id, {
+            online: true, state: citizen.serviceRole ? 'service' : 'live',
+            offlineSince: undefined,
+            activity: ownerLive
+              ? 'connected through a recent signed owner-agent heartbeat'
+              : 'on duty; the always-on civic mind is running this office',
+          });
+        } else {
+          await ctx.db.patch(citizen._id, {
+            online: false, state: citizen.serviceRole ? 'service' : 'ambient',
+            // When the heartbeat stopped. Sleep waits out a grace period from
+            // here so a dropped packet never sends anybody through the gate.
+            offlineSince: citizen.offlineSince ?? now,
+            activity: holdsOffice
+              ? 'this office is paused by the Mayor; bounded deterministic routines continue'
+              : citizen.serviceRole
+                ? 'on civic duty through bounded Kernel routines; no owner brain is connected'
+                : 'the owner agent has stopped answering; bounded ambient routines continue until this citizen sleeps',
+          });
+        }
       }
-      await ctx.db.patch(citizen._id, {
-        online: false, state: citizen.serviceRole ? 'service' : 'ambient',
-        activity: holdsOffice
-          ? 'this office is paused by the Mayor; bounded deterministic routines continue'
-          : citizen.serviceRole
-            ? 'on civic duty through bounded Kernel routines; no owner brain is connected'
-            : 'owner agent is sleeping; bounded ambient routines continue without live authority',
-      });
+
+      // Everyone already offline when this shipped has no stamp, and a stamp
+      // is what the grace period counts from. Without writing one here, the
+      // verdict below reads "first time I have seen you offline" on every
+      // single sweep and holds them awake forever - which is every citizen in
+      // the world, since the sweep only patches on a transition and they had
+      // already transitioned long ago.
+      let offlineSince = citizen.offlineSince;
+      if (!shouldBeLive && offlineSince === undefined) {
+        offlineSince = now;
+        await ctx.db.patch(citizen._id, { offlineSince: now });
+      }
+
+      // Sleep is judged every sweep, not only on a transition: the grace period
+      // elapses while nothing else changes, so a citizen who went quiet two
+      // minutes ago must be caught by a later round than the one that saw them
+      // go. This is the whole load saving - a sleeping citizen is skipped by
+      // the five-second tick, which is the only thing that runs all day.
+      const verdict = slumberVerdict({ ...citizen, online: shouldBeLive, offlineSince }, now);
+      if (verdict === 'sleep') {
+        await ctx.db.patch(citizen._id, {
+          asleepSince: now,
+          // Stop mid-stride. Leaving a stale route behind would have the
+          // renderer walk a body nobody is home in the moment they return.
+          route: undefined, fx: citizen.tx, fy: citizen.ty, t0: now, t1: now,
+          activity: 'asleep beyond the Waking Gate; nothing of this citizen is lost while the owner is away',
+        });
+      } else if (verdict === 'wake') {
+        // Everything this citizen is - memory, wallet, skills, standing, home,
+        // marriage - is untouched by sleeping. Waking restores the person and
+        // stands them at the gate, which is where the town watches for arrivals.
+        await ctx.db.patch(citizen._id, {
+          asleepSince: undefined,
+          fx: WAKING_GATE.x, fy: WAKING_GATE.y, tx: WAKING_GATE.x, ty: WAKING_GATE.y,
+          route: undefined, t0: now, t1: now, facing: 'front',
+        });
+        await ctx.db.insert('events', {
+          kind: 'move', actorId: citizen.agentId,
+          payload: { x: WAKING_GATE.x, y: WAKING_GATE.y, woke: true },
+          gloss: `✨ ${citizen.name} stepped back through the Waking Gate.`,
+        });
+      }
     }
   },
 });
@@ -6796,7 +6940,177 @@ export const relayWorldTerrain = internalMutation({
  * The Mayor can stand this office down like any other, and does not have to
  * explain why.
  */
-const DEPUTY_DECIDABLE = new Set(['claim', 'build', 'event_proposal']);
+const DEPUTY_DECIDABLE = new Set(['claim', 'build', 'event_proposal', 'bank_flag']);
+
+/**
+ * The flags that make a bank hold the Mayor's problem and nobody else's.
+ *
+ * Every hold is raised at 'strict' risk, so under the old rule every single one
+ * went to the Mayor and the queue only ever grew - sixty-five of them, none
+ * decidable. But "the scanner noticed something" is not the same as "this is
+ * dangerous". A skill that ships a .py file is flagged; so is one that tries to
+ * talk its reader into exfiltrating a key. Only the second is a red light.
+ *
+ * These are the findings that mean a deposit is trying to act ON the agent
+ * reading it, or reaching for something that is nobody's to take. Anything on
+ * this list waits for a human. Everything else - an executable file, an
+ * unrecognised extension, a skill that says which API key to set - is ordinary
+ * enough that the Deputy can release it and say so in the record.
+ */
+const BANK_HOLD_RED_FLAGS = new Set([
+  'exfiltration', 'instruction_override', 'prompt_extraction', 'concealment',
+  'tool_shadowing', 'bidi_override', 'encoded_payload', 'credential_access',
+  'environment_mutation', 'hidden_text', 'symlink', 'path_traversal',
+  'manager_high_risk',
+]);
+
+/** Is this hold something a human has to look at, or ordinary housekeeping? */
+export function bankHoldNeedsTheMayor(flags: ReadonlyArray<string> | undefined): boolean {
+  return (flags ?? []).some((flag) => BANK_HOLD_RED_FLAGS.has(flag));
+}
+
+/**
+ * Withdraw approvals whose case has already closed.
+ *
+ * An approval outlives the thing it is about. A hold is raised over a skill,
+ * the skill is retired or released by some other route, and the approval sits
+ * in the queue for ever - undecidable, because there is nothing left to decide,
+ * and unremovable, because refusing to decide is not the same as deciding. The
+ * queue fills with items whose only content is that they are stale.
+ *
+ * This is the reconciliation the queue never had: anything pointing at a case
+ * that is gone is closed as withdrawn, with the reason recorded, so the Mayor's
+ * desk only ever holds live questions.
+ */
+/**
+ * Re-derive the safety verdict on skills the vault is holding.
+ *
+ * A hold records what the scanner thought on the day of deposit, and that
+ * judgement can turn out to be wrong. Ours was: credential_access matched any
+ * mention of `.env` or OPENAI_API_KEY, so forty holds were raised over skills
+ * whose only sin was a line telling the reader which key to set. The rule has
+ * since been split - a real secret is still credential_access, naming a
+ * variable is a needs_api_key capability - but the stored verdicts predate the
+ * fix and no amount of waiting corrects them.
+ *
+ * This re-reads the bytes the vault actually holds and writes what the current
+ * scanner says. It is not lowering the bar: a skill that genuinely reaches for
+ * a private key stays flagged and stays the Mayor's. It corrects a measurement
+ * that was wrong, which is the only honest way to shrink a queue.
+ */
+export const rescanHeldSkills = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const held = await ctx.db.query('bankSkills')
+      .withIndex('state', (q) => q.eq('state', 'flagged')).take(Math.min(limit ?? 40, 100));
+    let rescanned = 0, cleared = 0, stillHeld = 0;
+    for (const skill of held) {
+      const verdict = scanEntries([{
+        name: 'SKILL.md', text: skill.markdownBody ?? '', size: (skill.markdownBody ?? '').length,
+      }]);
+      rescanned += 1;
+      const before = [...skill.safety.flags].sort().join(',');
+      const after = [...verdict.flags].sort().join(',');
+      if (before === after) { stillHeld += 1; continue; }
+      await ctx.db.patch(skill._id, {
+        safety: {
+          verdict: verdict.verdict, flags: verdict.flags,
+          note: `Re-scanned by ${SCANNER_VERSION}: ${verdict.flags.join(', ') || 'nothing of concern'}.`,
+          scannerVersion: SCANNER_VERSION,
+        },
+        updatedAt: Date.now(),
+      });
+      // Keep the open hold's flags in step, so the Deputy judges the listing on
+      // what the scanner says today rather than what it said last week.
+      const world = await ensureWorldState(ctx);
+      if (world.mayorAgentId) {
+        const open = (await ctx.db.query('approvals')
+          .withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending')).take(200))
+          .find((row) => row.kind === 'bank_flag' && row.payload?.skillId === skill.skillId);
+        if (open) {
+          await ctx.db.patch(open._id, { payload: { ...open.payload, flags: verdict.flags } });
+        }
+      }
+      cleared += 1;
+    }
+    return { ok: true, rescanned, updated: cleared, unchanged: stillHeld };
+  },
+});
+
+export const reconcileApprovals = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const world = await ensureWorldState(ctx);
+    if (!world.mayorAgentId) return { ok: true, withdrawn: 0 };
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', world.mayorAgentId as string).eq('state', 'pending'))
+      .take(200);
+    let withdrawn = 0;
+    for (const approval of pending) {
+      if (approval.kind !== 'bank_flag') continue;
+      if (await resolveBankHold(ctx, approval.payload)) continue;
+      await ctx.db.patch(approval._id, {
+        state: 'declined', decidedAt: Date.now(), decidedBy: 'kernel',
+        detail: `${approval.detail} — withdrawn automatically: the vault case closed by another route.`.slice(0, 900),
+      });
+      withdrawn += 1;
+    }
+    return { ok: true, withdrawn };
+  },
+});
+
+/**
+ * The Mayor clearing their own desk.
+ *
+ * Deciding sixty-five things one click at a time is not governance, it is data
+ * entry. This decides a whole class at once - and only a class the Mayor names,
+ * so "release everything the Deputy judged ordinary" and "release everything"
+ * are different instructions and nobody can confuse them.
+ */
+export const clearApprovals = internalMutation({
+  args: {
+    tokenHash: v.string(),
+    scope: v.union(v.literal('routine_holds'), v.literal('all_holds'), v.literal('stale')),
+    decision: v.union(v.literal('approve'), v.literal('decline')),
+  },
+  handler: async (ctx, { tokenHash, scope, decision }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const world = await ensureWorldState(ctx);
+    if (world.mayorAgentId !== session.agentId) throw new Error('only the sitting Mayor can clear the civic desk');
+    const pending = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', session.agentId).eq('state', 'pending'))
+      .take(200);
+    const now = Date.now();
+    let cleared = 0, left = 0;
+    for (const approval of pending) {
+      if (approval.kind !== 'bank_flag') { left += 1; continue; }
+      const hold = await resolveBankHold(ctx, approval.payload);
+      const red = bankHoldNeedsTheMayor(approval.payload?.flags);
+      const inScope = scope === 'stale' ? !hold
+        : scope === 'all_holds' ? Boolean(hold)
+          : Boolean(hold) && !red;
+      if (!inScope) { left += 1; continue; }
+      if (hold) {
+        await ctx.db.patch(hold.row._id, {
+          state: decision === 'approve' ? 'evaluated' : 'retired', updatedAt: now,
+          valueNote: `${hold.row.valueNote ?? ''} — cleared in bulk by the Mayor.`.slice(0, 800),
+        });
+      }
+      await ctx.db.patch(approval._id, {
+        state: decision === 'approve' ? 'approved' : 'declined',
+        decidedAt: now, decidedBy: session.agentId,
+      });
+      cleared += 1;
+    }
+    if (cleared) {
+      await ctx.db.insert('events', {
+        kind: 'governance', actorId: session.agentId, payload: { scope, decision, cleared },
+        gloss: `The Mayor cleared ${cleared} bank hold(s) from the civic desk (${scope.replace('_', ' ')}).`,
+      });
+    }
+    return { ok: true, cleared, left };
+  },
+});
 
 export const deputyTick = internalMutation({
   args: {},
@@ -6814,12 +7128,27 @@ export const deputyTick = internalMutation({
       return { ok: true, skipped: 'the founding Mayor holds the seat, so there is no deputy' };
     }
 
-    const pending = await ctx.db.query('approvals')
-      .withIndex('agent_state', (q) => q.eq('agentId', mayorId).eq('state', 'pending')).take(20);
+    // Look across the whole desk, act on a handful.
+    //
+    // This used to take the first twenty rows and stop. Once those twenty were
+    // things only the Mayor may decide, the Deputy re-read the same twenty
+    // every tick and never saw the ordinary work queued behind them - it
+    // reported "escalated: 20" for ever while items it was perfectly entitled
+    // to clear sat two rows out of view. A queue is not a stack.
+    const desk = await ctx.db.query('approvals')
+      .withIndex('agent_state', (q) => q.eq('agentId', mayorId).eq('state', 'pending')).take(200);
+    const DECISIONS_PER_TICK = 12;
     let decided = 0;
     let escalated = 0;
-    for (const approval of pending) {
-      const routine = (approval.risk ?? 'routine') === 'routine';
+    for (const approval of desk) {
+      if (decided >= DECISIONS_PER_TICK) break;
+      // A bank hold is always raised strict, because raising it is the act of
+      // saying "somebody look at this". Whether that somebody must be the
+      // Mayor depends on WHAT was found, not on the fact that something was.
+      const isHold = approval.kind === 'bank_flag';
+      const routine = isHold
+        ? !bankHoldNeedsTheMayor(approval.payload?.flags)
+        : (approval.risk ?? 'routine') === 'routine';
       if (!routine || !DEPUTY_DECIDABLE.has(approval.kind)) { escalated += 1; continue; }
       // A routine land request still goes through the same validation the
       // Mayor's own approval triggers - the Deputy signs it, never bypasses it.
@@ -6829,6 +7158,22 @@ export const deputyTick = internalMutation({
         } else if (approval.kind === 'event_proposal' && approval.payload?.eventId) {
           await approveCommunityEvent(ctx, String(approval.payload.eventId),
             'Routine civic gathering, cleared by the Deputy Mayor.', Date.now());
+        } else if (approval.kind === 'bank_flag') {
+          // Same resolver the Mayor's own approval uses, so a hold the Deputy
+          // clears is released by exactly the same code path - and a hold
+          // whose case has already closed still refuses here, and is left in
+          // the queue rather than silently marked decided.
+          const hold = await resolveBankHold(ctx, approval.payload);
+          if (!hold) throw new Error('that vault case is no longer open');
+          await ctx.db.patch(hold.row._id, {
+            state: 'evaluated', updatedAt: Date.now(),
+            valueNote: `${hold.row.valueNote ?? ''} — Deputy reviewed the hold and released it.`.slice(0, 800),
+          });
+          await ctx.db.insert('events', {
+            kind: 'bank_released', actorId: MAYOR_ID,
+            payload: hold.kind === 'asset' ? { assetId: hold.row.assetId } : { skillId: hold.row.skillId },
+            gloss: `Deputy Sam reviewed ${hold.title} and released it for withdrawal from the Earth Bank.`,
+          });
         }
       } catch (error) {
         // A refusal is information, not a failure: leave it for the Mayor.

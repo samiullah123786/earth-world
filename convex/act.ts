@@ -3,6 +3,7 @@ import { createRouter, findRoute, walkableInWorld } from './pathfinding';
 import { ensureWorldState } from './planning';
 import { loadWorldWalkability } from './worldGrid';
 import { intersectingZoneIds, spatialTransitionKey } from '../shared/tiled-world';
+import { isAsleep } from '../shared/slumber';
 
 const SPEED = 2.2;
 const STROLLS = [
@@ -94,13 +95,21 @@ export const ambientTick = internalMutation({
     // which is exactly why citizens stood still and then jumped. This
     // snapshot is the tick's whole read budget, and it does not grow with
     // population: more citizens now cost arithmetic, not queries.
-    const [allVenues, allPlots, allTickets, recentConversations, allZones] = await Promise.all([
+    const [allVenues, allPlots, allTickets, recentConversations, allZones, allDayPlans] = await Promise.all([
       ctx.db.query('venues').collect(),
       ctx.db.query('plots').collect(),
       ctx.db.query('careTickets').withIndex('state', (q: any) => q.eq('state', 'open')).take(20),
       ctx.db.query('conversations').order('desc').take(120),
       ctx.db.query('activityZones').collect(),
+      // Day plans were read one query per citizen per tick - seventeen lookups
+      // every five seconds, almost all of them finding nothing. That is exactly
+      // the per-citizen cost this snapshot exists to prevent, and the same
+      // class of mistake that once timed the tick out. One read, indexed by
+      // agent below.
+      ctx.db.query('dayPlans').collect(),
     ]);
+    const plansByAgent = new Map<string, (typeof allDayPlans)[number]>();
+    for (const plan of allDayPlans) plansByAgent.set(plan.agentId, plan);
     const homeByOwner = new Map<string, any>();
     for (const plot of allPlots) if (plot.ownerAgentId) homeByOwner.set(plot.ownerAgentId, plot);
     // Who has spoken with whom, derived once from the recent window.
@@ -253,6 +262,12 @@ export const ambientTick = internalMutation({
     // froze mid-walk, and states flickered. Needs must never slow the world.
     for (const citizen of citizens) {
       const isService = Boolean(citizen.serviceRole);
+      // A sleeping citizen is not animated at all. Their owner's connector has
+      // stopped answering, so there is no mind behind them - and walking a body
+      // nobody is home in was both the largest standing load on this tick and
+      // the least honest thing in the world. Nothing about them is changed by
+      // being skipped; they are simply still, and unseen, until they return.
+      if (isAsleep(citizen)) continue;
       if ((citizen.online && !isService) || talking.has(citizen.agentId) || (citizen.attendingUntil ?? 0) > now
         || (citizen.buildingUntil ?? 0) > now
         || (citizen.workingUntil ?? 0) > now
@@ -292,7 +307,7 @@ export const ambientTick = internalMutation({
       }
       // H4 owner-brain day plans: while the owner is away, follow the plan the
       // owner's real LLM wrote - one step per ambient turn, then back to drives.
-      const plan = await ctx.db.query('dayPlans').withIndex('agentId', (q: any) => q.eq('agentId', citizen.agentId)).first();
+      const plan = plansByAgent.get(citizen.agentId) ?? null;
       let planStep: { kind: string; why: string; x?: number; y?: number } | null = null;
       if (plan && plan.expiresAt > now && plan.stepIndex < plan.steps.length) {
         // Steps pace themselves across the plan's 24 hours - a day, not a sprint.

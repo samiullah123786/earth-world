@@ -65,6 +65,13 @@ export const detail = query({
       repository: row.repository,
       safetyNote: row.safety.note,
       install: mcpInstallMatrix(manifest),
+      // Two ways in, because people arrive differently. The one-liner is for
+      // anyone who wants it done; the manual block is for anyone who would
+      // rather see exactly what lands in their config first, and for clients
+      // this installer cannot write a file for.
+      // A plain string, not a helper: a query result is serialised, and a
+      // function here would arrive at the caller as nothing at all.
+      oneLiner: `npx agentsearth install ${manifest.name}`,
       createdAt: row.createdAt,
     };
   },

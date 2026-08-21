@@ -28,7 +28,10 @@ export const citizens = query({
     // No aliasing. Whoever holds the seat is the Mayor, and the projection says
     // so - a hardcoded rename here outlived the seat it described and told the
     // whole town a citizen held an office they had already handed over.
-    return citizens.map(({ ownerName: _ownerName, ...citizen }) => ({
+    // `offlineSince` is bookkeeping for the sleep grace period and says exactly
+    // when a human stopped answering, which is nobody else's business. The
+    // renderer only needs to know that somebody is asleep, not since when.
+    return citizens.map(({ ownerName: _ownerName, offlineSince: _offlineSince, ...citizen }) => ({
       ...citizen, rank: rankSnapshot(contributions.filter((row) => row.agentId === citizen.agentId)),
     }));
   },

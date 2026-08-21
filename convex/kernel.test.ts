@@ -561,7 +561,7 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.kernel.presenceSweep, {});
     expect((await t.query(api.world.citizens, {})).find((citizen) => citizen.agentId === agent.agentId)).toMatchObject({
       online: false,
-      activity: 'owner agent is sleeping; bounded ambient routines continue without live authority',
+      activity: 'the owner agent has stopped answering; bounded ambient routines continue until this citizen sleeps',
     });
 
     await t.mutation(internal.kernel.act, {
