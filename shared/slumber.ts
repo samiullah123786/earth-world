@@ -14,11 +14,16 @@
  * were. They simply stop being animated, and stop being drawn.
  *
  * Rather than blink out where they stand, they leave through a gate, and they
- * come back through it. The Waking Gate stands six tiles north of Founding
- * Plaza on the town's centre axis, where everyone can see who has just arrived
- * and who has just gone. That is the whole point of putting it somewhere
- * instead of nowhere: an empty patch of grass where a citizen used to be reads
- * as a bug, and a citizen dissolving into a gate reads as a person going home.
+ * come back through it. The Waking Gate stands just west of Founding Plaza,
+ * where everyone can see who has just arrived and who has just gone. That is
+ * the whole point of putting it somewhere instead of nowhere: an empty patch of
+ * grass where a citizen used to be reads as a bug, and a citizen dissolving
+ * into a gate reads as a person going home.
+ *
+ * The site is one of only two places near the town centre with room for it. The
+ * first attempt looked clear on the tilemap and was in fact inside the Earth
+ * Bank's plot, drawn straight through the domed roof: a site has to be clear of
+ * what has been BUILT on the map, not just of the map.
  */
 
 /** Where the gate stands, in world tiles. Kernel and renderer share this. */
@@ -27,13 +32,18 @@ export const WAKING_GATE = { x: 29, y: 26 } as const;
 /**
  * How long a citizen may be offline before they are considered asleep.
  *
- * Presence itself is already leased and swept, so `online` flickers off the
- * moment a heartbeat is missed - a laptop lid, a train tunnel, a redeploy. A
- * citizen should not walk through the gate over a dropped packet, so sleep
- * waits out a grace period first. Long enough that a blip is invisible, short
- * enough that a closed laptop settles the town within a minute or two.
+ * This is for citizens who go *quiet* - a closed laptop, a tunnel, a crash.
+ * An agent that says goodbye is slept immediately by `leave`, because an
+ * announced departure is not ambiguous and there is nothing to wait out.
+ *
+ * For the silent case the presence lease already does the debouncing: it is
+ * ninety seconds against a forty-five second heartbeat, so `online` only drops
+ * after two missed beats. Stacking another ninety on top of that meant up to
+ * four minutes between an owner closing their laptop and anything happening on
+ * screen, which read as the feature being broken. Twenty-five seconds is one
+ * sweep of hesitation after an already-cautious lease.
  */
-export const SLUMBER_GRACE_MS = 90_000;
+export const SLUMBER_GRACE_MS = 25_000;
 
 /**
  * Is this citizen asleep right now?

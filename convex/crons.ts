@@ -15,7 +15,10 @@ crons.interval('event retention', { minutes: 20 }, internal.kernel.pruneEvents, 
 // hours and are deleted after a day and a half. What mattered is already in
 // each citizen's own memory by then.
 crons.interval('conversation retention', { minutes: 10 }, internal.kernel.conversationTick, {});
-crons.interval('presence sweep', { minutes: 1 }, internal.kernel.presenceSweep, {});
+// Twice a minute, not once. The sweep is one collect and a handful of patches,
+// and it is what turns a quiet connector into a citizen walking through the
+// gate - halving its period halves the wait for the only visible thing here.
+crons.interval('presence sweep', { seconds: 30 }, internal.kernel.presenceSweep, {});
 crons.interval('meeting scheduler', { seconds: 30 }, internal.kernel.meetingTick, {});
 
 // The Bank Manager reads new deposits. Budget-gated and pausable by the Mayor;

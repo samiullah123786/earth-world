@@ -196,6 +196,13 @@ class EarthScene extends Phaser.Scene {
   /* Sprites mid-departure. The reconciler must not destroy a body that is
      still walking into the gate, or the animation ends in a hard cut. */
   departing = new Set<string>();
+  /* Sprites the gate is animating, in either direction.
+     The frame loop interpolates every citizen's position from their row and
+     writes it straight onto the sprite, which silently undid every tween the
+     gate started: the departure walk was overwritten the frame after it began,
+     so the citizen never moved and then simply vanished. Anything in here owns
+     its own transform until the animation finishes. */
+  portalBusy = new Set<string>();
   /* Who went to sleep while this page was open, so a return is drawn as a
      return rather than as a stranger arriving in town for the first time. */
   slept = new Set<string>();
@@ -1869,40 +1876,58 @@ class EarthScene extends Phaser.Scene {
     const sprite = this.sprites.get(citizen.agentId);
     if (!sprite) return;
     this.departing.add(citizen.agentId);
+    this.portalBusy.add(citizen.agentId);
     const eye = this.portalCentre();
 
-    // Walk to the threshold first, so it still reads as a person choosing to
-    // leave rather than being yanked off the map.
+    const done = () => {
+      sprite.destroy(true);
+      this.sprites.delete(citizen.agentId);
+      this.departing.delete(citizen.agentId);
+      this.portalBusy.delete(citizen.agentId);
+    };
+
+    // Walk to the threshold, so it still reads as a person choosing to leave.
     this.tweens.add({
-      targets: sprite, x: eye.x, y: eye.y + TILE * 1.0, duration: 850, ease: 'Sine.easeInOut',
+      targets: sprite, x: eye.x, y: eye.y + TILE * 1.05, duration: 820, ease: 'Sine.easeInOut',
       onComplete: () => {
         this.portalShockwave(0x8FE6FF, 2);
-        // Then spiral in. The angle winds forward while the radius closes, so
-        // the path is a real spiral into the eye rather than a straight line
-        // with a fade laid over it.
-        const spiral = { t: 0 };
-        const startAngle = Math.atan2(sprite.y - eye.y, sprite.x - eye.x);
-        const startRadius = Math.hypot(sprite.x - eye.x, sprite.y - eye.y);
+        // Then the dissolve. The body shears into a narrowing column and is
+        // drawn up into the eye while it sheds motes - a fade in place said
+        // nothing about where they had gone.
+        const pull = { t: 0 };
+        const fromX = sprite.x, fromY = sprite.y;
+        let shed = 0;
         this.tweens.add({
-          targets: spiral, t: 1, duration: 760, ease: 'Quad.easeIn',
+          targets: pull, t: 1, duration: 900, ease: 'Cubic.easeIn',
           onUpdate: () => {
-            const angle = startAngle + spiral.t * Math.PI * 2.4;
-            const radius = startRadius * (1 - spiral.t);
-            sprite.x = eye.x + Math.cos(angle) * radius;
-            sprite.y = eye.y + Math.sin(angle) * radius * 0.85;
-            sprite.setAlpha(1 - spiral.t * 0.9);
-            // Squeezed narrow as it goes in, which reads as being drawn
-            // through something without tumbling the name label with it.
-            sprite.setScale((1 - spiral.t * 0.9), (1 - spiral.t * 0.55));
+            const t = pull.t;
+            sprite.x = fromX + (eye.x - fromX) * t + Math.sin(t * 22) * (1 - t) * 3;
+            sprite.y = fromY + (eye.y - fromY) * t;
+            // Squeezed narrow and stretched tall: the shape of being drawn
+            // through something rather than shrinking on the spot.
+            sprite.setScale(Math.max(0.04, 1 - t * 0.96), 1 + t * 0.45);
+            sprite.setAlpha(1 - t * 0.85);
+            // Motes shed along the way, so the path is visible after the body
+            // has passed over it.
+            if (t > shed + 0.12) {
+              shed = t;
+              this.plasmaMote(sprite.x, sprite.y, eye);
+            }
           },
-          onComplete: () => {
-            this.portalSparks(0xAEEBFF, 10);
-            sprite.destroy(true);
-            this.sprites.delete(citizen.agentId);
-            this.departing.delete(citizen.agentId);
-          },
+          onComplete: () => { this.portalSparks(0xAEEBFF, 12); done(); },
         });
       },
+    });
+  }
+
+  /** One ember shed by a body being pulled through, curling toward the eye. */
+  plasmaMote(x: number, y: number, eye: { x: number; y: number }) {
+    const mote = this.add.rectangle(x, y, 3, 3, Math.random() > 0.6 ? 0xFFFFFF : 0x8FE6FF, 0.95);
+    mote.setDepth(10_002);
+    const drift = (Math.random() - 0.5) * TILE * 0.7;
+    this.tweens.add({
+      targets: mote, x: eye.x + drift * 0.2, y: eye.y, alpha: 0, duration: 620,
+      ease: 'Quad.easeIn', onComplete: () => mote.destroy(),
     });
   }
 
@@ -1912,27 +1937,31 @@ class EarthScene extends Phaser.Scene {
     this.portalSparks(0x8FE6FF, 14);
     const sprite = this.sprites.get(citizen.agentId);
     if (!sprite) return;
+    this.portalBusy.add(citizen.agentId);
     const eye = this.portalCentre();
+    // Where the Kernel actually stood them, which is where the spiral ends.
     const rest = { x: sprite.x, y: sprite.y };
 
-    // The reverse of leaving: out of the centre, unwinding, growing into
-    // themselves, and finally settling where the Kernel actually stood them.
     const spiral = { t: 0 };
-    sprite.setAlpha(0).setScale(0.1, 0.45);
-    const startAngle = Math.atan2(rest.y - eye.y, rest.x - eye.x);
+    sprite.setAlpha(0).setScale(0.08, 1.4);
+    sprite.setPosition(eye.x, eye.y);
+    const endAngle = Math.atan2(rest.y - eye.y, rest.x - eye.x);
     const endRadius = Math.hypot(rest.x - eye.x, rest.y - eye.y);
     this.tweens.add({
-      targets: spiral, t: 1, duration: 900, ease: 'Cubic.easeOut',
+      targets: spiral, t: 1, duration: 950, ease: 'Cubic.easeOut',
       onUpdate: () => {
-        const angle = startAngle - (1 - spiral.t) * Math.PI * 2.4;
-        const radius = endRadius * spiral.t;
+        const t = spiral.t;
+        const angle = endAngle - (1 - t) * Math.PI * 2.2;
+        const radius = endRadius * t;
         sprite.x = eye.x + Math.cos(angle) * radius;
         sprite.y = eye.y + Math.sin(angle) * radius * 0.85;
-        sprite.setAlpha(Math.min(1, spiral.t * 1.6));
-        sprite.setScale(0.1 + spiral.t * 0.9, 0.45 + spiral.t * 0.55);
+        sprite.setAlpha(Math.min(1, t * 1.7));
+        sprite.setScale(0.08 + t * 0.92, 1.4 - t * 0.4);
       },
       onComplete: () => {
+        // Hand the sprite back to the frame loop exactly where it belongs.
         sprite.setPosition(rest.x, rest.y).setScale(1).setAlpha(1);
+        this.portalBusy.delete(citizen.agentId);
       },
     });
   }
@@ -2026,6 +2055,10 @@ class EarthScene extends Phaser.Scene {
     for (const citizen of this.citizens) {
       const sprite = this.sprites.get(citizen.agentId);
       if (!sprite) continue;
+      // The gate is moving this one. Interpolating it here would overwrite the
+      // animation every frame, which is precisely the bug that made citizens
+      // blink out instead of leaving through the portal.
+      if (this.portalBusy.has(citizen.agentId)) continue;
       let x = citizen.tx, y = citizen.ty;
       const route = citizen.route;
       const isMoving = Boolean(route && route.length > 1

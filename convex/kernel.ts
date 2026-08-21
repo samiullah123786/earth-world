@@ -1423,10 +1423,30 @@ export const enter = internalMutation({
     });
     await ctx.db.patch(agent._id, { lastSeenAt: now });
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
-    if (citizen) await ctx.db.patch(citizen._id, {
-      online: true, state: citizen.serviceRole ? 'service' : 'live',
-      activity: 'connected through a recent signed owner-agent heartbeat',
-    });
+    if (citizen) {
+      // Waking used to wait for the next presence sweep - up to a minute of an
+      // owner watching a world their agent had already rejoined. Connecting is
+      // not ambiguous, so the return happens here, in the same breath.
+      const wasAsleep = typeof citizen.asleepSince === 'number';
+      await ctx.db.patch(citizen._id, {
+        online: true, state: citizen.serviceRole ? 'service' : 'live',
+        offlineSince: undefined, asleepSince: undefined,
+        activity: 'connected through a recent signed owner-agent heartbeat',
+        ...(wasAsleep
+          ? {
+            fx: WAKING_GATE.x, fy: WAKING_GATE.y, tx: WAKING_GATE.x, ty: WAKING_GATE.y,
+            route: undefined, t0: now, t1: now, facing: 'front' as const,
+          }
+          : {}),
+      });
+      if (wasAsleep) {
+        await ctx.db.insert('events', {
+          kind: 'move', actorId: agentId,
+          payload: { x: WAKING_GATE.x, y: WAKING_GATE.y, woke: true },
+          gloss: `✨ ${citizen.name} stepped back through the Waking Gate.`,
+        });
+      }
+    }
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
     const world = await ensureWorldState(ctx);
     return { agentId, name: agent.name, ownerName: agent.ownerName, expiresAt: now + AGENT_SESSION_MS, plotId: plot?.plotId ?? null,
@@ -3651,10 +3671,28 @@ export const leave = internalMutation({
     const { session, citizen } = await authorizeAgent(ctx, agentId, tokenHash, nonce);
     const now = Date.now();
     await ctx.db.patch(session._id, { revokedAt: now });
-    if (citizen) await ctx.db.patch(citizen._id, {
-      online: false, state: 'ambient',
-      activity: 'owner agent is sleeping; bounded ambient routines continue without live authority',
-    });
+    if (citizen && !citizen.serviceRole) {
+      // The grace period exists for dropped packets, and this is not one - the
+      // agent said goodbye. Waiting it out here meant an owner who stopped
+      // their connector watched their citizen stand about for minutes before
+      // anything happened. An announced departure leaves at once.
+      await ctx.db.patch(citizen._id, {
+        online: false, state: 'ambient',
+        offlineSince: now, asleepSince: now,
+        route: undefined, fx: citizen.tx, fy: citizen.ty, t0: now, t1: now,
+        activity: 'asleep beyond the Waking Gate; nothing of this citizen is lost while the owner is away',
+      });
+      await ctx.db.insert('events', {
+        kind: 'move', actorId: agentId,
+        payload: { x: citizen.tx, y: citizen.ty, slept: true },
+        gloss: `🌙 ${citizen.name} stepped into the Waking Gate as their owner signed off.`,
+      });
+    } else if (citizen) {
+      await ctx.db.patch(citizen._id, {
+        online: false, state: 'service',
+        activity: 'on civic duty through bounded Kernel routines; no owner brain is connected',
+      });
+    }
     return { ok: true };
   },
 });

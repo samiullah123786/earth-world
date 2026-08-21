@@ -33,14 +33,26 @@ async function resident(t: ReturnType<typeof convexTest>, suffix: string) {
 const rowFor = (t: ReturnType<typeof convexTest>, agentId: string) => t.run(async (ctx: any) =>
   ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first());
 
-/** Age the session and the offline stamp so the next sweep sees a real absence. */
-async function goQuiet(t: ReturnType<typeof convexTest>, agentId: string, agoMs: number) {
+/**
+ * Make a citizen genuinely absent, the way going quiet actually looks.
+ *
+ * Two clocks have to be aged, and they are not the same length. The session
+ * must fall outside the ninety-second presence lease or the sweep still counts
+ * the owner as connected; the citizen's offlineSince must be older than the
+ * slumber grace before sleep is allowed. Ageing both by one number worked only
+ * while the grace happened to be the longer of the two - the moment it was cut
+ * to twenty-five seconds, every test here stopped exercising sleep at all and
+ * started asserting against a citizen the sweep had quietly put back online.
+ */
+const PRESENCE_LEASE_MS = 90_000;
+async function goQuiet(t: ReturnType<typeof convexTest>, agentId: string, offlineForMs: number) {
   await t.run(async (ctx: any) => {
+    const now = Date.now();
     for (const session of await ctx.db.query('sessions').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).collect()) {
-      await ctx.db.patch(session._id, { lastSeenAt: Date.now() - agoMs });
+      await ctx.db.patch(session._id, { lastSeenAt: now - Math.max(offlineForMs, PRESENCE_LEASE_MS + 10_000) });
     }
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
-    if (citizen) await ctx.db.patch(citizen._id, { online: false, offlineSince: Date.now() - agoMs });
+    if (citizen) await ctx.db.patch(citizen._id, { online: false, offlineSince: now - offlineForMs });
   });
 }
 
@@ -206,5 +218,78 @@ describe('the load saving', () => {
     const moved = after?.tx !== before?.tx || after?.ty !== before?.ty
       || after?.activity !== before?.activity || after?.t1 !== before?.t1;
     expect(moved).toBe(true);
+  });
+});
+
+describe('saying goodbye, and coming back', () => {
+  /** The exact round trip an owner makes: stop the connector, start it again. */
+  it('sleeps at once when the agent announces it is leaving', async () => {
+    // The grace period is for dropped packets. An agent that calls leave has
+    // said goodbye, and waiting 25 seconds plus a sweep to act on that is how
+    // an owner ends up watching nothing happen and calling the feature broken.
+    const t = convexTest(schema, modules);
+    const { agentId } = await resident(t, 'goodbye');
+    await t.mutation(internal.kernel.leave, {
+      agentId, tokenHash: 'agent-goodbye', nonce: 'leave-goodbye-1',
+    });
+    const row = await rowFor(t, agentId);
+    expect(typeof row?.asleepSince).toBe('number');
+    expect(row?.online).toBe(false);
+    expect(row?.route).toBeUndefined();
+  });
+
+  it('announces the departure so the town sees them go', async () => {
+    const t = convexTest(schema, modules);
+    const { agentId } = await resident(t, 'seenoff');
+    await t.mutation(internal.kernel.leave, {
+      agentId, tokenHash: 'agent-seenoff', nonce: 'leave-seenoff-1',
+    });
+    const events = await t.run(async (ctx: any) => ctx.db.query('events').order('desc').take(10));
+    expect(events.some((e: any) => e.actorId === agentId && /Waking Gate/.test(e.gloss ?? ''))).toBe(true);
+  });
+
+  it('wakes at the gate the instant the connector reconnects', async () => {
+    // Waking used to wait for the next presence sweep. Reconnecting is not
+    // ambiguous either, so it happens in the same call.
+    const t = convexTest(schema, modules);
+    const { agentId } = await resident(t, 'roundtrip');
+    await t.mutation(internal.kernel.leave, {
+      agentId, tokenHash: 'agent-roundtrip', nonce: 'leave-roundtrip-1',
+    });
+    expect(typeof (await rowFor(t, agentId))?.asleepSince).toBe('number');
+
+    await t.mutation(internal.kernel.enter, {
+      agentId, nonce: 'enter-roundtrip-again', sessionTokenHash: 'agent-roundtrip-2',
+    });
+    const back = await rowFor(t, agentId);
+    expect(back?.asleepSince).toBeUndefined();
+    expect(back?.online).toBe(true);
+    expect({ x: back?.tx, y: back?.ty }).toEqual({ x: WAKING_GATE.x, y: WAKING_GATE.y });
+  });
+
+  it('does not stage a gate arrival for somebody who never slept', async () => {
+    // A reconnect after a brief blip should not teleport a citizen across the
+    // map to the gate - they never left, so there is nothing to come back from.
+    const t = convexTest(schema, modules);
+    const { agentId } = await resident(t, 'blipback');
+    const before = await rowFor(t, agentId);
+    await t.mutation(internal.kernel.enter, {
+      agentId, nonce: 'enter-blipback-again', sessionTokenHash: 'agent-blipback-2',
+    });
+    const after = await rowFor(t, agentId);
+    expect({ x: after?.tx, y: after?.ty }).toEqual({ x: before?.tx, y: before?.ty });
+  });
+
+  it('never sleeps an office that signs off', async () => {
+    const t = convexTest(schema, modules);
+    const { agentId } = await resident(t, 'office');
+    await t.run(async (ctx: any) => {
+      const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
+      await ctx.db.patch(citizen!._id, { serviceRole: 'Community Greeter' });
+    });
+    await t.mutation(internal.kernel.leave, {
+      agentId, tokenHash: 'agent-office', nonce: 'leave-office-1',
+    });
+    expect((await rowFor(t, agentId))?.asleepSince).toBeUndefined();
   });
 });
