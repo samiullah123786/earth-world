@@ -10,6 +10,7 @@ import { LPC_PREFABS, prefabForStructure, type LpcPrefab } from '../shared/lpc-p
 import type { DistrictBiome } from '../shared/wfc';
 import { normalizeTiledChunk, tiledLayerMatrix, TILED_GIDS, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
 import { DynamicNavigationGrid } from './world/navigation';
+import { WAKING_GATE, isAsleep } from '../shared/slumber';
 import { selectRenderableBuilds, siteOriginAwayFromRoad } from './world/scene-layout';
 
 const RENDER_DELAY_MS = 140;
@@ -129,6 +130,7 @@ type Citizen = {
   agentId: string; name: string; bio?: string; gender: string; family: string; accent: string;
   fx: number; fy: number; tx: number; ty: number; t0: number; t1: number;
   route?: RoutePoint[]; state: string; activity: string; online: boolean;
+  offlineSince?: number; asleepSince?: number;
   specialties?: string[]; primaryCategory?: string; skillCount?: number;
   experienceTier?: string; serviceRole?: string; talkingWith?: string; talkingUntil?: number;
   carriedTool?: string; workingUntil?: number; facing?: 'back' | 'left' | 'front' | 'right';
@@ -164,6 +166,11 @@ type Conversation = { id: string; a: string; b: string; aName: string; bName: st
 
 let TILE: number = LPC_GRID_SIZE;
 
+/* Sleep is decided by the Kernel and merely drawn here. Sharing the
+   predicate rather than re-deriving it is what stops the renderer and the
+   world disagreeing about who is present. */
+const gateTile = () => WAKING_GATE;
+
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -173,6 +180,12 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
 
 class EarthScene extends Phaser.Scene {
   sprites = new Map<string, Phaser.GameObjects.Container>();
+  /* Sprites mid-departure. The reconciler must not destroy a body that is
+     still walking into the gate, or the animation ends in a hard cut. */
+  departing = new Set<string>();
+  /* Who went to sleep while this page was open, so a return is drawn as a
+     return rather than as a stranger arriving in town for the first time. */
+  slept = new Set<string>();
   /** Sheets currently streaming in, so one citizen is never queued twice. */
   pendingSheets = new Set<string>();
   /**
@@ -308,6 +321,7 @@ class EarthScene extends Phaser.Scene {
     this.groundLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.ground);
     this.objectLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.midground);
     this.overheadLayer = this.add.layer().setDepth(WORLD_LAYER_DEPTH.overhead);
+    this.buildWakingGate();
     document.documentElement.dataset.worldLayers = TILED_LAYER_NAMES.join(',');
     document.documentElement.dataset.mapFormat = TILED_MAP_FORMAT;
     if (import.meta.env.DEV || DEBUG_FLAGS.size > 0) {
@@ -430,14 +444,39 @@ class EarthScene extends Phaser.Scene {
       // (or wakes from sleep) is followed rather than trusted forever.
       this.clockOffset += 12;
       this.citizens = rows;
-      const liveIds = new Set(rows.map((row) => row.agentId));
-      for (const citizen of rows) if (!this.sprites.has(citizen.agentId)) {
+      // A sleeping citizen is still a citizen - they keep their row, their
+      // wallet and their place in the directory. They are simply not on the
+      // map, because there is no mind behind them to move.
+      const present = new Set(rows.filter((row) => !isAsleep(row)).map((row) => row.agentId));
+      for (const citizen of rows) {
+        const asleep = isAsleep(citizen);
+        const drawn = this.sprites.has(citizen.agentId);
+        if (asleep) {
+          this.slept.add(citizen.agentId);
+          // Walk them out rather than blink them out. On first load there is
+          // nothing to walk - they were already gone before anyone was looking.
+          if (drawn && !this.departing.has(citizen.agentId)) {
+            if (firstLoad) { this.sprites.get(citizen.agentId)!.destroy(true); this.sprites.delete(citizen.agentId); }
+            else this.departThroughGate(citizen);
+          }
+          continue;
+        }
+        if (drawn) { this.slept.delete(citizen.agentId); continue; }
         this.spawnCitizen(citizen);
-        // E6: a brand-new citizen arriving while you watch earns pixel confetti.
-        if (!firstLoad) this.arrivalConfetti(citizen);
+        if (firstLoad) continue;
+        if (this.slept.has(citizen.agentId)) {
+          // Somebody's owner came back. The Kernel has already stood them at
+          // the gate; this is the light that says so.
+          this.slept.delete(citizen.agentId);
+          this.wakeAtGate(citizen);
+        } else {
+          // E6: a brand-new citizen arriving while you watch earns pixel confetti.
+          this.arrivalConfetti(citizen);
+        }
       }
       for (const [agentId, sprite] of this.sprites) {
-        if (!liveIds.has(agentId)) { sprite.destroy(true); this.sprites.delete(agentId); }
+        if (present.has(agentId) || this.departing.has(agentId)) continue;
+        sprite.destroy(true); this.sprites.delete(agentId);
       }
       syncFindButton();
       if (this.pendingOwnerFocus && this.ownerAgentId && rows.some((citizen) => citizen.agentId === this.ownerAgentId)) {
@@ -625,6 +664,9 @@ class EarthScene extends Phaser.Scene {
         && (!authorityOnly || Boolean(citizen.serviceRole))
         && (!liveNode.checked || citizen.online);
     }).sort((a, b) => Number(b.online) - Number(a.online) || (b.skillCount ?? 0) - (a.skillCount ?? 0));
+    // Sleeping citizens stay listed. They still own land, hold tokens and
+    // sit in the ledger; being off the map is not being gone, and a
+    // directory that hid them would be lying about who lives here.
     if (!rows.length) {
       const reason = liveNode.checked
         ? 'No matching owner-connected citizens or on-duty authorities are live right now.'
@@ -1433,6 +1475,118 @@ class EarthScene extends Phaser.Scene {
         ready.setDepth(structureSortAnchor(field.y));
         this.objectLayer.add(ready);
       }
+    }
+  }
+
+
+  /**
+   * The Waking Gate: a standing stone arch six tiles north of Founding Plaza.
+   *
+   * Drawn from primitives rather than an asset, so it needs no new art and
+   * cannot go missing from a sprite atlas. Two rough pillars, a lintel, and a
+   * pane of light between them that breathes on a slow loop - enough to read
+   * as "something happens here" from across the map without competing with
+   * the citizens, who are the thing worth looking at.
+   */
+  buildWakingGate() {
+    const gate = gateTile();
+    const cx = gate.x * TILE + TILE / 2;
+    const baseY = gate.y * TILE + TILE;
+    const stone = 0x6B6559, stoneLit = 0x8A8377, shadow = 0x3A3630;
+    const parts: Phaser.GameObjects.GameObject[] = [];
+
+    // The pane of light first, so the stone frames it.
+    const pane = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 1.15, TILE * 1.9, 0x8FE3A9, 0.34);
+    pane.setDepth(baseY - 2);
+    parts.push(pane);
+    this.tweens.add({
+      targets: pane, alpha: { from: 0.20, to: 0.46 }, scaleX: { from: 0.94, to: 1.03 },
+      duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+
+    for (const side of [-1, 1]) {
+      const px = cx + side * TILE * 0.82;
+      parts.push(this.add.rectangle(px, baseY - TILE * 1.1, TILE * 0.46, TILE * 2.2, stone).setDepth(baseY));
+      parts.push(this.add.rectangle(px, baseY - TILE * 2.0, TILE * 0.46, TILE * 0.34, stoneLit).setDepth(baseY));
+      parts.push(this.add.rectangle(px, baseY - TILE * 0.12, TILE * 0.6, TILE * 0.22, shadow).setDepth(baseY));
+    }
+    parts.push(this.add.rectangle(cx, baseY - TILE * 2.28, TILE * 2.3, TILE * 0.42, stone).setDepth(baseY));
+    parts.push(this.add.rectangle(cx, baseY - TILE * 2.46, TILE * 2.0, TILE * 0.16, stoneLit).setDepth(baseY));
+
+    // Four motes drifting up the pane, so the gate is never quite still.
+    for (let i = 0; i < 4; i++) {
+      const mote = this.add.rectangle(cx + (i - 1.5) * 7, baseY - TILE * 0.3, 3, 3, 0xFDF6EC, 0.9).setDepth(baseY - 1);
+      parts.push(mote);
+      this.tweens.add({
+        targets: mote, y: baseY - TILE * 2.1, alpha: 0,
+        duration: 2200, delay: i * 550, repeat: -1, ease: 'Sine.easeOut',
+      });
+    }
+    for (const part of parts) (part as any).setData?.('persistent-world', true);
+  }
+
+  /**
+   * An owner's connector stopped answering: walk their citizen into the gate.
+   *
+   * The sprite is tweened, never pathfound. Routing a body whose mind has
+   * already gone would put the walk back on the tick this whole change exists
+   * to quieten - and from across a plaza a smooth glide to the arch reads
+   * exactly like walking there.
+   */
+  departThroughGate(citizen: Citizen) {
+    const sprite = this.sprites.get(citizen.agentId);
+    if (!sprite) return;
+    this.departing.add(citizen.agentId);
+    const gate = gateTile();
+    const toX = gate.x * TILE + TILE / 2;
+    const toY = gate.y * TILE + TILE * 0.4;
+    this.tweens.add({
+      targets: sprite, x: toX, y: toY, duration: 900, ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.gateFlash(toX, toY, 0x8FE3A9);
+        this.tweens.add({
+          targets: sprite, alpha: 0, scaleX: 0.2, scaleY: 1.25, duration: 420, ease: 'Quad.easeIn',
+          onComplete: () => {
+            sprite.destroy(true);
+            this.sprites.delete(citizen.agentId);
+            this.departing.delete(citizen.agentId);
+          },
+        });
+      },
+    });
+  }
+
+  /** Their owner came back. Re-form them in the arch. */
+  wakeAtGate(citizen: Citizen) {
+    const sprite = this.sprites.get(citizen.agentId);
+    const gate = gateTile();
+    const atX = gate.x * TILE + TILE / 2;
+    const atY = gate.y * TILE + TILE * 0.4;
+    this.gateFlash(atX, atY, 0xFDF6EC);
+    if (!sprite) return;
+    sprite.setAlpha(0).setScale(0.2, 1.25);
+    this.tweens.add({
+      targets: sprite, alpha: 1, scaleX: 1, scaleY: 1, duration: 520, ease: 'Back.easeOut',
+    });
+  }
+
+  /** The light in the arch when somebody passes through it, either way. */
+  gateFlash(x: number, y: number, tint: number) {
+    const ring = this.add.rectangle(x, y - TILE * 0.6, TILE * 0.5, TILE * 0.5, tint, 0.85).setDepth(10_000);
+    this.tweens.add({
+      targets: ring, scaleX: 4.2, scaleY: 4.2, alpha: 0, duration: 620, ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2;
+      const mote = this.add.rectangle(x, y - TILE * 0.6, 3, 3, i % 3 === 0 ? 0x1E1E1E : tint).setDepth(10_001);
+      this.tweens.add({
+        targets: mote,
+        x: x + Math.cos(angle) * (14 + (i % 4) * 8),
+        y: y - TILE * 0.6 + Math.sin(angle) * (12 + (i % 3) * 7),
+        alpha: 0, duration: 700, ease: 'Stepped.easeOut',
+        onComplete: () => mote.destroy(),
+      });
     }
   }
 

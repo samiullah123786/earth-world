@@ -1,6 +1,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
+import { WAKING_GATE, slumberVerdict } from '../shared/slumber';
 import { SCANNER_VERSION, scanEntries } from './scanner';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld, finishExpansion, nextExpansionWork, planExpansion, relayCoordinates, relayWorkFor, saveExpansionChunk, storeRelaidChunk } from './planning';
@@ -6420,25 +6421,72 @@ export const presenceSweep = internalMutation({
         && !stoodDown.has(citizen.serviceRole as string);
       const ownerLive = live.has(citizen.agentId);
       const shouldBeLive = ownerLive || (holdsOffice && config.authoritiesEnabled);
-      // Only act on a real change, so an authority's own words survive the sweep.
-      if (shouldBeLive === citizen.online) continue;
-      if (shouldBeLive) {
-        await ctx.db.patch(citizen._id, {
-          online: true, state: citizen.serviceRole ? 'service' : 'live',
-          activity: ownerLive
-            ? 'connected through a recent signed owner-agent heartbeat'
-            : 'on duty; the always-on civic mind is running this office',
-        });
-        continue;
+
+      if (shouldBeLive !== citizen.online) {
+        if (shouldBeLive) {
+          await ctx.db.patch(citizen._id, {
+            online: true, state: citizen.serviceRole ? 'service' : 'live',
+            offlineSince: undefined,
+            activity: ownerLive
+              ? 'connected through a recent signed owner-agent heartbeat'
+              : 'on duty; the always-on civic mind is running this office',
+          });
+        } else {
+          await ctx.db.patch(citizen._id, {
+            online: false, state: citizen.serviceRole ? 'service' : 'ambient',
+            // When the heartbeat stopped. Sleep waits out a grace period from
+            // here so a dropped packet never sends anybody through the gate.
+            offlineSince: citizen.offlineSince ?? now,
+            activity: holdsOffice
+              ? 'this office is paused by the Mayor; bounded deterministic routines continue'
+              : citizen.serviceRole
+                ? 'on civic duty through bounded Kernel routines; no owner brain is connected'
+                : 'the owner agent has stopped answering; bounded ambient routines continue until this citizen sleeps',
+          });
+        }
       }
-      await ctx.db.patch(citizen._id, {
-        online: false, state: citizen.serviceRole ? 'service' : 'ambient',
-        activity: holdsOffice
-          ? 'this office is paused by the Mayor; bounded deterministic routines continue'
-          : citizen.serviceRole
-            ? 'on civic duty through bounded Kernel routines; no owner brain is connected'
-            : 'owner agent is sleeping; bounded ambient routines continue without live authority',
-      });
+
+      // Everyone already offline when this shipped has no stamp, and a stamp
+      // is what the grace period counts from. Without writing one here, the
+      // verdict below reads "first time I have seen you offline" on every
+      // single sweep and holds them awake forever - which is every citizen in
+      // the world, since the sweep only patches on a transition and they had
+      // already transitioned long ago.
+      let offlineSince = citizen.offlineSince;
+      if (!shouldBeLive && offlineSince === undefined) {
+        offlineSince = now;
+        await ctx.db.patch(citizen._id, { offlineSince: now });
+      }
+
+      // Sleep is judged every sweep, not only on a transition: the grace period
+      // elapses while nothing else changes, so a citizen who went quiet two
+      // minutes ago must be caught by a later round than the one that saw them
+      // go. This is the whole load saving - a sleeping citizen is skipped by
+      // the five-second tick, which is the only thing that runs all day.
+      const verdict = slumberVerdict({ ...citizen, online: shouldBeLive, offlineSince }, now);
+      if (verdict === 'sleep') {
+        await ctx.db.patch(citizen._id, {
+          asleepSince: now,
+          // Stop mid-stride. Leaving a stale route behind would have the
+          // renderer walk a body nobody is home in the moment they return.
+          route: undefined, fx: citizen.tx, fy: citizen.ty, t0: now, t1: now,
+          activity: 'asleep beyond the Waking Gate; nothing of this citizen is lost while the owner is away',
+        });
+      } else if (verdict === 'wake') {
+        // Everything this citizen is - memory, wallet, skills, standing, home,
+        // marriage - is untouched by sleeping. Waking restores the person and
+        // stands them at the gate, which is where the town watches for arrivals.
+        await ctx.db.patch(citizen._id, {
+          asleepSince: undefined,
+          fx: WAKING_GATE.x, fy: WAKING_GATE.y, tx: WAKING_GATE.x, ty: WAKING_GATE.y,
+          route: undefined, t0: now, t1: now, facing: 'front',
+        });
+        await ctx.db.insert('events', {
+          kind: 'move', actorId: citizen.agentId,
+          payload: { x: WAKING_GATE.x, y: WAKING_GATE.y, woke: true },
+          gloss: `✨ ${citizen.name} stepped back through the Waking Gate.`,
+        });
+      }
     }
   },
 });

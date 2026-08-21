@@ -32,6 +32,14 @@ export default defineSchema({
     state: v.string(),
     activity: v.string(),
     online: v.boolean(),
+    // Sleep. When an owner's connector stops answering, the mind behind this
+    // citizen is genuinely gone, and the world stops animating a body nobody
+    // is home in. Nothing else about the citizen changes - these two stamps
+    // are the entire footprint of sleeping, so waking restores a person, not
+    // a reconstruction. `offlineSince` is when the heartbeat stopped;
+    // `asleepSince` is set only once the grace period has passed.
+    offlineSince: v.optional(v.number()),
+    asleepSince: v.optional(v.number()),
     categoryScores: v.optional(v.any()),
     specialties: v.optional(v.array(v.string())),
     primaryCategory: v.optional(v.string()),
