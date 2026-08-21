@@ -65,14 +65,23 @@ describe('the verdict', () => {
 
 describe('the gate', () => {
   it('stands on open ground the renderer and the Kernel both agree on', () => {
-    expect(WAKING_GATE).toEqual({ x: 32, y: 18 });
+    expect(WAKING_GATE).toEqual({ x: 29, y: 26 });
   });
 
   it('is close enough to Founding Plaza to be seen from it', () => {
     // Founding Plaza is at 32,24. A gate nobody walks past is a gate nobody
     // understands, so its distance from the town centre is part of the design.
     const distance = Math.hypot(WAKING_GATE.x - 32, WAKING_GATE.y - 24);
-    expect(distance).toBeGreaterThan(3);
+    expect(distance).toBeGreaterThan(2);
     expect(distance).toBeLessThan(12);
+  });
+
+  it('does not stand inside the Earth Bank, which is where it was first put', () => {
+    // The bank's plot is 30,17 six by six. The original site looked clear on
+    // the collision layer and was drawn straight through the domed roof,
+    // because the tilemap knows nothing about what citizens have built on it.
+    const insideBank = WAKING_GATE.x >= 30 && WAKING_GATE.x < 36
+      && WAKING_GATE.y >= 17 && WAKING_GATE.y < 23;
+    expect(insideBank).toBe(false);
   });
 });

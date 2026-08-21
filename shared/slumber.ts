@@ -22,7 +22,7 @@
  */
 
 /** Where the gate stands, in world tiles. Kernel and renderer share this. */
-export const WAKING_GATE = { x: 32, y: 18 } as const;
+export const WAKING_GATE = { x: 29, y: 26 } as const;
 
 /**
  * How long a citizen may be offline before they are considered asleep.

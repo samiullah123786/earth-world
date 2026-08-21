@@ -1637,13 +1637,31 @@ class EarthScene extends Phaser.Scene {
     const stone = 0x6B6559, stoneLit = 0x8A8377, shadow = 0x3A3630;
     const parts: Phaser.GameObjects.GameObject[] = [];
 
-    // The pane of light first, so the stone frames it.
-    const pane = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 1.15, TILE * 1.9, 0x8FE3A9, 0.34);
+    // The pane of light, framed by the stone. It is drawn as a dark opening
+    // with a bright core rather than a wash of colour: the first version was
+    // pale green at a third opacity standing on green grass, which is the one
+    // combination guaranteed to disappear. A portal has to read as a hole in
+    // the world, and a hole is dark before it is bright.
+    const opening = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 1.2, TILE * 1.95, 0x151033, 0.92);
+    opening.setDepth(baseY - 3);
+    parts.push(opening);
+
+    const pane = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 0.85, TILE * 1.7, 0x6FE8FF, 0.55);
     pane.setDepth(baseY - 2);
     parts.push(pane);
     this.tweens.add({
-      targets: pane, alpha: { from: 0.20, to: 0.46 }, scaleX: { from: 0.94, to: 1.03 },
-      duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      targets: pane, alpha: { from: 0.35, to: 0.85 }, scaleX: { from: 0.72, to: 1.02 },
+      duration: 2400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+
+    // A hard bright core, so the gate carries a highlight even at low zoom
+    // where a translucent pane averages back into the grass.
+    const core = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 0.22, TILE * 1.5, 0xFFFFFF, 0.75);
+    core.setDepth(baseY - 1);
+    parts.push(core);
+    this.tweens.add({
+      targets: core, alpha: { from: 0.45, to: 0.95 }, scaleY: { from: 0.86, to: 1 },
+      duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
     for (const side of [-1, 1]) {
@@ -1657,7 +1675,7 @@ class EarthScene extends Phaser.Scene {
 
     // Four motes drifting up the pane, so the gate is never quite still.
     for (let i = 0; i < 4; i++) {
-      const mote = this.add.rectangle(cx + (i - 1.5) * 7, baseY - TILE * 0.3, 3, 3, 0xFDF6EC, 0.9).setDepth(baseY - 1);
+      const mote = this.add.rectangle(cx + (i - 1.5) * 7, baseY - TILE * 0.3, 3, 3, 0xBFF4FF, 0.95).setDepth(baseY);
       parts.push(mote);
       this.tweens.add({
         targets: mote, y: baseY - TILE * 2.1, alpha: 0,
@@ -1685,7 +1703,7 @@ class EarthScene extends Phaser.Scene {
     this.tweens.add({
       targets: sprite, x: toX, y: toY, duration: 900, ease: 'Sine.easeInOut',
       onComplete: () => {
-        this.gateFlash(toX, toY, 0x8FE3A9);
+        this.gateFlash(toX, toY, 0x6FE8FF);
         this.tweens.add({
           targets: sprite, alpha: 0, scaleX: 0.2, scaleY: 1.25, duration: 420, ease: 'Quad.easeIn',
           onComplete: () => {
