@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SLUMBER_GRACE_MS, WAKING_GATE, isAsleep, slumberVerdict } from './slumber';
+import { SLUMBER_GRACE_MS, WAKING_GATE, isAsleep, renderTransition, slumberVerdict } from './slumber';
 
 const NOW = 1_700_000_000_000;
 
@@ -83,5 +83,58 @@ describe('the gate', () => {
     const insideBank = WAKING_GATE.x >= 30 && WAKING_GATE.x < 36
       && WAKING_GATE.y >= 17 && WAKING_GATE.y < 23;
     expect(insideBank).toBe(false);
+  });
+});
+
+describe('what the renderer should do about one citizen', () => {
+  const awake = { online: false };
+  const sleeping = { online: false, asleepSince: NOW };
+  const office = { online: true, serviceRole: 'Community Greeter' };
+  const at = (state: object, flags: Partial<{ drawn: boolean; sleptHere: boolean; firstLoad: boolean; departing: boolean }>) =>
+    renderTransition(state, { drawn: false, sleptHere: false, firstLoad: false, departing: false, ...flags });
+
+  it('spirals a drawn citizen into the vortex when they fall asleep', () => {
+    expect(at(sleeping, { drawn: true })).toBe('depart');
+  });
+
+  it('does not start a second departure for one already leaving', () => {
+    // The reconciler runs on every Kernel update, and the walk-then-spiral
+    // takes about a second and a half. Without this the animation restarts
+    // from the top several times and the citizen never actually leaves.
+    expect(at(sleeping, { drawn: true, departing: true })).toBe('hold');
+  });
+
+  it('removes a citizen who was already asleep before the page opened', () => {
+    // Nothing to walk out of the world - they were gone before anyone looked.
+    expect(at(sleeping, { drawn: true, firstLoad: true })).toBe('vanish');
+  });
+
+  it('leaves an undrawn sleeper alone rather than spawning them to hide them', () => {
+    expect(at(sleeping, { drawn: false })).toBe('hold');
+  });
+
+  it('winds a citizen out of the vortex when their owner comes back', () => {
+    // The case worth pinning: a missed `wake` is invisible. The citizen simply
+    // appears beside the gate, which reads as nothing rather than as a bug.
+    expect(at(awake, { drawn: false, sleptHere: true })).toBe('wake');
+  });
+
+  it('gives confetti, not the gate, to somebody nobody watched leave', () => {
+    expect(at(awake, { drawn: false, sleptHere: false })).toBe('arrive');
+  });
+
+  it('does not animate anybody on the first load', () => {
+    expect(at(awake, { drawn: false, sleptHere: true, firstLoad: true })).toBe('hold');
+    expect(at(awake, { drawn: false, sleptHere: false, firstLoad: true })).toBe('hold');
+  });
+
+  it('does nothing for a citizen already on screen and awake', () => {
+    expect(at(awake, { drawn: true })).toBe('hold');
+  });
+
+  it('never sends an office through the gate', () => {
+    // Offices have no owner to disconnect and are what keeps the town
+    // populated when every human is away.
+    expect(at({ ...office, asleepSince: NOW }, { drawn: true })).toBe('hold');
   });
 });

@@ -20,7 +20,7 @@ import {
 import type { DistrictBiome } from '../shared/wfc';
 import { normalizeTiledChunk, tiledLayerMatrix, TILED_GIDS, TILED_LAYER_NAMES, TILED_MAP_FORMAT, type TiledChunkPayload } from '../shared/tiled-world';
 import { DynamicNavigationGrid } from './world/navigation';
-import { WAKING_GATE, isAsleep } from '../shared/slumber';
+import { WAKING_GATE, isAsleep, renderTransition } from '../shared/slumber';
 import { selectRenderableBuilds } from './world/scene-layout';
 import { earthForgeRenderPlan, earthForgeTextureKey } from './world/earthforge-render';
 
@@ -182,6 +182,7 @@ let TILE: number = LPC_GRID_SIZE;
    predicate rather than re-deriving it is what stops the renderer and the
    world disagreeing about who is present. */
 const gateTile = () => WAKING_GATE;
+const PORTAL_TEXTURE = 'waking-gate-swirl';
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) {
   const node = document.createElement(tag);
@@ -486,30 +487,30 @@ class EarthScene extends Phaser.Scene {
       // map, because there is no mind behind them to move.
       const present = new Set(rows.filter((row) => !isAsleep(row)).map((row) => row.agentId));
       for (const citizen of rows) {
-        const asleep = isAsleep(citizen);
-        const drawn = this.sprites.has(citizen.agentId);
-        if (asleep) {
-          this.slept.add(citizen.agentId);
-          // Walk them out rather than blink them out. On first load there is
-          // nothing to walk - they were already gone before anyone was looking.
-          if (drawn && !this.departing.has(citizen.agentId)) {
-            if (firstLoad) { this.sprites.get(citizen.agentId)!.destroy(true); this.sprites.delete(citizen.agentId); }
-            else this.departThroughGate(citizen);
-          }
+        // The decision lives in shared/slumber so it can be tested without a
+        // canvas; the scene only carries it out.
+        const move = renderTransition(citizen, {
+          drawn: this.sprites.has(citizen.agentId),
+          sleptHere: this.slept.has(citizen.agentId),
+          departing: this.departing.has(citizen.agentId),
+          firstLoad,
+        });
+        if (isAsleep(citizen)) this.slept.add(citizen.agentId);
+        else this.slept.delete(citizen.agentId);
+
+        if (move === 'hold') continue;
+        if (move === 'vanish') {
+          this.sprites.get(citizen.agentId)!.destroy(true);
+          this.sprites.delete(citizen.agentId);
           continue;
         }
-        if (drawn) { this.slept.delete(citizen.agentId); continue; }
+        if (move === 'depart') { this.departThroughGate(citizen); continue; }
         this.spawnCitizen(citizen);
-        if (firstLoad) continue;
-        if (this.slept.has(citizen.agentId)) {
-          // Somebody's owner came back. The Kernel has already stood them at
-          // the gate; this is the light that says so.
-          this.slept.delete(citizen.agentId);
-          this.wakeAtGate(citizen);
-        } else {
-          // E6: a brand-new citizen arriving while you watch earns pixel confetti.
-          this.arrivalConfetti(citizen);
-        }
+        // Somebody's owner came back: the Kernel has already stood them at the
+        // gate, and this winds them out of it. A citizen nobody watched leave
+        // is a newcomer, and gets the confetti instead.
+        if (move === 'wake') this.wakeAtGate(citizen);
+        else this.arrivalConfetti(citizen);
       }
       for (const [agentId, sprite] of this.sprites) {
         if (present.has(agentId) || this.departing.has(agentId)) continue;
@@ -1634,55 +1635,226 @@ class EarthScene extends Phaser.Scene {
     const gate = gateTile();
     const cx = gate.x * TILE + TILE / 2;
     const baseY = gate.y * TILE + TILE;
-    const stone = 0x6B6559, stoneLit = 0x8A8377, shadow = 0x3A3630;
+    const stone = 0x6E6A74, stoneLit = 0x95929C, shadow = 0x33313A;
     const parts: Phaser.GameObjects.GameObject[] = [];
 
-    // The pane of light, framed by the stone. It is drawn as a dark opening
-    // with a bright core rather than a wash of colour: the first version was
-    // pale green at a third opacity standing on green grass, which is the one
-    // combination guaranteed to disappear. A portal has to read as a hole in
-    // the world, and a hole is dark before it is bright.
-    const opening = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 1.2, TILE * 1.95, 0x151033, 0.92);
-    opening.setDepth(baseY - 3);
-    parts.push(opening);
+    // The vortex. Rings turning inside rings read as a target; a portal needs
+    // arms - tapered curves winding into a dark centre. They are drawn once
+    // into a texture and spun as images, because redrawing three layers of
+    // forty-segment polygons every frame would cost more than the rest of the
+    // scene put together.
+    const eye = this.portalCentre();
+    // Circular, not elliptical. A rotating ellipse reads as a shape wobbling,
+    // not as a disc spinning - the eye tracks the changing silhouette instead
+    // of the motion inside it, and the whole effect collapses. The opening
+    // between the pillars is wide enough for a true circle, so it gets one.
+    // The field fills the doorway exactly, because it is cut to the doorway:
+    // each frame is drawn on a canvas clipped to the arch, so every pixel
+    // outside the opening is transparent. The circle that came before bulged
+    // past the pillars and under the base, and the mask that was supposed to
+    // hold it back was doing nothing.
+    const openW = TILE * 1.9, openH = TILE * 2.42;
+    const FRAME_W = 160, FRAME_H = Math.round(160 * (openH / openW));
+    const frames = [0, 1, 2].map((i) => `${PORTAL_TEXTURE}-${i}`);
+    frames.forEach((key, i) => this.makePortalFrame(key, FRAME_W, FRAME_H, i + 1));
 
-    const pane = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 0.85, TILE * 1.7, 0x6FE8FF, 0.55);
-    pane.setDepth(baseY - 2);
-    parts.push(pane);
-    this.tweens.add({
-      targets: pane, alpha: { from: 0.35, to: 0.85 }, scaleX: { from: 0.72, to: 1.02 },
-      duration: 2400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    // Cross-fade the frames on staggered loops. Three surfaces breathing out
+    // of phase reads as one surface flowing, and costs three draw calls.
+    frames.forEach((key, i) => {
+      const sheet = this.add.image(eye.x, eye.y, key);
+      sheet.setDisplaySize(openW, openH);
+      sheet.setDepth(baseY - 5 + i * 0.01);
+      sheet.setAlpha(i === 0 ? 1 : 0);
+      parts.push(sheet);
+      if (i === 0) return;
+      this.tweens.add({
+        targets: sheet, alpha: { from: 0, to: 1 },
+        duration: 1500 + i * 400, delay: i * 700,
+        yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
     });
 
-    // A hard bright core, so the gate carries a highlight even at low zoom
-    // where a translucent pane averages back into the grass.
-    const core = this.add.rectangle(cx, baseY - TILE * 1.15, TILE * 0.22, TILE * 1.5, 0xFFFFFF, 0.75);
-    core.setDepth(baseY - 1);
-    parts.push(core);
+    // Embers rising inside the opening. Their x is kept within the arch at
+    // whatever height they have reached, so none of them ever drifts into the
+    // stone - the same fit as the field, done with arithmetic.
+    for (let i = 0; i < 9; i++) {
+      const ember = this.add.rectangle(eye.x, eye.y, 3, 3, i % 3 === 0 ? 0xFFFFFF : 0xAEEBFF, 0.9);
+      ember.setDepth(baseY - 4);
+      parts.push(ember);
+      const lane = (i / 8) * 2 - 1;
+      const rise = { t: Math.random() };
+      this.tweens.add({
+        targets: rise, t: 1, duration: 2100 + (i % 4) * 700, repeat: -1, ease: 'Sine.easeOut',
+        onUpdate: () => {
+          const y = eye.y + openH / 2 - rise.t * openH * 0.96;
+          // How wide the arch is at this height: full width down the straight
+          // sides, narrowing through the semicircular head.
+          const headTop = eye.y - openH / 2 + openW / 2;
+          const halfWidth = y >= headTop
+            ? openW / 2
+            : Math.sqrt(Math.max(0, (openW / 2) ** 2 - (headTop - y) ** 2));
+          ember.x = eye.x + lane * halfWidth * 0.72;
+          ember.y = y;
+          ember.setAlpha(Math.sin(Math.PI * rise.t) * 0.95);
+        },
+      });
+    }
+
+    // The rim breathing, on top of the baked one, so the doorway pulses.
+    const glow = this.add.image(eye.x, eye.y, frames[0]);
+    glow.setDisplaySize(openW * 1.06, openH * 1.04);
+    glow.setDepth(baseY - 6).setAlpha(0.3).setTint(0x8FE6FF);
+    parts.push(glow);
     this.tweens.add({
-      targets: core, alpha: { from: 0.45, to: 0.95 }, scaleY: { from: 0.86, to: 1 },
-      duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      targets: glow, alpha: { from: 0.16, to: 0.42 },
+      duration: 1900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
     for (const side of [-1, 1]) {
-      const px = cx + side * TILE * 0.82;
-      parts.push(this.add.rectangle(px, baseY - TILE * 1.1, TILE * 0.46, TILE * 2.2, stone).setDepth(baseY));
-      parts.push(this.add.rectangle(px, baseY - TILE * 2.0, TILE * 0.46, TILE * 0.34, stoneLit).setDepth(baseY));
-      parts.push(this.add.rectangle(px, baseY - TILE * 0.12, TILE * 0.6, TILE * 0.22, shadow).setDepth(baseY));
+      const px = cx + side * TILE * 1.2;
+      parts.push(this.add.rectangle(px, baseY - TILE * 1.15, TILE * 0.5, TILE * 2.5, stone).setDepth(baseY));
+      parts.push(this.add.rectangle(px, baseY - TILE * 2.3, TILE * 0.5, TILE * 0.36, stoneLit).setDepth(baseY));
+      parts.push(this.add.rectangle(px, baseY - TILE * 0.12, TILE * 0.66, TILE * 0.24, shadow).setDepth(baseY));
     }
-    parts.push(this.add.rectangle(cx, baseY - TILE * 2.28, TILE * 2.3, TILE * 0.42, stone).setDepth(baseY));
-    parts.push(this.add.rectangle(cx, baseY - TILE * 2.46, TILE * 2.0, TILE * 0.16, stoneLit).setDepth(baseY));
+    parts.push(this.add.rectangle(cx, baseY - TILE * 2.6, TILE * 3.1, TILE * 0.44, stone).setDepth(baseY));
+    parts.push(this.add.rectangle(cx, baseY - TILE * 2.8, TILE * 2.7, TILE * 0.18, stoneLit).setDepth(baseY));
 
-    // Four motes drifting up the pane, so the gate is never quite still.
-    for (let i = 0; i < 4; i++) {
-      const mote = this.add.rectangle(cx + (i - 1.5) * 7, baseY - TILE * 0.3, 3, 3, 0xBFF4FF, 0.95).setDepth(baseY);
-      parts.push(mote);
+    for (const part of parts) (part as any).setData?.('persistent-world', true);
+  }
+
+  /**
+   * The arch path, in texture space: straight sides, a semicircular top, a
+   * flat base. The same shape as the hole between the pillars, which is the
+   * whole point - the field is cut to the doorway rather than laid over it.
+   */
+  archPath(ctx: CanvasRenderingContext2D, w: number, h: number, inset = 0) {
+    const r = w / 2 - inset;
+    ctx.beginPath();
+    ctx.moveTo(inset, h - inset);
+    ctx.lineTo(inset, inset + r);
+    ctx.arc(w / 2, inset + r, r, Math.PI, 0);
+    ctx.lineTo(w - inset, h - inset);
+    ctx.closePath();
+  }
+
+  /**
+   * One frame of the field: plasma drawn inside a real clip of the arch.
+   *
+   * Everything outside the path is transparent, so an Image of this texture
+   * physically cannot show light past the stone. That is why this is drawn on
+   * a canvas rather than assembled from Phaser shapes and masked - a mask is a
+   * promise made at render time, and a clipped canvas is a fact about the
+   * pixels.
+   */
+  makePortalFrame(key: string, w: number, h: number, seed: number) {
+    if (this.textures.exists(key)) return;
+    const canvasTexture = this.textures.createCanvas(key, w, h);
+    if (!canvasTexture) return;
+    const ctx = canvasTexture.getContext();
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.save();
+    this.archPath(ctx, w, h);
+    ctx.clip();
+
+    // The body of the field: pale at the heart, deepening to the edges, so it
+    // reads as depth rather than as a flat panel of colour.
+    const depth = ctx.createRadialGradient(w / 2, h * 0.44, w * 0.05, w / 2, h * 0.5, h * 0.62);
+    depth.addColorStop(0, '#F2FBFF');
+    depth.addColorStop(0.35, '#8FE6FF');
+    depth.addColorStop(0.72, '#2196D9');
+    depth.addColorStop(1, '#0A3A6B');
+    ctx.fillStyle = depth;
+    ctx.fillRect(0, 0, w, h);
+
+    // Plasma. Soft blobs at a seeded scatter, lighter-blended so they pile up
+    // into brightness the way a fluid does instead of stacking as discs.
+    let n = seed * 9301 + 49297;
+    const rand = () => { n = (n * 9301 + 49297) % 233280; return n / 233280; };
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 46; i++) {
+      const bx = rand() * w, by = rand() * h;
+      const br = (0.06 + rand() * 0.16) * w;
+      const blob = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+      const bright = rand();
+      blob.addColorStop(0, bright > 0.62 ? 'rgba(255,255,255,0.55)' : 'rgba(150,230,255,0.42)');
+      blob.addColorStop(1, 'rgba(20,90,160,0)');
+      ctx.fillStyle = blob;
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Vertical streaks, which is what makes a still frame look like it is
+    // already falling before anything animates.
+    for (let i = 0; i < 14; i++) {
+      const sx = rand() * w;
+      const sw = 1 + rand() * 3;
+      const streak = ctx.createLinearGradient(sx, 0, sx, h);
+      streak.addColorStop(0, 'rgba(255,255,255,0)');
+      streak.addColorStop(0.3 + rand() * 0.3, `rgba(200,245,255,${0.14 + rand() * 0.2})`);
+      streak.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = streak;
+      ctx.fillRect(sx, 0, sw, h);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+
+    // The rim, drawn last and just inside the edge, so the field looks like it
+    // is pressing against the stone rather than sitting behind it.
+    ctx.save();
+    this.archPath(ctx, w, h, 1.5);
+    ctx.strokeStyle = 'rgba(220,248,255,0.95)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    this.archPath(ctx, w, h, 4);
+    ctx.strokeStyle = 'rgba(120,215,255,0.5)';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.restore();
+
+    canvasTexture.refresh();
+  }
+
+  /** The eye of the vortex, in world pixels. One definition, used by all of it. */
+  portalCentre() {
+    const gate = gateTile();
+    return { x: gate.x * TILE + TILE / 2, y: gate.y * TILE + TILE - TILE * 1.19 };
+  }
+
+  /**
+   * A shockwave ring leaving the portal's eye.
+   *
+   * Rings, not a scaling square: the whole point of the rewrite is that
+   * everything about this gate is circular, and a square flash at the moment
+   * somebody arrives is exactly where the old shape showed through.
+   */
+  portalShockwave(tint: number, rounds = 3) {
+    const eye = this.portalCentre();
+    for (let i = 0; i < rounds; i++) {
+      const ring = this.add.ellipse(eye.x, eye.y, TILE * 0.4, TILE * 0.34, 0x000000, 0);
+      ring.setStrokeStyle(3, tint, 0.9).setDepth(10_000);
       this.tweens.add({
-        targets: mote, y: baseY - TILE * 2.1, alpha: 0,
-        duration: 2200, delay: i * 550, repeat: -1, ease: 'Sine.easeOut',
+        targets: ring, scaleX: 5.5, scaleY: 5.5, alpha: 0,
+        duration: 620 + i * 130, delay: i * 110, ease: 'Cubic.easeOut',
+        onComplete: () => ring.destroy(),
       });
     }
-    for (const part of parts) (part as any).setData?.('persistent-world', true);
+  }
+
+  /** Sparks thrown off the rim, on the ellipse rather than in a square spray. */
+  portalSparks(tint: number, count = 12) {
+    const eye = this.portalCentre();
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const spark = this.add.rectangle(eye.x, eye.y, 3, 3, i % 4 === 0 ? 0xFFFFFF : tint, 0.95).setDepth(10_001);
+      this.tweens.add({
+        targets: spark,
+        x: eye.x + Math.cos(angle) * (TILE * 0.9 + (i % 3) * 6),
+        y: eye.y + Math.sin(angle) * (TILE * 1.1 + (i % 4) * 5),
+        alpha: 0, duration: 720, ease: 'Cubic.easeOut',
+        onComplete: () => spark.destroy(),
+      });
+    }
   }
 
   /**
@@ -1697,16 +1869,34 @@ class EarthScene extends Phaser.Scene {
     const sprite = this.sprites.get(citizen.agentId);
     if (!sprite) return;
     this.departing.add(citizen.agentId);
-    const gate = gateTile();
-    const toX = gate.x * TILE + TILE / 2;
-    const toY = gate.y * TILE + TILE * 0.4;
+    const eye = this.portalCentre();
+
+    // Walk to the threshold first, so it still reads as a person choosing to
+    // leave rather than being yanked off the map.
     this.tweens.add({
-      targets: sprite, x: toX, y: toY, duration: 900, ease: 'Sine.easeInOut',
+      targets: sprite, x: eye.x, y: eye.y + TILE * 1.0, duration: 850, ease: 'Sine.easeInOut',
       onComplete: () => {
-        this.gateFlash(toX, toY, 0x6FE8FF);
+        this.portalShockwave(0x8FE6FF, 2);
+        // Then spiral in. The angle winds forward while the radius closes, so
+        // the path is a real spiral into the eye rather than a straight line
+        // with a fade laid over it.
+        const spiral = { t: 0 };
+        const startAngle = Math.atan2(sprite.y - eye.y, sprite.x - eye.x);
+        const startRadius = Math.hypot(sprite.x - eye.x, sprite.y - eye.y);
         this.tweens.add({
-          targets: sprite, alpha: 0, scaleX: 0.2, scaleY: 1.25, duration: 420, ease: 'Quad.easeIn',
+          targets: spiral, t: 1, duration: 760, ease: 'Quad.easeIn',
+          onUpdate: () => {
+            const angle = startAngle + spiral.t * Math.PI * 2.4;
+            const radius = startRadius * (1 - spiral.t);
+            sprite.x = eye.x + Math.cos(angle) * radius;
+            sprite.y = eye.y + Math.sin(angle) * radius * 0.85;
+            sprite.setAlpha(1 - spiral.t * 0.9);
+            // Squeezed narrow as it goes in, which reads as being drawn
+            // through something without tumbling the name label with it.
+            sprite.setScale((1 - spiral.t * 0.9), (1 - spiral.t * 0.55));
+          },
           onComplete: () => {
+            this.portalSparks(0xAEEBFF, 10);
             sprite.destroy(true);
             this.sprites.delete(citizen.agentId);
             this.departing.delete(citizen.agentId);
@@ -1716,38 +1906,35 @@ class EarthScene extends Phaser.Scene {
     });
   }
 
-  /** Their owner came back. Re-form them in the arch. */
+  /** Their owner came back. Wind them out of the eye of the vortex. */
   wakeAtGate(citizen: Citizen) {
+    this.portalShockwave(0xF2FBFF, 3);
+    this.portalSparks(0x8FE6FF, 14);
     const sprite = this.sprites.get(citizen.agentId);
-    const gate = gateTile();
-    const atX = gate.x * TILE + TILE / 2;
-    const atY = gate.y * TILE + TILE * 0.4;
-    this.gateFlash(atX, atY, 0xFDF6EC);
     if (!sprite) return;
-    sprite.setAlpha(0).setScale(0.2, 1.25);
-    this.tweens.add({
-      targets: sprite, alpha: 1, scaleX: 1, scaleY: 1, duration: 520, ease: 'Back.easeOut',
-    });
-  }
+    const eye = this.portalCentre();
+    const rest = { x: sprite.x, y: sprite.y };
 
-  /** The light in the arch when somebody passes through it, either way. */
-  gateFlash(x: number, y: number, tint: number) {
-    const ring = this.add.rectangle(x, y - TILE * 0.6, TILE * 0.5, TILE * 0.5, tint, 0.85).setDepth(10_000);
+    // The reverse of leaving: out of the centre, unwinding, growing into
+    // themselves, and finally settling where the Kernel actually stood them.
+    const spiral = { t: 0 };
+    sprite.setAlpha(0).setScale(0.1, 0.45);
+    const startAngle = Math.atan2(rest.y - eye.y, rest.x - eye.x);
+    const endRadius = Math.hypot(rest.x - eye.x, rest.y - eye.y);
     this.tweens.add({
-      targets: ring, scaleX: 4.2, scaleY: 4.2, alpha: 0, duration: 620, ease: 'Cubic.easeOut',
-      onComplete: () => ring.destroy(),
+      targets: spiral, t: 1, duration: 900, ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        const angle = startAngle - (1 - spiral.t) * Math.PI * 2.4;
+        const radius = endRadius * spiral.t;
+        sprite.x = eye.x + Math.cos(angle) * radius;
+        sprite.y = eye.y + Math.sin(angle) * radius * 0.85;
+        sprite.setAlpha(Math.min(1, spiral.t * 1.6));
+        sprite.setScale(0.1 + spiral.t * 0.9, 0.45 + spiral.t * 0.55);
+      },
+      onComplete: () => {
+        sprite.setPosition(rest.x, rest.y).setScale(1).setAlpha(1);
+      },
     });
-    for (let i = 0; i < 10; i++) {
-      const angle = (i / 10) * Math.PI * 2;
-      const mote = this.add.rectangle(x, y - TILE * 0.6, 3, 3, i % 3 === 0 ? 0x1E1E1E : tint).setDepth(10_001);
-      this.tweens.add({
-        targets: mote,
-        x: x + Math.cos(angle) * (14 + (i % 4) * 8),
-        y: y - TILE * 0.6 + Math.sin(angle) * (12 + (i % 3) * 7),
-        alpha: 0, duration: 700, ease: 'Stepped.easeOut',
-        onComplete: () => mote.destroy(),
-      });
-    }
   }
 
   arrivalConfetti(citizen: Citizen) {

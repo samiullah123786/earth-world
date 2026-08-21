@@ -57,6 +57,36 @@ export function isAsleep(citizen: {
  * getting this wrong is a town that flickers - and a pure function is the only
  * version of this that can be tested without a database and a clock.
  */
+/**
+ * What the renderer should do about one citizen on this update.
+ *
+ * Pulled out of the scene because it is the part of the gate most likely to be
+ * quietly wrong, and the part hardest to see going wrong: a missed `wake`
+ * means a citizen silently blinks into existence beside the portal instead of
+ * coming out of it, which looks like nothing at all rather than like a bug.
+ *
+ *   depart  - was on the map, has fallen asleep: spiral into the vortex
+ *   wake    - not on the map, is awake, and we watched them fall asleep here
+ *   arrive  - not on the map, is awake, and we never saw them leave
+ *   vanish  - asleep and drawn, but there is no animation to play (first load)
+ *   hold    - nothing to do
+ */
+export function renderTransition(
+  citizen: { online?: boolean; serviceRole?: string; asleepSince?: number },
+  { drawn, sleptHere, firstLoad, departing }:
+    { drawn: boolean; sleptHere: boolean; firstLoad: boolean; departing: boolean },
+): 'depart' | 'wake' | 'arrive' | 'vanish' | 'hold' {
+  if (isAsleep(citizen)) {
+    if (!drawn || departing) return 'hold';
+    // On the very first update there is nothing to walk out of the world -
+    // they were already asleep before anyone was watching.
+    return firstLoad ? 'vanish' : 'depart';
+  }
+  if (drawn) return 'hold';
+  if (firstLoad) return 'hold';
+  return sleptHere ? 'wake' : 'arrive';
+}
+
 export function slumberVerdict(
   citizen: { online?: boolean; serviceRole?: string; asleepSince?: number; offlineSince?: number },
   now: number,
