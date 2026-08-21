@@ -916,6 +916,24 @@ export default defineSchema({
     }),
     state: v.union(v.literal('listed'), v.literal('flagged'), v.literal('retired')),
     installCount: v.number(),
+    // Evidence about the repository behind this listing, refreshed on a slow
+    // rotation. Stars are recorded and never scored: measured while building
+    // this, one project carried 12.3k stars on 88 commits from six people.
+    // What the score uses is freshness, hands, whether it is installable at
+    // all, and whether it says what licence it is under.
+    health: v.optional(v.object({
+      checkedAt: v.number(),
+      pushedAt: v.optional(v.number()),
+      archived: v.optional(v.boolean()),
+      license: v.optional(v.union(v.string(), v.null())),
+      stars: v.optional(v.number()),
+      openIssues: v.optional(v.number()),
+      contributors: v.optional(v.number()),
+      repository: v.optional(v.string()),
+      label: v.optional(v.string()),
+      why: v.optional(v.string()),
+    })),
+    maintenanceScore: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('serverId', ['serverId'])

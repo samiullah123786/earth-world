@@ -57,4 +57,14 @@ crons.interval('civic authorities', { minutes: 6 }, internal.authorities.tick, {
 // Fault reports reach the Mayor without anyone having to ask.
 crons.interval('bug triage', { minutes: 15 }, internal.committee.triageBugs, {});
 
+// The catalogue restocks itself from the official MCP registry, where every
+// record carries a real published package or a real remote URL - so what lands
+// on the shelf is something Earth can hand somebody an exact command for,
+// rather than a repository they would have to clone and run.
+crons.interval('mcp registry sync', { hours: 24 }, internal.registrySync.syncOfficialRegistry, {});
+// And the evidence behind those listings is refreshed a dozen at a time. Two
+// GitHub calls per repository against an unauthenticated ceiling of sixty an
+// hour: slow on purpose, free, and it never needs a key to work at all.
+crons.interval('listing maintenance', { hours: 1 }, internal.registrySync.refreshMaintenance, {});
+
 export default crons;

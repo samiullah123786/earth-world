@@ -29,6 +29,7 @@ import type * as migrations from "../migrations.js";
 import type * as pathfinding from "../pathfinding.js";
 import type * as planning from "../planning.js";
 import type * as plotsData from "../plotsData.js";
+import type * as registrySync from "../registrySync.js";
 import type * as scanner from "../scanner.js";
 import type * as security from "../security.js";
 import type * as seed from "../seed.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   pathfinding: typeof pathfinding;
   planning: typeof planning;
   plotsData: typeof plotsData;
+  registrySync: typeof registrySync;
   scanner: typeof scanner;
   security: typeof security;
   seed: typeof seed;

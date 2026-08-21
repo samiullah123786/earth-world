@@ -38,6 +38,18 @@ function card(row: any) {
     installCount: row.installCount,
     safety: { verdict: row.safety.verdict, flags: row.safety.flags },
     state: row.state,
+    // What Earth knows about the repository behind this, and when it looked.
+    // Stars ride along for display; the score never counts them.
+    maintenanceScore: row.maintenanceScore ?? null,
+    maintenance: row.health
+      ? {
+        label: row.health.label ?? 'unknown', why: row.health.why ?? '',
+        stars: row.health.stars ?? null, contributors: row.health.contributors ?? null,
+        pushedAt: row.health.pushedAt ?? null, archived: row.health.archived ?? false,
+        checkedAt: row.health.checkedAt,
+      }
+      : null,
+    repository: row.repository ?? null,
     updatedAt: row.updatedAt,
   };
 }
