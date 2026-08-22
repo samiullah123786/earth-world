@@ -2,6 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it, vi } from 'vitest';
 import { api, internal } from './_generated/api';
 import schema from './schema';
+import { homeRect } from '../shared/homestead';
 import { findRoute, walkableInWorld } from './pathfinding';
 import { walkable } from './walkable';
 import { boundariesMatch, validateWfcChunk, wfcRule } from '../shared/wfc';
@@ -820,7 +821,11 @@ describe('Earth Kernel', () => {
     expect(builds.map((build) => build.blueprint?.kind).sort()).toEqual(['home']);
     expect(builds.every((build) => build.blueprint?.style === 'earthforge-semantic-v1')).toBe(true);
     expect(builds[0].blueprint?.earthForge?.assetId).toMatch(/^home_/);
-    expect(builds[0].blueprint?.collision).toHaveLength((plot!.w) * Math.max(0, plot!.h - 1));
+    // The dwelling covers the plot LESS its yard now, so the collision skin
+    // follows the house rather than the whole parcel. That shrink is the fix
+    // for gardens and benches being placed inside the home they belong to.
+    const house = homeRect(plot!);
+    expect(builds[0].blueprint?.collision).toHaveLength(house.w * Math.max(0, house.h - 1));
     const notifications = await t.query(internal.kernel.ownerNotifications, { tokenHash: newcomer.ownerToken });
     expect(notifications.some((notification) => notification.title === 'Your agent is home')).toBe(true);
   });

@@ -4,6 +4,8 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 import './style.css';
 import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette } from './world3d/detail';
 import { kitPalette, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
+import { conversationSubtitle, conversationTitle, groupConversations } from './world3d/conversations';
+import { lookFor, makeFace, makeHair } from './world3d/citizenKit';
 
 const KERNEL = import.meta.env.VITE_CONVEX_SITE_URL || 'https://kernel.agentsearth.com';
 const EMBED = new URLSearchParams(location.search).has('embed');
@@ -213,6 +215,8 @@ let ownerAgentId = new URLSearchParams(location.search).get('me');
 let authorityOnly = false;
 let toastTimer = 0;
 const citizenModels = new Map<string, CitizenModel>();
+/** Which conversation cards the reader has opened, kept across polls. */
+const openConversations = new Set<string>();
 const DETAIL = detailPalette();
 const KIT = kitPalette();
 let farmSignature = '';
@@ -507,7 +511,10 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
 
   const gateGroup = new THREE.Group();
   for (const side of [-1, 1]) addBlock(gateGroup, gate.x + side - .25, .05, gate.y + .28, .5, 4.2, .5, materials.obsidian);
-  addBlock(gateGroup, gate.x - 1.25, 3.9, gate.y + .28, 3, .55, .5, materials.obsidian);
+  // The lintel spans the posts and no further. It used to run from -1.25 to
+  // +1.75 while the posts stood at -1.25 to +1.25, so the arch overhung by
+  // half a tile on one side only - the lopsided doorway.
+  addBlock(gateGroup, gate.x - 1.45, 3.9, gate.y + .28, 2.9, .55, .5, materials.obsidian);
   addBlock(gateGroup, gate.x - .68, .45, gate.y + .34, 1.36, 3.32, .3, materials.portal);
   const gateLight = new THREE.PointLight(0x4fdcff, 8, 12, 1.8);
   gateLight.position.set(gate.x, 2.3, gate.y + .5);
@@ -541,22 +548,29 @@ function makeLabel(text: string, background: string, width = 220, height = 42, w
 function makeCitizen(row: Citizen): CitizenModel {
   const group = new THREE.Group();
   group.userData.agentId = row.agentId;
-  const family = new THREE.MeshStandardMaterial({ color: colorForFamily(row.family), roughness: .75 });
-  const skinColors = [0xf0c39b, 0xd9a878, 0xb87952, 0x815238];
-  const skin = new THREE.MeshStandardMaterial({ color: skinColors[hash(row.agentId) % skinColors.length], roughness: .78 });
-  const hairColors = [0x34251d, 0x6a4528, 0xc28a3a, 0x24242b, 0x7a3232];
-  const hair = new THREE.MeshStandardMaterial({ color: hairColors[hash(row.name) % hairColors.length], roughness: .9 });
+  // Every citizen used to wear the same body in four skin tones and five hair
+  // colours, so twenty of them read as one person copied twenty times. A look
+  // is now derived from the agentId - stable forever, unique in practice, and
+  // impossible to claim, which is the same rule everything else here follows.
+  const look = lookFor(row.agentId, colorForFamily(row.family).getHex());
+  const family = new THREE.MeshStandardMaterial({ color: look.cloth, roughness: .75 });
+  const trim = new THREE.MeshStandardMaterial({ color: look.trim, roughness: .8 });
+  const skin = new THREE.MeshStandardMaterial({ color: look.skin, roughness: .78 });
   const boot = materials.darkTimber;
+  const wide = look.build === 'broad' ? 1.14 : look.build === 'slight' ? .88 : 1;
 
-  const torso = addBlock(group, -.25, .75, -.15, .5, .72, .3, family);
+  const torso = addBlock(group, -.25 * wide, .75, -.15, .5 * wide, .72, .3, family);
   const head = addBlock(group, -.22, 1.5, -.19, .44, .44, .38, skin);
-  addBlock(group, -.23, 1.86, -.2, .46, .12, .4, hair);
-  const leftArm = addBlock(group, -.39, .79, -.11, .13, .66, .22, skin);
-  const rightArm = addBlock(group, .26, .79, -.11, .13, .66, .22, skin);
-  const leftLeg = addBlock(group, -.2, .12, -.11, .17, .64, .22, family);
-  const rightLeg = addBlock(group, .03, .12, -.11, .17, .64, .22, family);
+  const leftArm = addBlock(group, -.39 * wide, .79, -.11, .13, .66, .22, skin);
+  const rightArm = addBlock(group, .26 * wide, .79, -.11, .13, .66, .22, skin);
+  const leftLeg = addBlock(group, -.2, .12, -.11, .17, .64, .22, trim);
+  const rightLeg = addBlock(group, .03, .12, -.11, .17, .64, .22, trim);
   addBlock(group, -.2, .06, -.17, .17, .14, .3, boot);
   addBlock(group, .03, .06, -.17, .17, .14, .3, boot);
+  group.add(makeHair(look), makeFace(look));
+  // A hand's difference either way. Small on purpose: wildly varied sizes
+  // read as a bug, slightly varied ones read as people.
+  group.scale.setScalar(look.height);
   const badge = addBlock(group, -.06, 1.12, -.165, .12, .12, .04, materials.window);
   badge.userData.agentId = row.agentId;
   for (const mesh of [torso, head, leftArm, rightArm, leftLeg, rightLeg]) mesh.userData.agentId = row.agentId;
@@ -630,11 +644,27 @@ function positionFor(row: Citizen, now: number) {
   return { x: row.tx, z: row.ty, moving: false };
 }
 
-function animateCitizens(elapsed: number) {
+function animateCitizens(elapsed: number, elapsedDelta: number) {
   const now = Date.now() + clockOffset - 140;
   for (const model of citizenModels.values()) {
     const spot = positionFor(model.row, now);
-    model.group.position.set(spot.x + .5, .02, spot.z + .5);
+    // Even with the clock steadied, a citizen can legitimately jump: the
+    // Kernel stands them at the gate when they wake, and a stalled poll can
+    // land a correction. So the body GLIDES to where the world says it is,
+    // unless the gap is bigger than any walk could explain - then it really
+    // was a teleport, and snapping is the honest answer.
+    const targetX = spot.x + .5, targetZ = spot.z + .5;
+    const gap = Math.hypot(targetX - model.group.position.x, targetZ - model.group.position.z);
+    if (model.group.position.x === 0 && model.group.position.z === 0) {
+      model.group.position.set(targetX, .02, targetZ);
+    } else if (gap > 6) {
+      model.group.position.set(targetX, .02, targetZ);
+    } else {
+      const ease = Math.min(1, elapsedDelta * 12);
+      model.group.position.x += (targetX - model.group.position.x) * ease;
+      model.group.position.z += (targetZ - model.group.position.z) * ease;
+      model.group.position.y = .02;
+    }
     if (spot.moving) {
       const swing = Math.sin(elapsed * 8 + hash(model.row.agentId) % 10) * .55;
       model.leftArm.rotation.x = swing;
@@ -762,23 +792,63 @@ function renderDirectory() {
 
 function renderChat() {
   if (!world) return;
-  const active = world.citizens.filter((row) => row.talkingWith && (!row.talkingUntil || row.talkingUntil > Date.now()));
-  required('chat-count').textContent = active.length ? `${active.length} LIVE` : '';
+  // One conversation, one card. The feed used to list every speaker, so two
+  // people talking to each other appeared as two live chats about the same
+  // exchange and a group of four appeared as four. Grouping follows the
+  // chain of who is talking to whom, so a knot of three is one card.
+  const conversations = groupConversations(world.citizens, Date.now());
+  required('chat-count').textContent = conversations.length
+    ? `${conversations.length} LIVE` : '';
   const dot = conversation.querySelector('.conversation-live-dot');
-  dot?.classList.toggle('quiet', !active.length);
-  if (!active.length) {
-    const empty = document.createElement('div'); empty.className = 'chat-empty'; empty.textContent = 'No live conversation right now. Nothing opens automatically.';
+  dot?.classList.toggle('quiet', !conversations.length);
+
+  if (!conversations.length) {
+    const empty = document.createElement('div');
+    empty.className = 'chat-empty';
+    empty.textContent = 'No live conversation right now. Nothing opens automatically.';
     conversationBody.replaceChildren(empty);
     return;
   }
-  conversationBody.replaceChildren(...active.map((row) => {
-    const item = document.createElement('button'); item.type = 'button'; item.className = 'chat-row';
-    const other = world!.citizens.find((citizen) => citizen.agentId === row.talkingWith);
-    item.innerHTML = `<b></b><span></span>`;
-    item.querySelector('b')!.textContent = `${row.name} ↔ ${other?.name ?? 'citizen'}`;
-    item.querySelector('span')!.textContent = row.activity || 'talking in the world';
-    item.onclick = () => focusCitizen(row.agentId);
-    return item;
+
+  conversationBody.replaceChildren(...conversations.map((talk) => {
+    const card = document.createElement('div');
+    card.className = 'chat-card' + (talk.group ? ' group' : '');
+    card.dataset.conversation = talk.id;
+
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'chat-row';
+    head.innerHTML = '<b></b><span></span>';
+    head.querySelector('b')!.textContent =
+      (talk.group ? `👥 ${conversationTitle(talk)}` : conversationTitle(talk));
+    head.querySelector('span')!.textContent = conversationSubtitle(talk);
+
+    // Tapping opens the card in place rather than jumping the camera: a
+    // reader following a conversation should not lose their view of it.
+    const detail = document.createElement('div');
+    detail.className = 'chat-detail';
+    detail.hidden = !openConversations.has(talk.id);
+    for (const member of talk.members) {
+      const line = document.createElement('button');
+      line.type = 'button';
+      line.className = 'chat-member';
+      line.innerHTML = '<i></i><b></b><span></span>';
+      (line.querySelector('i') as HTMLElement).style.background =
+        `#${colorForFamily(member.family).getHexString()}`;
+      line.querySelector('b')!.textContent = member.name;
+      line.querySelector('span')!.textContent = member.activity || 'in this conversation';
+      line.onclick = (event) => { event.stopPropagation(); focusCitizen(member.agentId); };
+      detail.append(line);
+    }
+    head.onclick = () => {
+      if (openConversations.has(talk.id)) openConversations.delete(talk.id);
+      else openConversations.add(talk.id);
+      detail.hidden = !openConversations.has(talk.id);
+      card.classList.toggle('open', openConversations.has(talk.id));
+    };
+    card.classList.toggle('open', openConversations.has(talk.id));
+    card.append(head, detail);
+    return card;
   }));
 }
 
@@ -821,7 +891,19 @@ async function refreshState() {
   const next = await response.json() as WorldState;
   if (!next.ok) throw new Error('world state rejected');
   world = next;
-  clockOffset = next.serverNow - Date.now();
+  // THE JITTER FIX. serverNow is stamped when the Kernel builds the reply;
+  // Date.now() is when this browser receives it. The difference is the true
+  // clock skew MINUS however long that particular response spent on the wire,
+  // and that varies by hundreds of milliseconds poll to poll. Recomputing it
+  // raw every two seconds shoved the interpolation clock back and forth by
+  // that much, so every walking citizen lurched - here one instant, somewhere
+  // else the next.
+  //
+  // The least-delayed sample is the closest to the truth, so keep the largest
+  // offset seen and let it decay slowly. A genuine clock correction is still
+  // followed within a minute; network noise is simply ignored.
+  const sample = next.serverNow - Date.now();
+  clockOffset = clockOffset === 0 ? sample : Math.max(sample, clockOffset - 8);
   syncCitizens(next.citizens);
   const signature = JSON.stringify([next.builds, next.venues, next.gate]);
   if (signature !== structureSignature) {
@@ -942,6 +1024,17 @@ addEventListener('keydown', (event) => {
     toast(dragStyle === 'grab' ? 'Left-drag now grabs the ground' : 'Left-drag now orbits');
   }
   if (event.code === 'KeyF' && !exploreMode) enterExplore();
+  if (event.code === 'Escape' && driving) void letGo();
+  if (driving) {
+    // While driving, WASD walks the BODY rather than the camera - the whole
+    // point of holding the wheel.
+    const dx = (event.code === 'KeyD' ? 1 : 0) - (event.code === 'KeyA' ? 1 : 0);
+    const dy = (event.code === 'KeyS' ? 1 : 0) - (event.code === 'KeyW' ? 1 : 0);
+    if (dx || dy) {
+      event.preventDefault();
+      void driveStep(dx, dy);
+    }
+  }
 });
 addEventListener('keyup', (event) => keys.delete(event.code));
 
@@ -1124,15 +1217,158 @@ function panOverhead(delta: number) {
   orbit.target.z = THREE.MathUtils.clamp(orbit.target.z, -20, terrain.height + 20);
 }
 
+
+/* ── Taking the wheel ──────────────────────────────────────────────────────
+   The bond this whole world rests on, made physical: an owner steps into
+   their agent's body, walks it, and steps out, after which the agent picks up
+   its own life from wherever the body now stands.
+
+   The browser never moves anything itself. Every step is a request the Kernel
+   validates against the same walkability an autonomous citizen obeys, so a
+   driven body cannot go anywhere an agent could not have walked. What the
+   client owns is the camera, the keys, and the honesty of showing whose hands
+   are on the wheel. */
+
+let driving = false;
+let drivenAgentId: string | null = null;
+let stepPending = false;
+let lastStepAt = 0;
+/** One step per this many ms: a walk, not a stutter of held-key requests. */
+const STEP_INTERVAL = 300;
+
+const takeoverButton = document.getElementById('takeover') as HTMLButtonElement | null;
+const drivingBanner = (() => {
+  const node = document.createElement('div');
+  node.className = 'driving-banner';
+  node.setAttribute('role', 'status');
+  document.body.append(node);
+  return node;
+})();
+
+async function kernelPost(path: string, body?: unknown) {
+  const response = await fetch(`${KERNEL}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  return await response.json().catch(() => ({ ok: false, why: 'unreadable reply' }));
+}
+
+function showDriving(on: boolean, name?: string) {
+  driving = on;
+  drivingBanner.classList.toggle('on', on);
+  drivingBanner.textContent = on
+    ? `🎮 You are walking ${name ?? 'your citizen'} · WASD to walk · Esc to let go`
+    : '';
+  if (takeoverButton) {
+    takeoverButton.textContent = on ? '× LET GO' : '🎮 TAKE THE WHEEL';
+    takeoverButton.setAttribute('aria-pressed', String(on));
+  }
+  const copy = document.getElementById('control-copy');
+  if (copy && on) copy.textContent = 'WASD walks your citizen · Esc to let go';
+  else if (copy && !exploreMode) applyDragStyle();
+}
+
+async function takeTheWheel() {
+  const answer = await kernelPost('/v1/takeover/take');
+  if (!answer.ok) {
+    toast(answer.why || 'Connect your agent on the dashboard first.');
+    return;
+  }
+  drivenAgentId = answer.agentId;
+  ownerAgentId = answer.agentId;
+  showDriving(true, answer.name);
+  focusCitizen(answer.agentId, false);
+  toast(`You have the wheel. ${answer.name} walks where you walk.`);
+}
+
+async function letGo() {
+  if (!driving) return;
+  showDriving(false);
+  const held = drivenAgentId;
+  drivenAgentId = null;
+  await kernelPost('/v1/takeover/release');
+  if (held) toast('Wheel released. Your agent carries on from here.');
+}
+
+/**
+ * One step, requested from the Kernel.
+ *
+ * Rate limited on this side purely so a held key does not queue a hundred
+ * requests; the Kernel refuses anything illegal regardless, which is what
+ * makes this safe rather than merely tidy.
+ */
+async function driveStep(dx: number, dy: number) {
+  if (!driving || stepPending || !drivenAgentId || !world) return;
+  const now = performance.now();
+  if (now - lastStepAt < STEP_INTERVAL) return;
+  const me = world.citizens.find((row) => row.agentId === drivenAgentId);
+  if (!me) return;
+  lastStepAt = now;
+  stepPending = true;
+  try {
+    const answer = await kernelPost('/v1/takeover/step', {
+      x: Math.round(me.tx) + dx, y: Math.round(me.ty) + dy,
+    });
+    // A refusal is information, not a failure: the world just told you there
+    // is a wall there. Only surface the ones a walker would not expect.
+    if (!answer.ok && !/solid|already standing|edge of the world/.test(String(answer.why))) {
+      toast(answer.why || 'that step was refused');
+    }
+    if (answer.ok) {
+      // Move the camera with the body straight away rather than waiting for
+      // the next poll: two seconds of lag between key and view feels broken
+      // even though the world is perfectly correct.
+      orbit.target.set(answer.x + .5, .9, answer.y + .5);
+    }
+  } finally {
+    stepPending = false;
+  }
+}
+
+/** The wheel lapses on the Kernel's clock; renew it while somebody is here. */
+window.setInterval(() => {
+  if (driving) void kernelPost('/v1/takeover/take');
+}, 20_000);
+
+/** Offer the wheel only to somebody the world recognises as an owner. */
+async function refreshTakeoverOffer() {
+  try {
+    const response = await fetch(`${KERNEL}/v1/takeover/status`, { credentials: 'include' });
+    const status = await response.json();
+    if (!status.ok) {
+      if (takeoverButton) takeoverButton.hidden = true;
+      return;
+    }
+    if (takeoverButton) takeoverButton.hidden = false;
+    ownerAgentId = status.agentId;
+    drivenAgentId = status.driving ? status.agentId : drivenAgentId;
+    if (status.driving !== driving) showDriving(status.driving, status.name);
+  } catch {
+    if (takeoverButton) takeoverButton.hidden = true;
+  }
+}
+
+takeoverButton?.addEventListener('click', () => void (driving ? letGo() : takeTheWheel()));
+window.setInterval(() => void refreshTakeoverOffer(), 15_000);
+void refreshTakeoverOffer();
+
 function animate() {
   const now = performance.now();
   const delta = Math.min((now - lastFrame) / 1000, .05);
   lastFrame = now;
   elapsedSeconds += delta;
   moveFirstPerson(delta);
-  panOverhead(delta);
+  if (driving) {
+    const dx = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+    const dy = (keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0);
+    if (dx || dy) void driveStep(dx, dy);
+  } else {
+    panOverhead(delta);
+  }
   if (!exploreMode) orbit.update();
-  animateCitizens(elapsedSeconds);
+  animateCitizens(elapsedSeconds, delta);
   const day = (Date.now() / 120000) % (Math.PI * 2);
   sun.position.set(Math.cos(day) * 55, 32 + Math.sin(day) * 18, Math.sin(day) * 44);
   renderer.render(scene, camera);

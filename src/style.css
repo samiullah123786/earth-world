@@ -312,3 +312,32 @@ body.embed .controls { bottom: 12px; }
 
 /* When the land is close to growing, the boundary line says so. */
 #boundary.growing { color: #ffcf63; font-weight: 700; }
+
+/* One conversation, one card. Two people talking used to fill the panel with
+   two rows about the same exchange; a knot of three filled it with three. */
+.chat-card { border-radius: 8px; overflow: hidden; margin-bottom: 6px; background: rgba(255,255,255,.03); }
+.chat-card.group { border-left: 3px solid #f59e0b; }
+.chat-card.open { background: rgba(255,255,255,.07); }
+.chat-detail { padding: 2px 0 6px; }
+.chat-member {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; color: inherit; text-align: left;
+  padding: 5px 10px 5px 16px; cursor: pointer; font: inherit;
+}
+.chat-member:hover { background: rgba(255,255,255,.08); }
+.chat-member i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.chat-member b { font-size: 12px; }
+.chat-member span { font-size: 11px; opacity: .62; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Taking the wheel of your own citizen. Hidden until the world knows who you
+   are, because offering it to a visitor with no agent is a dead button. */
+.takeover { right: 12px; bottom: 100px; background: #7c3aed; }
+.takeover[aria-pressed="true"] { background: #b4551f; }
+.driving-banner {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 40;
+  background: rgba(124,58,237,.94); color: #fff; padding: 8px 16px; border-radius: 999px;
+  font: 700 12px/1 Consolas, monospace; letter-spacing: .6px; display: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}
+.driving-banner.on { display: block; }
+body.embed .takeover, body.embed .driving-banner { display: none !important; }

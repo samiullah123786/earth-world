@@ -448,6 +448,7 @@ const worldStateHttp = httpAction(async (ctx) => {
       // has tracked tools since they were earned through contribution; no
       // renderer has ever shown one, so every citizen looked empty-handed
       // while carrying a pickaxe they worked for.
+      driven: Boolean(row.drivenBy) && (row.drivenUntil ?? 0) > Date.now(),
       carriedTool: row.carriedTool ?? null,
       activeTool: row.activeTool ?? null,
       workingUntil: row.workingUntil ?? null,
@@ -574,6 +575,55 @@ const worldTerrain = httpAction(async (ctx) => {
       'access-control-allow-origin': '*',
     },
   });
+});
+
+/**
+ * Taking the wheel of your own citizen.
+ *
+ * Owner-session only, same-origin only. These are the one place in the world
+ * where a human moves a body directly, so they are the last place that should
+ * be reachable by anything holding less than proof of ownership.
+ */
+const takeoverTake = httpAction(async (ctx, request) => {
+  try {
+    return json(await ctx.runMutation(internal.takeover.take, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const takeoverRelease = httpAction(async (ctx, request) => {
+  try {
+    return json(await ctx.runMutation(internal.takeover.release, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+const takeoverStep = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    return json(await ctx.runMutation(internal.takeover.step, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      x: Number(value.x), y: Number(value.y),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const takeoverStatus = httpAction(async (ctx, request) => {
+  try {
+    return json(await ctx.runQuery(internal.takeover.status, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 403);
+  }
 });
 
 const marketDetail = httpAction(async (ctx, request) => {
@@ -1115,6 +1165,10 @@ http.route({ path: '/v1/health', method: 'GET', handler: health });
 http.route({ path: '/v1/world/state', method: 'GET', handler: worldStateHttp });
 http.route({ path: '/v1/world/perceive', method: 'GET', handler: worldPerceive });
 http.route({ path: '/v1/world/terrain', method: 'GET', handler: worldTerrain });
+http.route({ path: '/v1/takeover/take', method: 'POST', handler: takeoverTake });
+http.route({ path: '/v1/takeover/release', method: 'POST', handler: takeoverRelease });
+http.route({ path: '/v1/takeover/step', method: 'POST', handler: takeoverStep });
+http.route({ path: '/v1/takeover/status', method: 'GET', handler: takeoverStatus });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });

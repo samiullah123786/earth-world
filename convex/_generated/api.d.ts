@@ -35,6 +35,7 @@ import type * as registrySync from "../registrySync.js";
 import type * as scanner from "../scanner.js";
 import type * as security from "../security.js";
 import type * as seed from "../seed.js";
+import type * as takeover from "../takeover.js";
 import type * as tiledFounding from "../tiledFounding.js";
 import type * as vault from "../vault.js";
 import type * as walkable from "../walkable.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   scanner: typeof scanner;
   security: typeof security;
   seed: typeof seed;
+  takeover: typeof takeover;
   tiledFounding: typeof tiledFounding;
   vault: typeof vault;
   walkable: typeof walkable;

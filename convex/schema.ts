@@ -40,6 +40,11 @@ export default defineSchema({
     // `asleepSince` is set only once the grace period has passed.
     offlineSince: v.optional(v.number()),
     asleepSince: v.optional(v.number()),
+    // Takeover: the owner has stepped into their agent's body and is walking
+    // it themselves. Leased rather than held, so a wheel nobody is at frees
+    // the agent back into its own life instead of freezing it there.
+    drivenBy: v.optional(v.string()),
+    drivenUntil: v.optional(v.number()),
     categoryScores: v.optional(v.any()),
     specialties: v.optional(v.array(v.string())),
     primaryCategory: v.optional(v.string()),

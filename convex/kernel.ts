@@ -17,6 +17,7 @@ import {
 import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../shared/lpc-assets';
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
+import { homeRect, placeOnPlot } from '../shared/homestead';
 import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
 import { EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SITE_SYSTEM, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, earthForgeSiteContract, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
 import { EARTH_SETTLEMENT_POLICY, rankHomePlots } from '../shared/settlement';
@@ -548,18 +549,22 @@ function validateLpcPlacements(rawPlacements: unknown, footprint?: { w: number; 
   return { placements, width, height };
 }
 
-function buildFootprint(plot: any, payload: any) {
+function buildFootprint(plot: any, payload: any, standing: ReadonlyArray<{ x: number; y: number; w: number; h: number }> = []) {
   let structure = String(payload.structure ?? '');
   let blueprint: any = undefined;
   let spec: { offsetX: number; offsetY: number; w: number; h: number } | undefined;
   if (structure === 'home') {
     const resolved = earthForgeAssetFor('home', String(plot.ownerAgentId ?? plot.plotId));
     if (!resolved) throw new Error('EarthForge home catalog is unavailable');
-    const site = earthForgeSiteContract(resolved.asset, plot.w, plot.h);
-    spec = { offsetX: 0, offsetY: 0, w: plot.w, h: plot.h };
+    // The dwelling takes the plot LESS its yard. It used to span the whole
+    // parcel, which made every garden and bench on that plot an overlap by
+    // construction - nineteen overlapping pairs, on the live world.
+    const house = homeRect(plot);
+    const site = earthForgeSiteContract(resolved.asset, house.w, house.h);
+    spec = { offsetX: 0, offsetY: 0, w: house.w, h: house.h };
     blueprint = {
       name: resolved.asset.name, kind: 'home', architecture: 'earthforge',
-      features: [...resolved.asset.features], offsetX: 0, offsetY: 0, w: plot.w, h: plot.h,
+      features: [...resolved.asset.features], offsetX: 0, offsetY: 0, w: house.w, h: house.h,
       style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
       siteContract: EARTHFORGE_SITE_SYSTEM,
       entry: { x: site.entry[0], y: site.entry[1] },
@@ -568,8 +573,13 @@ function buildFootprint(plot: any, payload: any) {
     };
   } else if (['extension', 'garden', 'bench'].includes(structure)) {
     const prefab = prefabForStructure(structure);
-    spec = { offsetX: 0, offsetY: 0, w: prefab.width, h: prefab.height };
-    blueprint = canonicalPrefabBlueprint(prefab, 0, 0);
+    // Ask the plot where this belongs rather than dropping it on the corner.
+    // `standing` is what the caller already knows is built here; without it,
+    // every structure lands on the doorstep of the last one.
+    const spot = placeOnPlot(plot, structure, { w: prefab.width, h: prefab.height }, standing);
+    if (!spot) throw new Error(`this plot has no free ground left for a ${structure}`);
+    spec = { offsetX: spot.x - plot.x, offsetY: spot.y - plot.y, w: spot.w, h: spot.h };
+    blueprint = canonicalPrefabBlueprint(prefab, spec.offsetX, spec.offsetY);
   }
   if (structure === 'blueprint') {
     const raw = payload.blueprint;
@@ -684,7 +694,6 @@ async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
 async function validateBuild(ctx: any, requesterId: string, payload: any) {
   const plot = await ctx.db.query('plots').withIndex('plotId', (q: any) => q.eq('plotId', payload.plotId)).first();
   if (!plot || plot.ownerAgentId !== requesterId) throw new Error('agent does not own this plot');
-  const footprint = buildFootprint(plot, payload);
   const [rawBuilds, world] = await Promise.all([
     ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect(),
     ensureWorldState(ctx),
@@ -692,6 +701,12 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
   // Razed structures are history, not obstacles: they occupy no ground, block
   // no footprint, and never stop a rebuild.
   const builds = rawBuilds.filter((build: any) => build.state !== 'razed');
+  // The layout planner has to know what is already here, or it will keep
+  // offering the same free corner to everything.
+  const standing = builds
+    .filter((build: any) => typeof build.x === 'number')
+    .map((build: any) => ({ x: build.x, y: build.y, w: build.w ?? 1, h: build.h ?? 1 }));
+  const footprint = buildFootprint(plot, payload, standing);
   const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
   if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) {
     throw new Error('a home already stands on this plot');

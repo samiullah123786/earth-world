@@ -134,3 +134,101 @@ export function toolMotion(activeTool: string | null | undefined, working: boole
   if (activeTool === 'axe' || activeTool === 'pickaxe') return { amplitude: 1.15, speed: 6.5, lean: 0.35 };
   return { amplitude: 0.7, speed: 4.5, lean: 0.25 };
 }
+
+
+/**
+ * A citizen's own look, derived from who they verifiably are.
+ *
+ * Everyone wore the same body in four skin tones and five hair colours, so a
+ * crowd read as one person copied twenty times. Identity here is not
+ * decoration: it comes from the agentId and the verified family, which means
+ * it is stable forever, unique in practice, and impossible to claim - the
+ * same rule the rest of this world runs on.
+ */
+export type Look = {
+  skin: number; hair: number; hairStyle: 'crop' | 'long' | 'topknot' | 'cap' | 'bald';
+  build: 'slight' | 'average' | 'broad'; height: number;
+  cloth: number; trim: number; hasBeard: boolean; hasGlasses: boolean;
+};
+
+const SKINS = [0xf6d3b0, 0xf0c39b, 0xe0ae83, 0xd9a878, 0xc08e63, 0xb87952, 0x996141, 0x815238, 0x6b422b];
+const HAIRS = [0x1d1a17, 0x34251d, 0x4a3120, 0x6a4528, 0x8a5a2b, 0xc28a3a, 0xd8c07a, 0x8a3a2a, 0x6b6b73, 0xd8d3cc];
+const STYLES: Look['hairStyle'][] = ['crop', 'long', 'topknot', 'cap', 'bald'];
+const BUILDS: Look['build'][] = ['slight', 'average', 'average', 'broad'];
+
+/** A stable stream of small numbers from one string. */
+function streamOf(seed: string) {
+  let state = 0x811c9dc5;
+  for (let index = 0; index < seed.length; index++) {
+    state = Math.imul(state ^ seed.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return (max: number) => {
+    state = Math.imul(state ^ (state >>> 15), 0x2c1b3c6d) >>> 0;
+    state = Math.imul(state ^ (state >>> 12), 0x297a2d39) >>> 0;
+    return (state >>> 8) % max;
+  };
+}
+
+export function lookFor(agentId: string, family: number): Look {
+  const next = streamOf(agentId);
+  const skin = SKINS[next(SKINS.length)];
+  const hair = HAIRS[next(HAIRS.length)];
+  const hairStyle = STYLES[next(STYLES.length)];
+  const build = BUILDS[next(BUILDS.length)];
+  // Height varies by a hand either way. Small on purpose: a crowd of wildly
+  // different sizes reads as a bug, a crowd of slightly different ones reads
+  // as people.
+  const height = 0.92 + next(17) / 100;
+  // Clothing shades the family colour rather than replacing it, so a family
+  // stays readable at a glance while no two members wear the identical dye.
+  const shade = 0.82 + next(37) / 100;
+  const cloth = tint(family, shade);
+  const trim = tint(family, shade * 0.72);
+  return {
+    skin, hair, hairStyle, build, height, cloth, trim,
+    hasBeard: next(100) < 28, hasGlasses: next(100) < 22,
+  };
+}
+
+function tint(color: number, factor: number) {
+  const r = Math.min(255, Math.round(((color >> 16) & 255) * factor));
+  const g = Math.min(255, Math.round(((color >> 8) & 255) * factor));
+  const b = Math.min(255, Math.round((color & 255) * factor));
+  return (r << 16) | (g << 8) | b;
+}
+
+/** Hair, in the style this citizen wears it. */
+export function makeHair(look: Look): THREE.Group {
+  const group = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ color: look.hair, roughness: .92 });
+  if (look.hairStyle === 'bald') return group;
+  if (look.hairStyle === 'cap') {
+    part(group, material, 0, 1.93, -.01, .48, .14, .42);
+    part(group, material, 0, 1.88, -.22, .46, .07, .16);
+    return group;
+  }
+  part(group, material, 0, 1.9, -.01, .47, .13, .41);
+  if (look.hairStyle === 'long') {
+    part(group, material, 0, 1.66, .19, .44, .42, .07);
+    part(group, material, -.22, 1.68, 0, .06, .38, .34);
+    part(group, material, .22, 1.68, 0, .06, .38, .34);
+  }
+  if (look.hairStyle === 'topknot') part(group, material, 0, 2.03, .04, .17, .17, .17);
+  return group;
+}
+
+/** The rest of a face: not everyone has these, which is the point. */
+export function makeFace(look: Look): THREE.Group {
+  const group = new THREE.Group();
+  if (look.hasBeard) {
+    part(group, new THREE.MeshStandardMaterial({ color: look.hair, roughness: .95 }),
+      0, 1.55, -.2, .3, .16, .04);
+  }
+  if (look.hasGlasses) {
+    const frame = new THREE.MeshStandardMaterial({ color: 0x2b2b33, roughness: .5, metalness: .3 });
+    part(group, frame, -.1, 1.7, -.21, .13, .1, .03);
+    part(group, frame, .1, 1.7, -.21, .13, .1, .03);
+    part(group, frame, 0, 1.7, -.21, .08, .02, .03);
+  }
+  return group;
+}
