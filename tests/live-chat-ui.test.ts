@@ -23,6 +23,7 @@ describe('full-screen voxel world interface contract', () => {
     expect(html).toContain('aria-expanded="true" aria-label="Minimize live chat">−</button>');
     expect(html).toContain('class="panel feed min"');
     expect(html).toContain('aria-expanded="false" aria-label="Expand world activity">+</button>');
+    expect(styles).toContain('.chat-row { padding: 7px 8px; border: 2px solid var(--ink); background: var(--cream); color: var(--ink);');
     expect(source).toContain("minimized ? '+' : '−'");
     expect(source).toContain("minimized ? 'Expand live chat' : 'Minimize live chat'");
     expect(source).toContain('Nothing opens automatically.');
