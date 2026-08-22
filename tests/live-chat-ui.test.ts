@@ -4,20 +4,25 @@ import { describe, expect, it } from 'vitest';
 
 const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
 const source = readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url)), 'utf8');
+const styles = readFileSync(fileURLToPath(new URL('../src/style.css', import.meta.url)), 'utf8');
 
 describe('full-screen voxel world interface contract', () => {
   it('keeps the old world navigation and owner surfaces over the 3D scene', () => {
     expect(html).toContain('RETURN TO</span> DASHBOARD');
     expect(html).toContain('Community directory');
     expect(html).toContain('Live chat');
-    expect(html).toContain('World talk');
-    expect(html).toContain('EARTH MARKET');
+    expect(html).toContain('World activity');
     expect(html).toContain('FIND ME');
     expect(html).toContain('EARTH TOKENS');
+    expect(html).not.toContain('VOXEL WORLD');
+    expect(html).not.toContain('class="hud world-nav"');
+    expect(styles).toContain('right: 12px;');
   });
 
-  it('uses accessible plus/minus controls and keeps chat opt-in', () => {
-    expect(html).toContain('aria-expanded="false" aria-label="Expand live chat">+</button>');
+  it('shows live chat by default and keeps accessible plus/minus controls', () => {
+    expect(html).toContain('aria-expanded="true" aria-label="Minimize live chat">−</button>');
+    expect(html).toContain('class="panel feed min"');
+    expect(html).toContain('aria-expanded="false" aria-label="Expand world activity">+</button>');
     expect(source).toContain("minimized ? '+' : '−'");
     expect(source).toContain("minimized ? 'Expand live chat' : 'Minimize live chat'");
     expect(source).toContain('Nothing opens automatically.');

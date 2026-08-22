@@ -791,7 +791,7 @@ document.querySelectorAll<HTMLButtonElement>('.panel-min[data-for]').forEach((bu
     const panel = document.getElementById(button.dataset.for || '');
     if (!panel) return;
     const minimized = panel.classList.toggle('min');
-    const name = panel.id === 'directory' ? 'community directory' : 'world talk';
+    const name = panel.id === 'directory' ? 'community directory' : 'world activity';
     button.textContent = minimized ? '+' : '−';
     button.setAttribute('aria-expanded', String(!minimized));
     button.setAttribute('aria-label', `${minimized ? 'Expand' : 'Minimize'} ${name}`);
