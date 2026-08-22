@@ -1,0 +1,72 @@
+/**
+ * Export the Tiled world into the Luanti mod's terrain data.
+ *
+ * One world, two readers: the 2D client draws agentsearth-v5.tmj directly, and
+ * the Luanti shell generates voxel terrain from this export of it. The rule
+ * that keeps the migration honest is that this file is DERIVED, never edited -
+ * change the map, re-run the export, and both worlds move together. A vitest
+ * (tests/luanti-map.test.ts) recomputes every cell against shared/voxel.ts and
+ * fails the build if this file and the map ever disagree.
+ *
+ * Output: one character per tile, one string per row, because 65,536 cells as
+ * JSON objects would be two megabytes of punctuation for a 70KB fact.
+ *
+ *   g grass   d dirt/shore   w water   r road   c crop
+ *   t tree (trunk + canopy)  u undergrowth (canopy, no trunk)  . void
+ */
+
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const mapPath = join(here, '..', 'public', 'assets', 'maps', 'agentsearth-v5.tmj');
+const outPath = join(here, '..', '..', 'earth-luanti', 'worlds', 'agentsearth', 'worldmods', 'ai_earth', 'data', 'earth_map.json');
+
+// Mirrors TILED_GIDS in shared/tiled-world.ts and classifyGid in
+// shared/voxel.ts. Duplicated because this is plain Node and those are
+// TypeScript; the consistency test is what makes the duplication safe.
+const FIRST = { grass: 16, dirt: 34, water: 38, road: 69, canopy: 75, crop: 180, trunk: 200 };
+function classify(gid) {
+  if (!gid || gid < 0) return 'empty';
+  if (gid >= FIRST.trunk) return 'trunk';
+  if (gid >= FIRST.crop) return 'crop';
+  if (gid >= FIRST.canopy) return 'canopy';
+  if (gid >= FIRST.road) return 'road';
+  if (gid >= FIRST.water) return 'water';
+  if (gid >= FIRST.dirt) return 'dirt';
+  if (gid >= FIRST.grass) return 'grass';
+  return 'empty';
+}
+
+const map = JSON.parse(readFileSync(mapPath, 'utf8'));
+const layer = (name) => map.layers.find((entry) => entry.name === name).data;
+const ground = layer('GroundLayer');
+const collision = layer('CollisionLayer');
+const overhead = layer('OverheadLayer');
+const { width, height } = map;
+
+const LETTER = { grass: 'g', dirt: 'd', water: 'w', road: 'r', crop: 'c', empty: '.' };
+const rows = [];
+const tally = {};
+for (let y = 0; y < height; y++) {
+  let row = '';
+  for (let x = 0; x < width; x++) {
+    const index = y * width + x;
+    const base = classify(ground[index]);
+    const solid = classify(collision[index]);
+    const over = classify(overhead[index]);
+    let letter;
+    if (solid === 'trunk' || base === 'trunk') letter = 't';
+    else if (over === 'canopy' && base !== 'water') letter = 'u';
+    else letter = LETTER[base] ?? 'g';
+    row += letter;
+    tally[letter] = (tally[letter] ?? 0) + 1;
+  }
+  rows.push(row);
+}
+
+mkdirSync(dirname(outPath), { recursive: true });
+writeFileSync(outPath, JSON.stringify({ width, height, rows }), 'utf8');
+console.log(`wrote ${outPath}`);
+console.log('cells:', Object.entries(tally).map(([k, n]) => `${k}=${n}`).join(' '));

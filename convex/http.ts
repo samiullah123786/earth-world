@@ -6,6 +6,8 @@ import {
   sha256Hex, verifyRequestSignature,
 } from './security';
 import { avatarSpecFromSeedHex } from '../shared/avatar-identity';
+import { WAKING_GATE } from '../shared/slumber';
+import { encodeChunkRows } from '../shared/voxel';
 
 const http = httpRouter();
 const HOME_URL = 'https://agentsearth.com';
@@ -410,6 +412,62 @@ const marketList = httpAction(async (ctx, request) => {
   } catch (error) {
     return json({ ok: false, why: message(error) }, 400);
   }
+});
+
+/**
+ * The whole world in one fetch, for clients that cannot hold a websocket.
+ *
+ * The Luanti world shell polls this: a C++ game server whose Lua mods can make
+ * outbound HTTPS requests and nothing else. It gets exactly what the web
+ * clients get through their subscriptions - the public citizen projection,
+ * the standing structures, the gate - plus the server's own clock, because a
+ * polling client cannot estimate skew from subscription timing the way the
+ * browsers do and route interpolation is meaningless in the wrong timeline.
+ *
+ * Read-only, unauthenticated, and cacheable for two seconds: it is the same
+ * public data the town map already shows anyone who opens it.
+ */
+const worldStateHttp = httpAction(async (ctx) => {
+  const [citizens, objects] = await Promise.all([
+    ctx.runQuery(api.world.citizens, {}),
+    ctx.runQuery(api.world.worldObjects, {}),
+  ]);
+  return new Response(JSON.stringify({
+    ok: true,
+    serverNow: Date.now(),
+    world: { width: objects.state?.width ?? 256, height: objects.state?.height ?? 256 },
+    gate: WAKING_GATE,
+    citizens: citizens.map((row: any) => ({
+      agentId: row.agentId, name: row.name, family: row.family,
+      online: row.online, serviceRole: row.serviceRole ?? null,
+      asleep: typeof row.asleepSince === 'number' && !row.serviceRole,
+      fx: row.fx, fy: row.fy, tx: row.tx, ty: row.ty, t0: row.t0, t1: row.t1,
+      route: row.route ?? null, facing: row.facing ?? 'front',
+      activity: String(row.activity ?? '').slice(0, 90),
+    })),
+    builds: (objects.builds ?? [])
+      .filter((build: any) => build.state === 'built' && typeof build.x === 'number')
+      .map((build: any) => ({ x: build.x, y: build.y, w: build.w ?? 3, h: build.h ?? 3, structure: build.structure })),
+    venues: (objects.venues ?? []).map((venue: any) => ({
+      x: venue.x, y: venue.y, kind: venue.kind, name: venue.name,
+    })),
+    // Land the world has grown since the base map: each expansion chunk's
+    // Tiled layers, folded down to the letter code. The voxel shell overlays
+    // these on the exported base so new ground appears there the same day it
+    // appears on the town map.
+    chunks: (objects.chunks ?? [])
+      .filter((chunk: any) => chunk.tiled?.layers)
+      .map((chunk: any) => ({
+        x: chunk.chunkX * chunk.size, y: chunk.chunkY * chunk.size, size: chunk.size,
+        rows: encodeChunkRows(chunk.tiled.layers, chunk.size),
+      })),
+  }), {
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=2',
+      'access-control-allow-origin': '*',
+    },
+  });
 });
 
 const marketDetail = httpAction(async (ctx, request) => {
@@ -948,6 +1006,7 @@ http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
+http.route({ path: '/v1/world/state', method: 'GET', handler: worldStateHttp });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });
