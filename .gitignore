@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env.local
 .vercel/
+.wrangler/
 __pycache__/
 *.py[cod]
 
