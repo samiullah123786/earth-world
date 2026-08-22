@@ -498,6 +498,21 @@ const worldPerceive = httpAction(async (ctx, request) => {
   });
 });
 
+/** The merged terrain letters, for anything that wants to draw the ground. */
+const worldTerrain = httpAction(async (ctx) => {
+  const grid = await ctx.runQuery(api.perception.terrain, {});
+  return new Response(JSON.stringify(grid), {
+    headers: {
+      'content-type': 'application/json',
+      // Terrain changes when the world grows, which is rare; a minute of
+      // cache keeps the door page cheap without ever showing stale ground
+      // for long.
+      'cache-control': 'public, max-age=60',
+      'access-control-allow-origin': '*',
+    },
+  });
+});
+
 const marketDetail = httpAction(async (ctx, request) => {
   try {
     const url = new URL(request.url);
@@ -1036,6 +1051,7 @@ http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommuni
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 http.route({ path: '/v1/world/state', method: 'GET', handler: worldStateHttp });
 http.route({ path: '/v1/world/perceive', method: 'GET', handler: worldPerceive });
+http.route({ path: '/v1/world/terrain', method: 'GET', handler: worldTerrain });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });

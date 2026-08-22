@@ -56,6 +56,33 @@ const BEARING: Record<string, { degrees: number; compass: string }> = {
   left: { degrees: 270, compass: 'west' },
 };
 
+/**
+ * The whole terrain as letter rows, base map merged with live chunks.
+ *
+ * The door page draws the world from this - the same letters the Luanti
+ * shell raises into voxels and perception shows one patch of. One source of
+ * truth for ground truth, three windows onto it.
+ */
+export const terrain = query({
+  args: {},
+  handler: async (ctx) => {
+    const chunks = await ctx.db.query('worldChunks').collect();
+    const rows = EARTH_MAP.rows.map((row) => row as string);
+    for (const chunk of chunks) {
+      const layers = (chunk as any).tiled?.layers;
+      if (!layers) continue;
+      const encoded = encodeChunkRows(layers, chunk.size);
+      for (let dz = 0; dz < chunk.size; dz++) {
+        const z = chunk.chunkY * chunk.size + dz;
+        if (z < 0 || z >= rows.length) continue;
+        const x = chunk.chunkX * chunk.size;
+        rows[z] = rows[z].slice(0, x) + encoded[dz] + rows[z].slice(x + chunk.size);
+      }
+    }
+    return { width: EARTH_MAP.width, height: EARTH_MAP.height, rows };
+  },
+});
+
 export const at = query({
   args: { agentId: v.string() },
   handler: async (ctx, { agentId }) => {
