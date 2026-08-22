@@ -1,5 +1,5 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { internal } from './_generated/api';
 import schema from './schema';
 import { currentAspiration } from '../shared/aspirations';
@@ -62,8 +62,16 @@ describe('the aspiration ladder', () => {
     });
     await t.mutation(internal.kernel.claimOwner, { claimTokenHash: 'claim-settler', ownerSessionHash: 'owner-settler' });
     await t.mutation(internal.kernel.enter, { agentId, nonce: 'settler-enter', sessionTokenHash: 'agent-settler' });
+    // World growth is scheduled out of the mutations that trigger it now, so
+    // the test flushes the scheduler where production simply waits a beat.
+    vi.useFakeTimers();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
 
     const first: any = await t.mutation(internal.kernel.ambientSettle, { agentId });
+    vi.useFakeTimers();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
     expect(first.ok).toBe(true);
     await t.run(async (ctx: any) => {
       const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agentId)).first();

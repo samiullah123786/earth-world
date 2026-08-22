@@ -124,3 +124,47 @@ export function encodeChunkRows(
   }
   return rows;
 }
+
+/**
+ * A construction site, before the walls: four corner posts and a top ring.
+ *
+ * The 2D world shows in-progress builds; a voxel world that only ever pops
+ * finished houses into existence is hiding the most alive thing a town does.
+ * Deterministic from the footprint alone, like everything else here.
+ */
+export function scaffoldVoxels(build: { x: number; y: number; w: number; h: number }): Voxel[] {
+  const { x, y, w, h } = build;
+  if (w < 1 || h < 1) return [];
+  const out: Voxel[] = [];
+  const TOP = 3;
+  const corners = [
+    [x, y], [x + w - 1, y], [x, y + h - 1], [x + w - 1, y + h - 1],
+  ] as const;
+  for (const [px, pz] of corners) {
+    for (let level = 1; level <= TOP; level++) out.push({ x: px, y: level, z: pz, kind: 'post' });
+  }
+  // The ring at the top, so the site reads as a frame rather than four sticks.
+  for (let dx = 0; dx < w; dx++) {
+    out.push({ x: x + dx, y: TOP, z: y, kind: 'beam' });
+    out.push({ x: x + dx, y: TOP, z: y + h - 1, kind: 'beam' });
+  }
+  for (let dz = 1; dz < h - 1; dz++) {
+    out.push({ x, y: TOP, z: y + dz, kind: 'beam' });
+    out.push({ x: x + w - 1, y: TOP, z: y + dz, kind: 'beam' });
+  }
+  return out;
+}
+
+/**
+ * How tall a demolition must clear, for a given footprint.
+ *
+ * Shared so the Lua port and this file cannot disagree about what "gone"
+ * means: the roof steps inward once per level, so the peak rises with the
+ * shorter side, and clearing less than this leaves a floating roof tip -
+ * the one ruin worse than the building.
+ */
+export function structureClearHeight(w: number, h: number): number {
+  const WALL_H = 2;
+  const roofLevels = Math.ceil(Math.min(w, h) / 2);
+  return WALL_H + roofLevels + 1;
+}

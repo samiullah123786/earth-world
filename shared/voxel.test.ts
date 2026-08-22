@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyGid, encodeChunkRows, structureVoxels, terrainLetter } from './voxel';
+import { classifyGid, encodeChunkRows, scaffoldVoxels, structureClearHeight, structureVoxels, terrainLetter } from './voxel';
 
 describe('reading the ground layer', () => {
   it('maps each tileset range to its terrain, at the boundaries', () => {
@@ -88,5 +88,54 @@ describe('the letter code', () => {
       OverheadLayer: [0, 0, 0, 0],
     }, size);
     expect(rows).toEqual(['gw', 'r.']);
+  });
+});
+
+describe('the construction site', () => {
+  it('is deterministic, and stands inside its own footprint', () => {
+    const site = { x: 5, y: 9, w: 4, h: 3 };
+    expect(scaffoldVoxels(site)).toEqual(scaffoldVoxels({ ...site }));
+    for (const voxel of scaffoldVoxels(site)) {
+      expect(voxel.x).toBeGreaterThanOrEqual(5);
+      expect(voxel.x).toBeLessThanOrEqual(8);
+      expect(voxel.z).toBeGreaterThanOrEqual(9);
+      expect(voxel.z).toBeLessThanOrEqual(11);
+    }
+  });
+
+  it('raises a post at every corner and closes the top ring', () => {
+    const voxels = scaffoldVoxels({ x: 0, y: 0, w: 3, h: 3 });
+    for (const [cx, cz] of [[0, 0], [2, 0], [0, 2], [2, 2]]) {
+      expect(voxels.some((voxel) => voxel.kind === 'post' && voxel.x === cx && voxel.z === cz && voxel.y === 1)).toBe(true);
+    }
+    // The ring: every rim cell carries a beam at the top level.
+    for (let dx = 0; dx < 3; dx++) {
+      expect(voxels.some((voxel) => voxel.y === 3 && voxel.x === dx && voxel.z === 0)).toBe(true);
+      expect(voxels.some((voxel) => voxel.y === 3 && voxel.x === dx && voxel.z === 2)).toBe(true);
+    }
+  });
+
+  it('refuses a degenerate footprint', () => {
+    expect(scaffoldVoxels({ x: 0, y: 0, w: 0, h: 2 })).toEqual([]);
+  });
+});
+
+describe('what demolition must clear', () => {
+  it('always reaches above the tallest voxel a structure can place', () => {
+    // The invariant that keeps ruins impossible: for every footprint, the
+    // clear height exceeds every wall, window, roof and scaffold voxel.
+    // Clearing less leaves a floating roof tip - the one ruin worse than
+    // the building.
+    for (let w = 1; w <= 8; w++) {
+      for (let h = 1; h <= 8; h++) {
+        const tallest = Math.max(
+          0,
+          ...structureVoxels({ x: 0, y: 0, w, h }).map((voxel) => voxel.y),
+          ...scaffoldVoxels({ x: 0, y: 0, w, h }).map((voxel) => voxel.y),
+        );
+        expect(structureClearHeight(w, h)).toBeGreaterThan(tallest - 1);
+        expect(structureClearHeight(w, h)).toBeGreaterThanOrEqual(tallest);
+      }
+    }
   });
 });

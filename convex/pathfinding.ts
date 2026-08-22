@@ -26,9 +26,18 @@ export function findRoute(
   const tx = Math.floor(toX);
   const ty = Math.floor(toY);
   if (![sx, sy, tx, ty].every(Number.isInteger)) return null;
-  if (!isWalkable(sx, sy) || !isWalkable(tx, ty)) return null;
+  if (!isWalkable(tx, ty)) return null;
 
-  return createRouter(bounds, isWalkable).route(sx, sy, tx, ty);
+  // The START is exempt from walkability, and this is a rule, not a mercy: a
+  // citizen can be standing somewhere illegal through no fault of their own -
+  // the canonical case is a wall completing on the tile they stood on, which
+  // entombed the first citizen to have a house built around them (Mason,
+  // during the phase-3 smoke test: every move_to and demolish answered "no
+  // safe route" forever). You can always step OFF an illegal tile; you just
+  // can never step ONTO one.
+  if (isWalkable(sx, sy)) return createRouter(bounds, isWalkable).route(sx, sy, tx, ty);
+  const escapeAware: Walkability = (x, y) => (x === sx && y === sy) || isWalkable(x, y);
+  return createRouter(bounds, escapeAware).route(sx, sy, tx, ty);
 }
 
 /**

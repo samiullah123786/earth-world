@@ -1,5 +1,5 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { api, internal } from './_generated/api';
 import schema from './schema';
 import { findRoute, walkableInWorld } from './pathfinding';
@@ -741,6 +741,11 @@ describe('Earth Kernel', () => {
       tokenHash: founder.ownerToken, approvalId: founderApprovals[0]._id, decision: 'approve',
     });
     expect((await t.query(api.world.worldObjects, {})).plots.find((plot) => plot.plotId === 'plot-10-10')?.ownerAgentId).toBe(resident.agentId);
+    // The claim's habitat expansion is scheduled now, not inline; generation 1
+    // must exist before the operator expansion can be generation 2.
+    vi.useFakeTimers();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
 
     await t.mutation(internal.kernel.expandNow, { reason: 'capacity test' });
     const expanded = await t.query(api.world.worldObjects, {});
@@ -799,6 +804,11 @@ describe('Earth Kernel', () => {
     await t.mutation(internal.seed.init, {});
     const newcomer = await activeAgent(t, 'active-newcomer');
     await t.mutation(internal.kernel.setOwnerAutonomy, { tokenHash: newcomer.ownerToken, autonomy: 'active' });
+    // Registration schedules the capacity growth that used to run inline;
+    // Terra can only recommend a plot once that ground exists.
+    vi.useFakeTimers();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
     const settled = await t.mutation(internal.kernel.act, {
       agentId: newcomer.agentId, tokenHash: newcomer.agentToken, nonce: 'settle-active', action: { type: 'settle' },
     });

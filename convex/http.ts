@@ -445,9 +445,16 @@ const worldStateHttp = httpAction(async (ctx) => {
       route: row.route ?? null, facing: row.facing ?? 'front',
       activity: String(row.activity ?? '').slice(0, 90),
     })),
+    // Building and built both travel, each saying which it is. A world that
+    // only ever pops finished houses into existence is hiding the most alive
+    // thing a town does; the shell draws a scaffold until the work is done.
     builds: (objects.builds ?? [])
-      .filter((build: any) => build.state === 'built' && typeof build.x === 'number')
-      .map((build: any) => ({ x: build.x, y: build.y, w: build.w ?? 3, h: build.h ?? 3, structure: build.structure })),
+      .filter((build: any) => ['built', 'building'].includes(build.state) && typeof build.x === 'number')
+      .map((build: any) => ({
+        x: build.x, y: build.y, w: build.w ?? 3, h: build.h ?? 3,
+        structure: build.structure, state: build.state,
+        endsAt: build.constructionEndsAt ?? null,
+      })),
     venues: (objects.venues ?? []).map((venue: any) => ({
       x: venue.x, y: venue.y, kind: venue.kind, name: venue.name,
     })),

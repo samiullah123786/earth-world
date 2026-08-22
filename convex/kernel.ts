@@ -744,7 +744,7 @@ async function commitClaim(ctx: any, requesterId: string, plotId: string, now: n
   await ctx.db.patch(plot._id, { ownerAgentId: requesterId, claimedAt: now });
   await ctx.db.insert('events', { kind: 'claim', actorId: requesterId, payload: { plotId: plot.plotId }, gloss: `Terra verified ${requesterId}'s protected claim on ${plot.plotId}. Mayor Sam authorized the routine land decision.` });
   await recordContribution(ctx, requesterId, 'civic', 'settlement', 2, `claim:${plot.plotId}`, `Protected and settled ${plot.plotId}.`, now);
-  await expandWorld(ctx, 'land occupancy threshold', false, true);
+  await ctx.scheduler.runAfter(0, internal.kernel.expandWorldDeferred, { reason: 'land occupancy threshold', maintainHabitatReserve: true });
   return plot;
 }
 
@@ -1091,6 +1091,10 @@ async function findRecommendedPlot(ctx: any, primaryCategory: string) {
   let plots = await ctx.db.query('plots').collect();
   const district = districtForCategory(primaryCategory);
   if (!rankHomePlots(plots, district).length) {
+    // Deliberately synchronous, unlike the other growth sites: Terra must
+    // recommend a plot in THIS mutation, so the ground has to exist before
+    // the next line runs. A deferred expansion here answered every
+    // active-autonomy settler with "no safe free plot" and settled nobody.
     await expandWorld(ctx, 'new resident needs a home district', true);
     plots = await ctx.db.query('plots').collect();
   }
@@ -1351,7 +1355,7 @@ export const register = internalMutation({
       // diverges from the first minute of a citizen's life.
       driveBias: personalitySeed(args.evidenceDigest ?? args.genomeDigest, args.primaryCategory ?? 'general'),
     });
-    await expandWorld(ctx, 'new citizen capacity');
+    await ctx.scheduler.runAfter(0, internal.kernel.expandWorldDeferred, { reason: 'new citizen capacity' });
     const tokens = await grantGenesisTokens(ctx, args.agentId);
     return { agentId: args.agentId, status: 'pending_owner' as const, tokens };
   },
@@ -5221,7 +5225,7 @@ export const authorityCommit = internalMutation({
         }
         return { ok: true, choice, escalated: true };
       }
-      await expandWorld(ctx, `${citizen.name} surveyed growing density`, false, true);
+      await ctx.scheduler.runAfter(0, internal.kernel.expandWorldDeferred, { reason: `${citizen.name} surveyed growing density`, maintainHabitatReserve: true });
       await ctx.db.patch(config._id, { dayStamp: today, ringsToday: ringsToday + 1 });
       await ctx.db.insert('events', {
         kind: 'world_expanded', actorId: agentId, payload: { choice, model },
@@ -6902,6 +6906,27 @@ export const pruneEvents = internalMutation({
  * boundary only changes when the last chunk is in place, so a half-built ring
  * is never visible and a failed step simply resumes.
  */
+/**
+ * World growth, taken out of whoever triggered it.
+ *
+ * Expansion generates terrain - real work - and it used to run inline in
+ * whatever mutation crossed the occupancy threshold: claiming a plot,
+ * registering a citizen, an authority surveying density. The world_expand
+ * approval was fixed years-in-Earth-time ago to schedule instead ("the
+ * decision is recorded now; the ground arrives a moment later") and the
+ * other four call sites never got the same medicine. The first owner to
+ * approve a land claim on a full district watched their yes time out at the
+ * one-second wall - found by the Mason smoke test, the first full civic loop
+ * driven end to end.
+ */
+export const expandWorldDeferred = internalMutation({
+  args: { reason: v.string(), force: v.optional(v.boolean()), maintainHabitatReserve: v.optional(v.boolean()) },
+  handler: async (ctx, { reason, force, maintainHabitatReserve }) => {
+    await expandWorld(ctx, reason, force ?? false, maintainHabitatReserve ?? false);
+    return { ok: true };
+  },
+});
+
 export const runWorldExpansion = internalMutation({
   args: { reason: v.string() },
   handler: async (ctx, { reason }) => {
