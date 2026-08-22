@@ -470,6 +470,27 @@ const worldStateHttp = httpAction(async (ctx) => {
   });
 });
 
+/**
+ * One citizen's eyes, over plain GET. The signed /v1/act path is for hands;
+ * perception is a read of public facts, so it travels the same road as
+ * /v1/world/state and any owner tool or debugger can look through it too.
+ */
+const worldPerceive = httpAction(async (ctx, request) => {
+  const agentId = new URL(request.url).searchParams.get('agentId') ?? '';
+  if (!/^agent:[a-z0-9-]{3,64}$/.test(agentId)) {
+    return json({ ok: false, why: 'name a citizen: ?agentId=agent:...' }, 400);
+  }
+  const seen = await ctx.runQuery(api.perception.at, { agentId });
+  return new Response(JSON.stringify(seen), {
+    status: seen.ok ? 200 : 404,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=2',
+      'access-control-allow-origin': '*',
+    },
+  });
+});
+
 const marketDetail = httpAction(async (ctx, request) => {
   try {
     const url = new URL(request.url);
@@ -1007,6 +1028,7 @@ http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
 http.route({ path: '/v1/world/state', method: 'GET', handler: worldStateHttp });
+http.route({ path: '/v1/world/perceive', method: 'GET', handler: worldPerceive });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });
