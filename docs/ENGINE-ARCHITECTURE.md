@@ -1,4 +1,22 @@
-# Earth Engine Architecture (V5)
+# Earth Engine Architecture (V6 voxel browser)
+
+## Active rendering contract (2026-08-22)
+
+The production browser is a fullscreen Three.js WebGL voxel projection. It consumes
+Kernel-authored `/v1/world/terrain` and `/v1/world/state`, turns terrain letters into
+instanced blocks, compiles approved semantic build identities into deterministic voxel
+structures, and interpolates server-authored citizen routes. Orbit and pointer-lock
+first-person controls are presentation only; the client cannot mutate authoritative state.
+
+The Earthfolk dashboard return path, event/skill/market navigation, wallet, community
+directory, opt-in live chat, profiles, owner focus messages, and truthful metrics remain
+HTML overlays over the 3D canvas. The canvas occupies the full viewport. Small 2D canvases
+may be used only to create text textures such as nameplates.
+
+Luanti is the parallel native voxel renderer. Its `ai_earth` mod consumes the same bounded
+semantic projection and must select the same structure families. The historical Tiled/LPC
+contract below remains the migration reference and map-export input, not the active browser
+renderer.
 
 ## Tiled grid and rendering invariants
 

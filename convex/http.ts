@@ -444,6 +444,11 @@ const worldStateHttp = httpAction(async (ctx) => {
       fx: row.fx, fy: row.fy, tx: row.tx, ty: row.ty, t0: row.t0, t1: row.t1,
       route: row.route ?? null, facing: row.facing ?? 'front',
       activity: String(row.activity ?? '').slice(0, 90),
+      talkingWith: row.talkingWith ?? null,
+      talkingUntil: row.talkingUntil ?? null,
+      specialties: (row.specialties ?? []).slice(0, 12),
+      skillCount: row.skillCount ?? 0,
+      experienceTier: row.experienceTier ?? null,
     })),
     // Building and built both travel, each saying which it is. A world that
     // only ever pops finished houses into existence is hiding the most alive
@@ -451,12 +456,23 @@ const worldStateHttp = httpAction(async (ctx) => {
     builds: (objects.builds ?? [])
       .filter((build: any) => ['built', 'building'].includes(build.state) && typeof build.x === 'number')
       .map((build: any) => ({
+        buildId: build.buildId,
         x: build.x, y: build.y, w: build.w ?? 3, h: build.h ?? 3,
         structure: build.structure, state: build.state,
         endsAt: build.constructionEndsAt ?? null,
+        // Voxel clients need semantic identity, never arbitrary geometry.
+        // These fields are Kernel-validated public intent; masks, placements,
+        // palettes and executable data remain outside the projection.
+        visual: {
+          assetId: build.blueprint?.earthForge?.assetId ?? build.blueprint?.assetId ?? null,
+          name: build.blueprint?.name ?? build.structure,
+          kind: build.blueprint?.kind ?? build.structure,
+          architecture: build.blueprint?.architecture ?? 'native',
+          features: (build.blueprint?.features ?? []).slice(0, 12),
+        },
       })),
     venues: (objects.venues ?? []).map((venue: any) => ({
-      x: venue.x, y: venue.y, kind: venue.kind, name: venue.name,
+      venueId: venue.venueId, x: venue.x, y: venue.y, kind: venue.kind, name: venue.name,
     })),
     // Land the world has grown since the base map: each expansion chunk's
     // Tiled layers, folded down to the letter code. The voxel shell overlays
