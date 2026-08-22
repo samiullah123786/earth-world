@@ -30,6 +30,16 @@ describe('full-screen voxel world interface contract', () => {
     expect(source).toContain('Nothing opens automatically.');
   });
 
+  it('collapses the community directory into the same compact bar as world activity', () => {
+    expect(html).toContain('data-for="directory" aria-expanded="true" aria-label="Minimize community directory"');
+    expect(styles).toContain('.directory.min {');
+    expect(styles).toContain('flex: 0 0 36px;');
+    expect(styles).toContain('.directory.min .panel-header { margin: 0; }');
+    expect(styles).toContain('.directory.min > *:not(.panel-header) { display: none !important; }');
+    expect(source).toContain("const minimized = panel.classList.toggle('min');");
+    expect(source).toContain("panel.id === 'directory' ? 'community directory' : 'world activity'");
+  });
+
   it('renders a live WebGL voxel world instead of a flat 2D canvas map', () => {
     expect(source).toContain('new THREE.WebGLRenderer');
     expect(source).toContain("renderer: 'three-webgl-voxel-v1'");

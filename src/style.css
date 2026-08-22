@@ -223,8 +223,16 @@ canvas.grabbing:active { cursor: grabbing; }
 .citizen-state.live { color: #168336; }
 .citizen-state.sleep { opacity: .4; }
 
-.directory.min { max-height: none; min-height: 0; padding-bottom: 0; }
-.directory.min > *:not(.panel-header) { display: none; }
+.directory.min {
+  width: 100%;
+  min-height: 36px;
+  max-height: 36px;
+  flex: 0 0 36px;
+  overflow: hidden;
+  padding: 0;
+}
+.directory.min .panel-header { margin: 0; }
+.directory.min > *:not(.panel-header) { display: none !important; }
 
 .feed {
   width: 100%;
