@@ -180,7 +180,12 @@ describe('waking up', () => {
 });
 
 describe('the load saving', () => {
-  it('the ambient tick leaves a sleeping citizen entirely alone', async () => {
+  // Sixty seconds, not the suite's thirty. Registration schedules world
+  // growth now rather than running it inline, and convex-test drains those
+  // scheduled functions during the eight ambient ticks below - so this one
+  // test pays for terrain generation that production does once, in the
+  // background, and never on a tick. The assertion is unchanged.
+  it('the ambient tick leaves a sleeping citizen entirely alone', { timeout: 60_000 }, async () => {
     // The point of all of it. If this passes and the tick still moves them,
     // the animation is paint over an idle loop and the backend saves nothing.
     const t = convexTest(schema, modules);

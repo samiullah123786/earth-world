@@ -70,4 +70,15 @@ crons.interval('mcp registry sync', { hours: 24 }, internal.registrySync.syncOff
 // hour: slow on purpose, free, and it never needs a key to work at all.
 crons.interval('listing maintenance', { hours: 1 }, internal.registrySync.refreshMaintenance, {});
 
+// The world grows when the town needs room, and until now nothing WATCHED
+// for that - growth only happened if a claim, a settle or a survey happened
+// to call it. A town whose last claim failed could sit full forever. This is
+// the standing check: it costs one read of three tables, expands only when
+// the policy says room is short, and is the reason population pressure
+// reaches the map without anyone asking.
+crons.interval('land growth watch', { minutes: 10 }, internal.kernel.expandWorldDeferred, {
+  reason: 'standing population watch',
+  maintainHabitatReserve: true,
+});
+
 export default crons;

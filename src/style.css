@@ -98,6 +98,13 @@ a { color: inherit; }
 .mode-toggle { left: 12px; bottom: 12px; background: #285a81; }
 .mode-toggle[aria-pressed="true"] { background: var(--rust); }
 .findme { right: 12px; bottom: 12px; display: none; background: #8b5cf6; }
+
+/* How left-drag behaves is a preference people hold strongly, so the current
+   choice is a visible, pressable state rather than a hidden setting. */
+.grab-toggle { right: 12px; bottom: 56px; background: #1f6f4a; }
+.grab-toggle[aria-pressed="true"] { background: #b4551f; }
+canvas.grabbing { cursor: grab; }
+canvas.grabbing:active { cursor: grabbing; }
 .controls {
   left: 12px;
   bottom: 62px;
@@ -273,6 +280,7 @@ a { color: inherit; }
 
 body.embed .backhome, body.embed .metrics, body.embed #rightstack,
 body.embed .findme { display: none !important; }
+body.embed .grab-toggle { display: none !important; }
 body.embed .brand { left: 12px; transform: none; }
 body.embed .controls { bottom: 12px; }
 
@@ -294,3 +302,6 @@ body.embed .controls { bottom: 12px; }
   .mode-toggle { left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
   .findme { bottom: calc(12px + env(safe-area-inset-bottom)); }
 }
+
+/* When the land is close to growing, the boundary line says so. */
+#boundary.growing { color: #ffcf63; font-weight: 700; }

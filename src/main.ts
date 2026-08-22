@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import './style.css';
+import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette } from './world3d/detail';
+import { kitPalette, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
 
 const KERNEL = import.meta.env.VITE_CONVEX_SITE_URL || 'https://kernel.agentsearth.com';
 const EMBED = new URLSearchParams(location.search).has('embed');
@@ -21,6 +23,8 @@ type Citizen = {
   agentId: string; name: string; family: string; online: boolean; asleep: boolean;
   serviceRole?: string | null; fx: number; fy: number; tx: number; ty: number;
   t0?: number; t1?: number; route?: RoutePoint[] | null; facing?: string;
+  carriedTool?: string | null; activeTool?: string | null;
+  workingUntil?: number | null; buildingUntil?: number | null;
   activity?: string; talkingWith?: string | null; talkingUntil?: number | null;
   specialties?: string[]; skillCount?: number; experienceTier?: string;
 };
@@ -33,15 +37,25 @@ type Build = {
   structure: string; state: string; endsAt?: number | null; visual?: BuildVisual | null;
 };
 type Venue = { venueId?: string; x: number; y: number; kind: string; name: string };
+type Farm = { x: number; y: number; crop: string; stage: number; tenders: number };
+type Plot = { x: number; y: number; w: number; h: number; district: string; owned: boolean };
+type Zone = { zoneId: string; name: string; kind: string; x: number; y: number; w: number; h: number };
 type WorldState = {
   ok: boolean; serverNow: number; world: { width: number; height: number };
   gate: { x: number; y: number }; citizens: Citizen[]; builds: Build[]; venues: Venue[];
+  farms?: Farm[]; plots?: Plot[]; zones?: Zone[];
+  growth?: {
+    population: number; capacity: number; plots: number; ownedPlots: number;
+    occupancy: number; expandsAtOccupancy: number; headroom: number;
+    generation: number; size: { width: number; height: number };
+  };
 };
 type Terrain = { width: number; height: number; rows: string[] };
 
 type CitizenModel = {
   group: THREE.Group; leftArm: THREE.Mesh; rightArm: THREE.Mesh;
   leftLeg: THREE.Mesh; rightLeg: THREE.Mesh; row: Citizen;
+  hand: THREE.Group; toolKey: string; bob: number;
 };
 
 const required = <T extends HTMLElement>(id: string) => {
@@ -87,6 +101,40 @@ orbit.minDistance = 6;
 orbit.maxDistance = 115;
 orbit.maxPolarAngle = Math.PI * 0.49;
 orbit.target.set(34, 0, 24);
+// Two left-drag habits exist and people expect the one they already have:
+// orbit spins the camera around the town, grab drags the ground under the
+// cursor. Both are offered, and the choice is remembered - a map that
+// forgets how you like to move it is a map you fight.
+orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+// Touch stays one-finger-drag-to-look, two-finger pinch: phones have no
+// right button and no scroll wheel to fall back on.
+orbit.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+orbit.keyPanSpeed = 22;
+orbit.listenToKeyEvents(window);
+
+type DragStyle = 'orbit' | 'grab';
+let dragStyle: DragStyle = (localStorage.getItem('earth.drag') as DragStyle) || 'orbit';
+function applyDragStyle() {
+  orbit.mouseButtons = dragStyle === 'grab'
+    ? { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
+    : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  localStorage.setItem('earth.drag', dragStyle);
+  renderer.domElement.classList.toggle('grabbing', dragStyle === 'grab');
+  const grabButton = document.getElementById('grab-toggle');
+  if (grabButton) {
+    grabButton.textContent = dragStyle === 'grab' ? '✋ GRAB' : '⟳ ORBIT';
+    grabButton.setAttribute('aria-pressed', String(dragStyle === 'grab'));
+    grabButton.setAttribute('aria-label', dragStyle === 'grab'
+      ? 'Left-drag grabs the ground. Switch to orbit.'
+      : 'Left-drag orbits the camera. Switch to grab.');
+  }
+  const copy = document.getElementById('control-copy');
+  if (copy && !exploreMode) {
+    copy.textContent = dragStyle === 'grab'
+      ? 'drag to grab the ground · right-drag to orbit · scroll to zoom · WASD to pan'
+      : 'drag to orbit · right-drag to pan · scroll to zoom · WASD to pan';
+  }
+}
 
 const firstPerson = new PointerLockControls(camera, renderer.domElement);
 const keys = new Set<string>();
@@ -113,7 +161,13 @@ const terrainRoot = new THREE.Group();
 const structureRoot = new THREE.Group();
 const citizenRoot = new THREE.Group();
 const landmarkRoot = new THREE.Group();
-worldRoot.add(terrainRoot, structureRoot, citizenRoot, landmarkRoot);
+// Detail lives in its own roots so terrain and structures can be rebuilt
+// on their own clocks without taking the meadow down with them.
+const islandRoot = new THREE.Group();
+const scatterRoot = new THREE.Group();
+const farmRoot = new THREE.Group();
+const boundaryRoot = new THREE.Group();
+worldRoot.add(islandRoot, terrainRoot, scatterRoot, farmRoot, boundaryRoot, structureRoot, citizenRoot, landmarkRoot);
 scene.add(worldRoot);
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -159,6 +213,13 @@ let ownerAgentId = new URLSearchParams(location.search).get('me');
 let authorityOnly = false;
 let toastTimer = 0;
 const citizenModels = new Map<string, CitizenModel>();
+const DETAIL = detailPalette();
+const KIT = kitPalette();
+let farmSignature = '';
+let boundarySignature = '';
+/** Tiles nothing may walk into, rebuilt with the terrain. Explore uses it. */
+let solid: Set<number> = new Set();
+const solidKey = (x: number, z: number) => z * 4096 + x;
 const pickables: THREE.Object3D[] = [];
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -252,13 +313,26 @@ function buildTerrain(data: Terrain) {
   crownMesh.castShadow = crownMesh.receiveShadow = true;
   terrainRoot.add(trunkMesh, crownMesh);
 
-  const under = new THREE.Mesh(
-    new THREE.BoxGeometry(data.width + 4, .8, data.height + 4),
-    new THREE.MeshStandardMaterial({ color: 0x5d5136, roughness: 1 }),
-  );
-  under.position.set(data.width / 2, -.9, data.height / 2);
-  under.receiveShadow = true;
-  terrainRoot.add(under);
+  // The island replaces the old flat slab: stepped courses of grass, soil
+  // and stone falling into a sea that reaches the fog, so the world has a
+  // shore instead of an edge.
+  clearGroup(islandRoot);
+  islandRoot.add(buildIsland(data.width, data.height));
+
+  clearGroup(scatterRoot);
+  scatterRoot.add(buildScatter(data.rows, data.width, data.height, DETAIL));
+
+  // What a walker cannot pass through. Trees and water are the map's own
+  // refusals; remembering them here is what lets explore mode collide with
+  // the world instead of drifting through it.
+  solid = new Set<number>();
+  for (let z = 0; z < data.height; z++) {
+    const row = data.rows[z] ?? '';
+    for (let x = 0; x < data.width; x++) {
+      const letter = row[x] ?? '.';
+      if (letter === 't' || letter === 'w' || letter === '.') solid.add(solidKey(x, z));
+    }
+  }
   builtTerrain = true;
 }
 
@@ -379,6 +453,28 @@ function makeScaffold(group: THREE.Group, build: Build) {
   addBlock(group, build.x + build.w - .18, 2.92, build.y, .18, .18, build.h, materials.timber);
 }
 
+/**
+ * Crops and homestead fences, rebuilt only when they actually change.
+ *
+ * Both are cheap to draw and wasteful to redraw: a signature over the facts
+ * that matter means a field that ripened re-plants itself and nothing else
+ * moves. Farms carry their stage, so the signature must include it.
+ */
+function buildLivingGround(farms: Farm[], plots: Plot[]) {
+  const farmMark = farms.map((f) => `${f.x}:${f.y}:${f.stage}`).join('|');
+  if (farmMark !== farmSignature) {
+    farmSignature = farmMark;
+    clearGroup(farmRoot);
+    farmRoot.add(buildFarms(farms, DETAIL));
+  }
+  const plotMark = plots.filter((p) => p.owned).map((p) => `${p.x}:${p.y}:${p.w}:${p.h}`).join('|');
+  if (plotMark !== boundarySignature && terrain) {
+    boundarySignature = plotMark;
+    clearGroup(boundaryRoot);
+    boundaryRoot.add(buildBoundaries(plots, terrain.rows, terrain.width, terrain.height, DETAIL));
+  }
+}
+
 function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y: number }) {
   clearGroup(structureRoot);
   clearGroup(landmarkRoot);
@@ -465,13 +561,31 @@ function makeCitizen(row: Citizen): CitizenModel {
   badge.userData.agentId = row.agentId;
   for (const mesh of [torso, head, leftArm, rightArm, leftLeg, rightLeg]) mesh.userData.agentId = row.agentId;
 
+  // Everything below is a fact the Kernel already tracked and no renderer
+  // ever drew: the office a citizen holds, the evidence tier they have
+  // earned, and the tool they were given for contributing.
+  if (row.serviceRole) group.add(makeOfficeSash(row.serviceRole, KIT));
+  const tierMark = makeTierMark(row.experienceTier, KIT);
+  if (tierMark) group.add(tierMark);
+
+  // The hand is a pivot on the end of the right arm, so a carried tool
+  // swings with the arm rather than floating beside the body.
+  const hand = new THREE.Group();
+  hand.position.set(.32, .5, 0);
+  group.add(hand);
+  const tool = makeTool(row.activeTool ?? row.carriedTool, KIT);
+  if (tool) hand.add(tool);
+
   const label = makeLabel(row.name, '#1e1e1e');
-  label.position.y = 2.35;
+  label.position.y = 2.52;
   label.userData.agentId = row.agentId;
   group.add(label);
   pickables.push(torso, head, leftArm, rightArm, leftLeg, rightLeg, badge);
   citizenRoot.add(group);
-  return { group, leftArm, rightArm, leftLeg, rightLeg, row };
+  return {
+    group, leftArm, rightArm, leftLeg, rightLeg, row, hand,
+    toolKey: String(row.activeTool ?? row.carriedTool ?? ''), bob: 0,
+  };
 }
 
 function syncCitizens(rows: Citizen[]) {
@@ -490,6 +604,15 @@ function syncCitizens(rows: Citizen[]) {
       citizenModels.set(row.agentId, model);
     }
     model.row = row;
+    // A citizen who picks up or puts down a tool changes in place; rebuilding
+    // the whole body for it would drop them through a frame.
+    const wanted = String(row.activeTool ?? row.carriedTool ?? '');
+    if (wanted !== model.toolKey) {
+      while (model.hand.children.length) model.hand.remove(model.hand.children[0]);
+      const tool = makeTool(wanted || null, KIT);
+      if (tool) model.hand.add(tool);
+      model.toolKey = wanted;
+    }
   }
 }
 
@@ -520,10 +643,38 @@ function animateCitizens(elapsed: number) {
       model.rightLeg.rotation.x = swing * .65;
       model.group.position.y = .02 + Math.abs(Math.sin(elapsed * 8)) * .035;
     } else {
-      const breathe = Math.sin(elapsed * 2 + hash(model.row.name) % 6) * .035;
-      model.leftArm.rotation.x = breathe;
-      model.rightArm.rotation.x = -breathe;
-      model.leftLeg.rotation.x = model.rightLeg.rotation.x = 0;
+      // Standing still is not one pose. A citizen mid-task swings the tool
+      // they are actually holding, at the tempo that task deserves; everyone
+      // else breathes.
+      const busy = (model.row.workingUntil ?? 0) > Date.now() || (model.row.buildingUntil ?? 0) > Date.now();
+      const motion = toolMotion(model.row.activeTool ?? model.row.carriedTool, busy);
+      if (motion) {
+        const swing = Math.sin(elapsed * motion.speed + hash(model.row.agentId) % 7);
+        model.rightArm.rotation.x = -Math.abs(swing) * motion.amplitude;
+        model.leftArm.rotation.x = Math.abs(swing) * motion.amplitude * .3;
+        model.group.rotation.x = Math.abs(swing) * motion.lean * .12;
+        model.leftLeg.rotation.x = model.rightLeg.rotation.x = 0;
+      } else {
+        const breathe = Math.sin(elapsed * 2 + hash(model.row.name) % 6) * .035;
+        model.leftArm.rotation.x = breathe;
+        model.rightArm.rotation.x = -breathe;
+        model.group.rotation.x = 0;
+        model.leftLeg.rotation.x = model.rightLeg.rotation.x = 0;
+      }
+    }
+    // Face the way you are going, so a walking crowd does not moonwalk.
+    const heading = model.group.userData.heading as number | undefined;
+    if (spot.moving) {
+      const next = Math.atan2(spot.x + .5 - model.group.position.x, spot.z + .5 - model.group.position.z);
+      if (Number.isFinite(next) && (spot.x + .5 !== model.group.position.x || spot.z + .5 !== model.group.position.z)) {
+        model.group.userData.heading = next;
+      }
+    }
+    if (typeof heading === 'number') {
+      let delta = heading - model.group.rotation.y;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      model.group.rotation.y += delta * .18;
     }
   }
 }
@@ -605,7 +756,6 @@ function renderDirectory() {
     button.onclick = () => focusCitizen(row.agentId);
     return button;
   }));
-  required('boundary').textContent = `${world.world.width} × ${world.world.height} living boundary · Kernel authoritative`;
   required('awake-chip').textContent = `Awake ${world.citizens.filter((row) => !row.asleep).length}`;
   required('authority-chip').textContent = `Authorities ${world.citizens.filter((row) => row.serviceRole).length}`;
 }
@@ -637,6 +787,19 @@ function updateHud() {
   required('m-live').textContent = String(world.citizens.filter((row) => row.online).length);
   required('m-joined').textContent = String(world.citizens.length);
   required('m-builds').textContent = String(world.builds.length + world.venues.length);
+  // The land, and how close it is to growing. The Kernel expands the world on
+  // its own when the town runs short of room; showing the occupancy that
+  // triggers it turns a ring appearing out of nowhere into something a
+  // watcher saw coming.
+  const growth = world.growth;
+  const boundary = document.getElementById('boundary');
+  if (boundary && growth) {
+    const close = growth.occupancy >= growth.expandsAtOccupancy - 15 || growth.headroom <= 5;
+    boundary.textContent = `Ring ${growth.generation} · ${growth.size.width}×${growth.size.height} tiles`
+      + ` · ${growth.ownedPlots}/${growth.plots} parcels settled`
+      + (close ? ' · the land is about to grow' : '');
+    boundary.classList.toggle('growing', close);
+  }
   renderDirectory();
   renderChat();
   if (selectedAgentId) {
@@ -665,10 +828,24 @@ async function refreshState() {
     structureSignature = signature;
     buildStructures(next.builds, next.venues, next.gate);
   }
+  buildLivingGround(next.farms ?? [], next.plots ?? []);
   updateHud();
   (window as unknown as Record<string, unknown>).__voxelWorld = {
     ready: true, citizens: next.citizens.length, awake: citizenModels.size,
     builds: next.builds.length, terrain: Boolean(terrain), renderer: 'three-webgl-voxel-v1',
+    farms: (next.farms ?? []).length, fencedPlots: (next.plots ?? []).filter((plot) => plot.owned).length,
+    tools: next.citizens.filter((row) => row.carriedTool || row.activeTool).length,
+    // What is actually IN the scene, not merely in the payload. Counting the
+    // instances is the only way to tell "the data arrived" from "the world
+    // drew it", and those failed separately more than once while building it.
+    drawn: {
+      scatter: scatterRoot.children.reduce((sum, node) => sum + node.children.length, 0),
+      farmMeshes: farmRoot.children.reduce((sum, node) => sum + node.children.length, 0),
+      fenceMeshes: boundaryRoot.children.reduce((sum, node) => sum + node.children.length, 0),
+      island: islandRoot.children.reduce((sum, node) => sum + node.children.length, 0),
+      instances: scatterRoot.children.flatMap((node) => node.children)
+        .reduce((sum, node) => sum + ((node as THREE.InstancedMesh).count ?? 0), 0),
+    },
   };
   document.documentElement.dataset.worldRenderer = 'three-webgl-voxel-v1';
   document.documentElement.dataset.worldReady = 'true';
@@ -719,7 +896,9 @@ function enterExplore() {
   exploreMode = true;
   orbit.enabled = false;
   const target = orbit.target;
-  camera.position.set(target.x, 2.05, target.z + 3.5);
+  camera.position.set(target.x, EYE, target.z + 3.5);
+  verticalSpeed = 0;
+  onGround = true;
   camera.lookAt(target.x, 1.4, target.z - 2);
   firstPerson.lock();
 }
@@ -732,8 +911,14 @@ function leaveExplore() {
   modeToggle.setAttribute('aria-pressed', 'false');
   modeToggle.setAttribute('aria-label', 'Enter first-person explore mode');
   reticle.classList.remove('active');
-  required('control-copy').textContent = 'drag to orbit · right-drag to pan · scroll to zoom';
+  applyDragStyle();
 }
+
+document.getElementById('grab-toggle')?.addEventListener('click', () => {
+  dragStyle = dragStyle === 'grab' ? 'orbit' : 'grab';
+  applyDragStyle();
+});
+applyDragStyle();
 
 modeToggle.onclick = () => exploreMode ? firstPerson.unlock() : enterExplore();
 firstPerson.addEventListener('lock', () => {
@@ -741,26 +926,98 @@ firstPerson.addEventListener('lock', () => {
   modeToggle.setAttribute('aria-pressed', 'true');
   modeToggle.setAttribute('aria-label', 'Exit first-person explore mode');
   reticle.classList.add('active');
-  required('control-copy').textContent = 'WASD to walk · mouse to look · Esc to exit';
+  required('control-copy').textContent = 'WASD to walk · Shift to run · Space to jump · mouse to look · Esc to exit';
 });
 firstPerson.addEventListener('unlock', leaveExplore);
 
 addEventListener('keydown', (event) => {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test((event.target as HTMLElement)?.tagName ?? '')) return;
   keys.add(event.code);
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(event.code) && exploreMode) event.preventDefault();
+  // G swaps how left-drag behaves without hunting for the button, and F
+  // drops you straight into the world from wherever you are looking.
+  if (!exploreMode && event.code === 'KeyG') {
+    dragStyle = dragStyle === 'grab' ? 'orbit' : 'grab';
+    applyDragStyle();
+    toast(dragStyle === 'grab' ? 'Left-drag now grabs the ground' : 'Left-drag now orbits');
+  }
+  if (event.code === 'KeyF' && !exploreMode) enterExplore();
 });
 addEventListener('keyup', (event) => keys.delete(event.code));
 
+/** Standing height, and how close a walker may get to something solid. */
+const EYE = 1.72;
+const BODY = .34;
+let verticalSpeed = 0;
+let onGround = true;
+let stepPhase = 0;
+
+/** Would a body at this spot be inside a tree, the water, or the void? */
+function blocked(x: number, z: number) {
+  if (!terrain) return false;
+  for (const [ox, oz] of [[BODY, 0], [-BODY, 0], [0, BODY], [0, -BODY]]) {
+    const tx = Math.floor(x + ox), tz = Math.floor(z + oz);
+    if (tx < 0 || tz < 0 || tx >= terrain.width || tz >= terrain.height) return true;
+    if (solid.has(solidKey(tx, tz))) return true;
+  }
+  return false;
+}
+
+/**
+ * Walking, with a body.
+ *
+ * The first version flew: it clamped to the map edge and otherwise passed
+ * through trees, buildings and the river, and held the camera at a fixed
+ * height whatever it walked over. That is a spectator drone, not exploring.
+ * Now there is gravity, a jump, a step you can hear in the bob of the view,
+ * and each axis is tested separately so brushing a wall slides along it
+ * rather than stopping you dead.
+ */
 function moveFirstPerson(delta: number) {
   if (!exploreMode || !firstPerson.isLocked || !terrain) return;
-  const speed = (keys.has('ShiftLeft') ? 9 : 5.2) * delta;
-  if (keys.has('KeyW')) firstPerson.moveForward(speed);
-  if (keys.has('KeyS')) firstPerson.moveForward(-speed);
-  if (keys.has('KeyA')) firstPerson.moveRight(-speed);
-  if (keys.has('KeyD')) firstPerson.moveRight(speed);
+  const sprinting = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  const speed = (sprinting ? 9.5 : 4.6) * delta;
+
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+
+  const step = new THREE.Vector3();
+  if (keys.has('KeyW')) step.add(forward);
+  if (keys.has('KeyS')) step.sub(forward);
+  if (keys.has('KeyD')) step.add(right);
+  if (keys.has('KeyA')) step.sub(right);
+  if (step.lengthSq() > 0) step.normalize().multiplyScalar(speed);
+
+  // Axis at a time: a walker who clips a corner should slide past it, which
+  // is the difference between exploring and getting stuck on scenery.
+  const fromX = camera.position.x, fromZ = camera.position.z;
+  if (step.x !== 0 && !blocked(fromX + step.x, fromZ)) camera.position.x += step.x;
+  if (step.z !== 0 && !blocked(camera.position.x, fromZ + step.z)) camera.position.z += step.z;
+
+  if (keys.has('Space') && onGround) {
+    verticalSpeed = 5.6;
+    onGround = false;
+  }
+  verticalSpeed -= 15.5 * delta;
+  let height = camera.position.y + verticalSpeed * delta;
+  const floor = EYE;
+  if (height <= floor) {
+    height = floor;
+    verticalSpeed = 0;
+    onGround = true;
+  }
+  // The head bob: small, tied to real distance covered, and absent when
+  // standing still. It is most of what makes walking feel like walking.
+  if (onGround && step.lengthSq() > 0) {
+    stepPhase += speed * 3.4;
+    height += Math.sin(stepPhase) * (sprinting ? .055 : .035);
+  }
+  camera.position.y = height;
   camera.position.x = THREE.MathUtils.clamp(camera.position.x, .7, terrain.width - .7);
   camera.position.z = THREE.MathUtils.clamp(camera.position.z, .7, terrain.height - .7);
-  camera.position.y = keys.has('Space') ? 5.5 : 2.05;
 }
 
 renderer.domElement.addEventListener('pointerup', (event) => {
@@ -838,12 +1095,42 @@ addEventListener('resize', () => {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 });
 
+/**
+ * WASD moves the camera over the town in orbit mode too.
+ *
+ * Dragging is fine for a nudge and terrible for crossing a world. The same
+ * keys that walk in explore mode fly the overhead view, which means one set
+ * of habits works everywhere instead of two.
+ */
+function panOverhead(delta: number) {
+  if (exploreMode || !terrain) return;
+  const speed = (keys.has('ShiftLeft') ? 42 : 18) * delta;
+  const step = new THREE.Vector3();
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  if (forward.lengthSq() < 1e-6) return;
+  forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+  if (keys.has('KeyW')) step.add(forward);
+  if (keys.has('KeyS')) step.sub(forward);
+  if (keys.has('KeyD')) step.add(right);
+  if (keys.has('KeyA')) step.sub(right);
+  if (step.lengthSq() === 0) return;
+  step.normalize().multiplyScalar(speed);
+  camera.position.add(step);
+  orbit.target.add(step);
+  orbit.target.x = THREE.MathUtils.clamp(orbit.target.x, -20, terrain.width + 20);
+  orbit.target.z = THREE.MathUtils.clamp(orbit.target.z, -20, terrain.height + 20);
+}
+
 function animate() {
   const now = performance.now();
   const delta = Math.min((now - lastFrame) / 1000, .05);
   lastFrame = now;
   elapsedSeconds += delta;
   moveFirstPerson(delta);
+  panOverhead(delta);
   if (!exploreMode) orbit.update();
   animateCitizens(elapsedSeconds);
   const day = (Date.now() / 120000) % (Math.PI * 2);

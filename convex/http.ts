@@ -444,6 +444,14 @@ const worldStateHttp = httpAction(async (ctx) => {
       fx: row.fx, fy: row.fy, tx: row.tx, ty: row.ty, t0: row.t0, t1: row.t1,
       route: row.route ?? null, facing: row.facing ?? 'front',
       activity: String(row.activity ?? '').slice(0, 90),
+      // What this citizen is holding and doing with their hands. The Kernel
+      // has tracked tools since they were earned through contribution; no
+      // renderer has ever shown one, so every citizen looked empty-handed
+      // while carrying a pickaxe they worked for.
+      carriedTool: row.carriedTool ?? null,
+      activeTool: row.activeTool ?? null,
+      workingUntil: row.workingUntil ?? null,
+      buildingUntil: row.buildingUntil ?? null,
       talkingWith: row.talkingWith ?? null,
       talkingUntil: row.talkingUntil ?? null,
       specialties: (row.specialties ?? []).slice(0, 12),
@@ -473,6 +481,45 @@ const worldStateHttp = httpAction(async (ctx) => {
       })),
     venues: (objects.venues ?? []).map((venue: any) => ({
       venueId: venue.venueId, x: venue.x, y: venue.y, kind: venue.kind, name: venue.name,
+    })),
+    // How close the town is to needing more room, in the same terms the
+    // expansion policy judges it by. A world that grows silently looks
+    // arbitrary; saying "44 of 53 parcels taken" makes the next ring make
+    // sense before it appears.
+    growth: (() => {
+      const plots = objects.plots ?? [];
+      const owned = plots.filter((plot: any) => plot.ownerAgentId).length;
+      const capacity = objects.state?.capacity ?? 0;
+      const population = citizens.length;
+      return {
+        population, capacity,
+        plots: plots.length, ownedPlots: owned,
+        occupancy: plots.length ? Math.round((owned / plots.length) * 100) : 0,
+        // The two thresholds the Kernel actually expands on, so a reader can
+        // see which one is close rather than guessing.
+        expandsAtOccupancy: 75,
+        headroom: Math.max(0, capacity - 5 - population),
+        generation: objects.state?.generation ?? 0,
+        size: { width: objects.state?.width ?? 0, height: objects.state?.height ?? 0 },
+      };
+    })(),
+    // Real crops on real ground. Growth is time, not a stored counter, so the
+    // Kernel already computes the stage every viewer should draw - a field at
+    // stage 4 is ready, and a world that paints all fields the same is hiding
+    // the only farming there is.
+    farms: (objects.farmPlots ?? []).map((field: any) => ({
+      x: field.x, y: field.y, crop: field.crop, stage: field.stage,
+      readyAt: field.readyAt, tenders: field.tenders ?? 0,
+    })),
+    // Who owns which ground, so a viewer can fence a homestead rather than
+    // scattering houses on anonymous grass.
+    plots: (objects.plots ?? []).map((plot: any) => ({
+      x: plot.x, y: plot.y, w: plot.w, h: plot.h,
+      district: plot.district, owned: Boolean(plot.ownerAgentId),
+    })),
+    zones: (objects.activityZones ?? []).map((zone: any) => ({
+      zoneId: zone.zoneId, name: zone.name ?? zone.zoneId, kind: zone.kind ?? 'zone',
+      x: zone.x, y: zone.y, w: zone.w ?? 1, h: zone.h ?? 1,
     })),
     // Land the world has grown since the base map: each expansion chunk's
     // Tiled layers, folded down to the letter code. The voxel shell overlays
