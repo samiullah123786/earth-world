@@ -819,7 +819,7 @@ window.addEventListener('message', (event) => {
   } else if (event.data.type === 'earth-focus-agent' && typeof event.data.agentId === 'string') {
     ownerAgentId = event.data.agentId;
     findMe.style.display = 'block';
-    focusCitizen(ownerAgentId);
+    focusCitizen(event.data.agentId);
   } else if (event.data.type === 'earth-wallet' && Number.isFinite(event.data.balance)) {
     required('wallet-balance').textContent = String(event.data.balance);
   }

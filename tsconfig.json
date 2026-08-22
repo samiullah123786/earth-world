@@ -19,6 +19,9 @@
   "include": [
     "shared",
     "convex",
-    "tests"
+    "tests",
+    "src",
+    "worker",
+    "vite.config.ts"
   ]
 }
