@@ -17,6 +17,7 @@ describe('full-screen voxel world interface contract', () => {
     expect(html).not.toContain('VOXEL WORLD');
     expect(html).not.toContain('class="hud world-nav"');
     expect(styles).toContain('right: 12px;');
+    expect(styles).toContain('body.embed .backhome, body.embed .brand');
   });
 
   it('shows live chat by default and keeps accessible plus/minus controls', () => {

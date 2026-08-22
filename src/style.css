@@ -278,10 +278,9 @@ canvas.grabbing:active { cursor: grabbing; }
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-body.embed .backhome, body.embed .metrics, body.embed #rightstack,
+body.embed .backhome, body.embed .brand, body.embed .metrics, body.embed #rightstack,
 body.embed .findme { display: none !important; }
 body.embed .grab-toggle { display: none !important; }
-body.embed .brand { left: 12px; transform: none; }
 body.embed .controls { bottom: 12px; }
 
 @media (max-width: 1040px) {
