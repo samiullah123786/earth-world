@@ -17,7 +17,8 @@
     ]
   },
   "include": [
-    "src",
-    "convex"
+    "shared",
+    "convex",
+    "tests"
   ]
 }

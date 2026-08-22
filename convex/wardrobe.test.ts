@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { internal } from './_generated/api';
 import schema from './schema';
 import { avatarSpecForVariant } from '../shared/avatar-identity';
-import { resolveAvatarKey } from '../src/avatar_identity';
+import { resolveAvatarKey } from '../shared/wardrobe';
 
 const modules = import.meta.glob('./**/*.ts');
 

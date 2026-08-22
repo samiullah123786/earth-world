@@ -1,6 +1,6 @@
-import { avatarArchetype, type PublicAvatarSpec } from '../shared/avatar-identity';
-export type { PublicAvatarSpec } from '../shared/avatar-identity';
-export { tierInsignia, EXPERIENCE_TIERS, type ExperienceTier, type TierInsignia } from '../shared/avatar-identity';
+import { avatarArchetype, type PublicAvatarSpec } from './avatar-identity';
+export type { PublicAvatarSpec } from './avatar-identity';
+export { tierInsignia, EXPERIENCE_TIERS, type ExperienceTier, type TierInsignia } from './avatar-identity';
 
 type AvatarCitizen = {
   agentId: string; name: string; gender: string; family: string;
