@@ -14,6 +14,8 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { TAKEOVER_LEASE_MS, drivenActivity, isDriven, stepVerdict } from '../shared/takeover';
 import { loadWorldWalkability } from './worldGrid';
+import { placeBlock, removeBlock } from './handbuild';
+import { greetCitizen } from './greet';
 import { ensureWorldState } from './planning';
 
 /** The owner session behind this token, and the citizen it owns. */
@@ -116,6 +118,73 @@ export const step = internalMutation({
       activity: drivenActivity(citizen.name),
     });
     return { ok: true, x, y, until: now + TAKEOVER_LEASE_MS };
+  },
+});
+
+
+/**
+ * A driven citizen still has to be the one holding the wheel.
+ *
+ * Every act below is something the agent itself could have done; possession
+ * only changes who chose it. So each one re-checks the lease before acting,
+ * because a lapsed wheel means the agent is autonomous again and a stale
+ * browser tab must not be able to spend its tokens.
+ */
+async function atTheWheel(ctx: any, tokenHash: string) {
+  const { session, citizen } = await ownedCitizen(ctx, tokenHash);
+  if (!isDriven({ drivenBy: citizen.drivenBy, drivenUntil: citizen.drivenUntil }, Date.now())
+    || citizen.drivenBy !== session.agentId) {
+    throw new Error('take the wheel first');
+  }
+  return citizen;
+}
+
+/**
+ * Place a block by hand, paying for it out of the citizen's own purse.
+ *
+ * Exactly the rules an autonomous agent obeys - own land, on the ground or on
+ * the block below, under the height cap, never across a doorway - because the
+ * whole promise of takeover is that the world's laws do not bend for whoever
+ * happens to be steering.
+ */
+export const build = internalMutation({
+  args: { tokenHash: v.string(), x: v.number(), y: v.number(), level: v.number(), kind: v.string() },
+  handler: async (ctx, { tokenHash, x, y, level, kind }) => {
+    const citizen = await atTheWheel(ctx, tokenHash);
+    // One click, one payment: the tile and the level a human is clicking on
+    // cannot be paid for twice in the same second, and a retry of the same
+    // click lands on the same key.
+    const sourceId = `block:driven:${citizen.agentId}:${x}:${y}:${level}:${Math.floor(Date.now() / 1000)}`;
+    const done = await placeBlock(ctx, citizen, { x, y, level, kind }, sourceId);
+    await ctx.db.patch(citizen._id, { drivenUntil: Date.now() + TAKEOVER_LEASE_MS });
+    return done;
+  },
+});
+
+export const unbuild = internalMutation({
+  args: { tokenHash: v.string(), x: v.number(), y: v.number(), level: v.number() },
+  handler: async (ctx, { tokenHash, x, y, level }) => {
+    const citizen = await atTheWheel(ctx, tokenHash);
+    const done = await removeBlock(ctx, citizen, { x, y, level });
+    await ctx.db.patch(citizen._id, { drivenUntil: Date.now() + TAKEOVER_LEASE_MS });
+    return done;
+  },
+});
+
+/**
+ * Offer a hand to somebody standing next to you.
+ *
+ * A handshake needs both people, and driving one of them changes nothing about
+ * that: the other citizen still has to offer back, which its own agent decides.
+ * You can reach out. You cannot make somebody take your hand.
+ */
+export const greet = internalMutation({
+  args: { tokenHash: v.string(), agentId: v.string() },
+  handler: async (ctx, { tokenHash, agentId }) => {
+    const citizen = await atTheWheel(ctx, tokenHash);
+    const done = await greetCitizen(ctx, citizen, agentId);
+    await ctx.db.patch(citizen._id, { drivenUntil: Date.now() + TAKEOVER_LEASE_MS });
+    return done;
   },
 });
 

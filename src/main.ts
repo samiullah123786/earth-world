@@ -3,9 +3,17 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import './style.css';
 import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette } from './world3d/detail';
-import { kitPalette, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
+import { authorityLook, kitPalette, makeAuthorityDress, makeInsignia, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
 import { conversationSubtitle, conversationTitle, groupConversations } from './world3d/conversations';
 import { lookFor, makeFace, makeHair } from './world3d/citizenKit';
+import { furnishHome, inside, interiorPalette, wallTiles } from './world3d/interior';
+import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/blocks';
+import { BlockBatch, absorb, shadedBox } from './world3d/batch';
+import { AmbientLife, Clouds, makeSkyDome } from './world3d/sky';
+import { CitizenBatch, harvest, type Pose, type Rig } from './world3d/rig';
+import { heightAt, siteHeight } from '../shared/elevation';
+import { skyAt, worldMaterials } from './world3d/palette';
+import { PROFILES, loadSettings, phaseFor, saveSettings, suggestQuality, type Settings } from './world3d/settings';
 
 const KERNEL = import.meta.env.VITE_CONVEX_SITE_URL || 'https://kernel.agentsearth.com';
 const EMBED = new URLSearchParams(location.search).has('embed');
@@ -38,6 +46,7 @@ type Build = {
   buildId?: string; x: number; y: number; w: number; h: number;
   structure: string; state: string; endsAt?: number | null; visual?: BuildVisual | null;
 };
+type PlacedBlock = { x: number; y: number; level: number; kind: string; ownerAgentId: string };
 type Venue = { venueId?: string; x: number; y: number; kind: string; name: string };
 type Farm = { x: number; y: number; crop: string; stage: number; tenders: number };
 type Plot = { x: number; y: number; w: number; h: number; district: string; owned: boolean };
@@ -45,7 +54,7 @@ type Zone = { zoneId: string; name: string; kind: string; x: number; y: number; 
 type WorldState = {
   ok: boolean; serverNow: number; world: { width: number; height: number };
   gate: { x: number; y: number }; citizens: Citizen[]; builds: Build[]; venues: Venue[];
-  farms?: Farm[]; plots?: Plot[]; zones?: Zone[];
+  farms?: Farm[]; plots?: Plot[]; zones?: Zone[]; blocks?: PlacedBlock[];
   growth?: {
     population: number; capacity: number; plots: number; ownedPlots: number;
     occupancy: number; expandsAtOccupancy: number; headroom: number;
@@ -54,10 +63,26 @@ type WorldState = {
 };
 type Terrain = { width: number; height: number; rows: string[] };
 
+/**
+ * A citizen, as the renderer holds them.
+ *
+ * No scene-graph nodes any more. A rig is a flat list of boxes with joints, and
+ * every citizen in the world is drawn from one shared instanced mesh - which is
+ * what took twenty people from two hundred and sixty draw calls to about five,
+ * and is why the town can now hold a crowd instead of a committee.
+ *
+ * The smoothed position lives here rather than on a Group, because there is no
+ * longer a Group to hang it on.
+ */
 type CitizenModel = {
-  group: THREE.Group; leftArm: THREE.Mesh; rightArm: THREE.Mesh;
-  leftLeg: THREE.Mesh; rightLeg: THREE.Mesh; row: Citizen;
-  hand: THREE.Group; toolKey: string; bob: number;
+  rig: Rig;
+  row: Citizen;
+  toolKey: string;
+  label: THREE.Sprite | null;
+  /** Where the body is being drawn, eased toward where the world says it is. */
+  px: number; pz: number; py: number;
+  heading: number;
+  placed: boolean;
 };
 
 const required = <T extends HTMLElement>(id: string) => {
@@ -84,7 +109,7 @@ scene.background = new THREE.Color(0x9cc9e7);
 scene.fog = new THREE.Fog(0x9cc9e7, 55, 145);
 
 const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.08, 240);
-camera.position.set(52, 38, 68);
+camera.position.set(44, 18, 52);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -144,7 +169,10 @@ let exploreMode = false;
 let lastFrame = performance.now();
 let elapsedSeconds = 0;
 
-const hemi = new THREE.HemisphereLight(0xd9efff, 0x5f4d35, 2.2);
+// Intensity is driven by the clock in tendSky. The value here only matters
+// for the first frame, and it is low on purpose: a strong hemisphere light
+// is what made a world with shadows enabled look like it had none.
+const hemi = new THREE.HemisphereLight(0xd9efff, 0x5f4d35, 0.5);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff1c5, 3.3);
 sun.position.set(-28, 48, -18);
@@ -172,33 +200,62 @@ const boundaryRoot = new THREE.Group();
 worldRoot.add(islandRoot, terrainRoot, scatterRoot, farmRoot, boundaryRoot, structureRoot, citizenRoot, landmarkRoot);
 scene.add(worldRoot);
 
-const BOX = new THREE.BoxGeometry(1, 1, 1);
-const materials = {
-  grass: new THREE.MeshStandardMaterial({ color: 0x69a84f, roughness: .92 }),
-  dirt: new THREE.MeshStandardMaterial({ color: 0x8b6842, roughness: 1 }),
-  road: new THREE.MeshStandardMaterial({ color: 0x999188, roughness: .95 }),
-  water: new THREE.MeshPhysicalMaterial({ color: 0x3d7fd4, transparent: true, opacity: .82, roughness: .2, transmission: .06 }),
-  crop: new THREE.MeshStandardMaterial({ color: 0x76502f, roughness: 1 }),
-  trunk: new THREE.MeshStandardMaterial({ color: 0x5b4226, roughness: 1 }),
-  leaf: new THREE.MeshStandardMaterial({ color: 0x2f713b, roughness: .9 }),
-  leafLight: new THREE.MeshStandardMaterial({ color: 0x4b9149, roughness: .9 }),
-  cream: new THREE.MeshStandardMaterial({ color: 0xe8d7b5, roughness: .86 }),
-  plaster: new THREE.MeshStandardMaterial({ color: 0xf2e1bf, roughness: .84 }),
-  timber: new THREE.MeshStandardMaterial({ color: 0x6b4227, roughness: .9 }),
-  darkTimber: new THREE.MeshStandardMaterial({ color: 0x3f2a1f, roughness: .94 }),
-  roof: new THREE.MeshStandardMaterial({ color: 0x8a4a3a, roughness: .88 }),
-  roofDark: new THREE.MeshStandardMaterial({ color: 0x65362e, roughness: .9 }),
-  stone: new THREE.MeshStandardMaterial({ color: 0x8a8880, roughness: .96 }),
-  stoneDark: new THREE.MeshStandardMaterial({ color: 0x5f625e, roughness: .98 }),
-  civic: new THREE.MeshStandardMaterial({ color: 0xc0a879, roughness: .9 }),
-  gold: new THREE.MeshStandardMaterial({ color: 0xd9a928, roughness: .48, metalness: .52 }),
-  metal: new THREE.MeshStandardMaterial({ color: 0x56636a, roughness: .52, metalness: .45 }),
-  glass: new THREE.MeshPhysicalMaterial({ color: 0x9ee9e9, transparent: true, opacity: .43, roughness: .12, transmission: .35 }),
-  window: new THREE.MeshStandardMaterial({ color: 0xffcf63, emissive: 0xffa524, emissiveIntensity: 1.45, roughness: .35 }),
-  cyan: new THREE.MeshStandardMaterial({ color: 0x49dbe6, emissive: 0x16a9c1, emissiveIntensity: 1.8 }),
-  obsidian: new THREE.MeshStandardMaterial({ color: 0x1b1631, roughness: .48, metalness: .18 }),
-  portal: new THREE.MeshPhysicalMaterial({ color: 0x72e8ff, emissive: 0x2cc7ef, emissiveIntensity: 2.4, transparent: true, opacity: .64, transmission: .22 }),
-};
+// The world used to end at a flat blue clear-colour, which is the difference
+// between a render and a place: a render stops at the edge of its geometry.
+const atmosphereRoot = new THREE.Group();
+scene.add(atmosphereRoot);
+const skyDome = makeSkyDome();
+scene.add(skyDome.mesh);
+let clouds: Clouds | null = null;
+let wildlife: AmbientLife | null = null;
+
+/** What this viewer has asked the world to look like. */
+let view: Settings = loadSettings();
+if (!localStorage.getItem('earth.view')) view.quality = suggestQuality();
+
+/**
+ * One geometry for the whole world, carrying soft shading in its vertices.
+ *
+ * Every box in the town is this box. The baked gradient is the cheap honest
+ * stand-in for ambient occlusion - darker at the base, the way a solid thing
+ * sitting on the ground actually is - and it composes with instance colour for
+ * free, which a post-processing pass would not.
+ */
+const BOX = shadedBox();
+/** Unshaded, for ground tiles - see addInstancedTiles. */
+const GROUND_BOX = new THREE.BoxGeometry(1, 1, 1);
+
+/**
+ * The town, drawn in a handful of calls instead of eleven hundred.
+ *
+ * Separate batches because they are rebuilt on separate clocks: the gate and
+ * the venue posts almost never change, buildings change when somebody finishes
+ * a house, and hand-placed blocks change whenever a citizen sets one down.
+ * Roofs get their own batch so a single building's roof can be hidden while you
+ * are standing inside it, without taking the rest of the skyline with it.
+ */
+const structureBatch = new BlockBatch(structureRoot);
+const roofBatch = new BlockBatch(structureRoot);
+const landmarkBatch = new BlockBatch(landmarkRoot);
+
+/**
+ * Interior lights, kept on a leash.
+ *
+ * Every furnished home has a hearth and a lamp. Twenty-five homes is fifty
+ * point lights, which is far past what a forward renderer will accept before it
+ * starts dropping them silently or recompiling shaders every frame. Only the
+ * handful nearest the camera are ever switched on - and since these are lights
+ * you can only see from inside a room, the ones being switched off are ones
+ * nobody is looking at.
+ */
+const MAX_LIVE_LIGHTS = 6;
+let interiorLights: THREE.Light[] = [];
+/**
+ * Every surface in the world, built from the four-hue system rather than
+ * chosen one at a time. Twenty independent saturated colours is what programmer
+ * art IS; the distance to something art-directed is fewer hues, related.
+ */
+const materials = worldMaterials();
 
 const terrainMaterials: Record<string, THREE.Material> = {
   g: materials.grass, d: materials.dirt, r: materials.road,
@@ -215,6 +272,11 @@ let ownerAgentId = new URLSearchParams(location.search).get('me');
 let authorityOnly = false;
 let toastTimer = 0;
 const citizenModels = new Map<string, CitizenModel>();
+/** Blocks citizens bought and set down themselves, and what they cost to walk through. */
+const blockRoot = new THREE.Group();
+scene.add(blockRoot);
+let blockSolid = new Set<number>();
+let blockSignature = '';
 /** Which conversation cards the reader has opened, kept across polls. */
 const openConversations = new Set<string>();
 const DETAIL = detailPalette();
@@ -224,7 +286,6 @@ let boundarySignature = '';
 /** Tiles nothing may walk into, rebuilt with the terrain. Explore uses it. */
 let solid: Set<number> = new Set();
 const solidKey = (x: number, z: number) => z * 4096 + x;
-const pickables: THREE.Object3D[] = [];
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
@@ -264,12 +325,20 @@ function clearGroup(group: THREE.Group) {
 
 function addInstancedTiles(letter: string, locations: Array<{ x: number; z: number; top: number }>) {
   if (!locations.length) return;
-  const mesh = new THREE.InstancedMesh(BOX, terrainMaterials[letter], locations.length);
+  // A plain box, not the shaded one. The baked gradient reads as weight on a
+  // wall and as a GRID when it is tiled across open ground - every tile
+  // outlined by its own dark lower edge.
+  const mesh = new THREE.InstancedMesh(GROUND_BOX, terrainMaterials[letter], locations.length);
   const matrix = new THREE.Matrix4();
   locations.forEach((spot, index) => {
-    const height = letter === 'w' ? .34 : .5;
+    // Ground tiles are extruded DOWN from the land's surface rather than
+    // sitting on a plane, so a rise in the terrain is a rise in the soil under
+    // it rather than a floating slab. Water is the exception: it finds its own
+    // level, the way water does, instead of following the hill.
+    const lift = letter === 'w' ? 0 : heightAt(spot.x + .5, spot.z + .5);
+    const height = letter === 'w' ? .34 : .5 + lift;
     matrix.compose(
-      new THREE.Vector3(spot.x + .5, spot.top - height / 2, spot.z + .5),
+      new THREE.Vector3(spot.x + .5, spot.top + lift - height / 2, spot.z + .5),
       new THREE.Quaternion(), new THREE.Vector3(1, height, 1),
     );
     mesh.setMatrixAt(index, matrix);
@@ -299,16 +368,21 @@ function buildTerrain(data: Terrain) {
   const trunkMesh = new THREE.InstancedMesh(BOX, materials.trunk, treeTrunks.length);
   const crownMesh = new THREE.InstancedMesh(BOX, materials.leaf, treeTrunks.length * 2 + bushes.length);
   const matrix = new THREE.Matrix4();
+  // A tree rooted at sea level on a hillside is the tell that a world is a
+  // heightmap with props dropped on it, so everything that grows reads the
+  // same ground function the soil under it does.
   treeTrunks.forEach((spot, index) => {
-    matrix.compose(new THREE.Vector3(spot.x + .5, 1.05, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.32, 2.1, .32));
+    const base = heightAt(spot.x + .5, spot.z + .5);
+    matrix.compose(new THREE.Vector3(spot.x + .5, base + 1.05, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.32, 2.1, .32));
     trunkMesh.setMatrixAt(index, matrix);
-    matrix.compose(new THREE.Vector3(spot.x + .5, 2.15, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(1.55, 1.15, 1.55));
+    matrix.compose(new THREE.Vector3(spot.x + .5, base + 2.15, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(1.55, 1.15, 1.55));
     crownMesh.setMatrixAt(index * 2, matrix);
-    matrix.compose(new THREE.Vector3(spot.x + .5, 2.9, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.92, .72, .92));
+    matrix.compose(new THREE.Vector3(spot.x + .5, base + 2.9, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.92, .72, .92));
     crownMesh.setMatrixAt(index * 2 + 1, matrix);
   });
   bushes.forEach((spot, index) => {
-    matrix.compose(new THREE.Vector3(spot.x + .5, .5, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.8, .8, .8));
+    const base = heightAt(spot.x + .5, spot.z + .5);
+    matrix.compose(new THREE.Vector3(spot.x + .5, base + .5, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.8, .8, .8));
     crownMesh.setMatrixAt(treeTrunks.length * 2 + index, matrix);
   });
   trunkMesh.instanceMatrix.needsUpdate = true;
@@ -337,6 +411,14 @@ function buildTerrain(data: Terrain) {
       if (letter === 't' || letter === 'w' || letter === '.') solid.add(solidKey(x, z));
     }
   }
+  // Weather needs to know how big the world is, and the world only says so
+  // when the terrain arrives. Built once; a later expansion widens the map
+  // without needing a second sky.
+  if (!clouds) clouds = new Clouds(atmosphereRoot, BOX, Math.max(data.width, data.height));
+  if (!wildlife) wildlife = new AmbientLife(atmosphereRoot, BOX, Math.max(data.width, data.height));
+  clouds.setVisible(view.clouds);
+  wildlife.setVisible(view.wildlife);
+
   builtTerrain = true;
 }
 
@@ -358,14 +440,24 @@ function wallRing(group: THREE.Group, build: Build, wall: THREE.Material, height
   }
 }
 
+/**
+ * The stepped roof, kept in its own group so it can be hidden from inside.
+ *
+ * Registered as it is built rather than found later: a roof that the register
+ * missed is a ceiling somebody's face is pressed into, and there is no way to
+ * notice that from outside the building.
+ */
 function steppedRoof(group: THREE.Group, build: Build, roof: THREE.Material, start = 2.72) {
+  const shell = new THREE.Group();
   let x = build.x - .18, z = build.y - .18;
   let w = build.w + .36, h = build.h + .36;
   let level = 0;
   while (w > .6 && h > .6 && level < 5) {
-    addBlock(group, x, start + level * .48, z, w, .5, h, roof);
+    addBlock(shell, x, start + level * .48, z, w, .5, h, roof);
     x += .42; z += .42; w -= .84; h -= .84; level++;
   }
+  group.add(shell);
+  roofs.push({ build, roof: shell });
 }
 
 function flowerBed(group: THREE.Group, x: number, z: number, count: number, accent: number) {
@@ -479,25 +571,88 @@ function buildLivingGround(farms: Farm[], plots: Plot[]) {
   }
 }
 
+/**
+ * Every roof, with the footprint it covers.
+ *
+ * A roof is the one part of a building that has to know where you are: stood
+ * inside a sealed box, it is a ceiling pressed against your face. Keeping the
+ * register here rather than walking the scene graph every frame means the
+ * check is a handful of rectangle tests, whatever the town grows to.
+ */
+const roofs: Array<{ build: Build; roof: THREE.Group }> = [];
+const INTERIOR = interiorPalette();
+
+/** Tiles a building's walls occupy, so explore mode collides with them. */
+let structureSolid = new Set<number>();
+
 function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y: number }) {
   clearGroup(structureRoot);
   clearGroup(landmarkRoot);
+  structureBatch.clear();
+  roofBatch.clear();
+  landmarkBatch.clear();
+  roofs.length = 0;
+  structureSolid = new Set<number>();
+  interiorLights = [];
+  const chimneys: Array<{ x: number; y: number; z: number }> = [];
   for (const build of builds) {
     const group = new THREE.Group();
     group.userData.build = build;
+    // A building cannot follow the ground - it would shear - so it takes one
+    // height for its whole footprint and the foundation makes up whatever the
+    // hill takes away on the low side.
+    const pad = siteHeight(build);
+    group.position.y = pad;
     const text = semantic(build);
     const seed = hash(`${build.x}:${build.y}:${text}`);
+    // `walled` records what the dispatch already decided: everything built on
+    // a wall ring has a door and an inside, and everything else - a garden, a
+    // bench, a greenhouse of glass - does not. Asking the dispatch rather than
+    // running a second regex over the same string means the two can never
+    // disagree about whether a building is a place you can enter.
+    let walled = false;
     if (build.state === 'building') makeScaffold(group, build);
     else if (/garden|park|fountain|training/.test(text)) makeGarden(group, build);
     else if (/bench|laptop/.test(text)) makeBench(group, build);
     else if (/greenhouse|orchard/.test(text) && !/home/.test(text)) makeGreenhouse(group, build);
-    else if (/data.center|server/.test(text)) makeDataCenter(group, build);
-    else if (/workshop|industry|sawtooth/.test(text)) makeWorkshop(group, build);
-    else if (/bank/.test(text)) makeCivic(group, build, 'bank');
-    else if (/civic|hall|library|pavilion|rotunda/.test(text)) makeCivic(group, build, 'hall');
-    else makeHome(group, build, seed);
-    structureRoot.add(group);
+    else if (/data.center|server/.test(text)) { makeDataCenter(group, build); walled = true; }
+    else if (/workshop|industry|sawtooth/.test(text)) { makeWorkshop(group, build); walled = true; }
+    else if (/bank/.test(text)) { makeCivic(group, build, 'bank'); walled = true; }
+    else if (/civic|hall|library|pavilion|rotunda/.test(text)) { makeCivic(group, build, 'hall'); walled = true; }
+    else { makeHome(group, build, seed); walled = true; }
+
+    // A finished building is a place, not a prop. Its walls stop a walker, so
+    // the doorway is the only way in and the door means something; its inside
+    // is furnished, so getting in is worth doing; and its roof steps aside
+    // while you are under it, so a room is a room rather than a lid.
+    if (walled) {
+      for (const tile of wallTiles(build)) structureSolid.add(solidKey(tile.x, tile.y));
+      group.add(furnishHome(build, build.buildId ?? `${build.x}:${build.y}`, INTERIOR));
+    }
+    // The group was only ever scaffolding for assembling the building. Its
+    // boxes go into the batch, its hearth-light is put on the leash, and the
+    // group itself is dropped before it is ever added to the scene.
+    const roofShell = roofs.find((entry) => entry.build === build)?.roof;
+    if (roofShell) {
+      group.remove(roofShell);
+      absorb(roofShell, roofBatch, `roof:${build.buildId ?? `${build.x}:${build.y}`}`);
+    }
+    const harvested = absorb(group, structureBatch, build.buildId ?? null);
+    for (const light of harvested.lights) {
+      light.visible = false;
+      interiorLights.push(light);
+      structureRoot.add(light);
+    }
+    for (const sprite of harvested.sprites) structureRoot.add(sprite);
+    if (walled) {
+      // Smoke rises from a chimney, and a chimney belongs to a house that
+      // somebody lives in - so an occupied town reads as occupied from the air.
+      chimneys.push({ x: build.x + build.w - 0.4, y: 3.6, z: build.y + 0.5 });
+    }
   }
+  structureBatch.flush();
+  roofBatch.flush();
+  wildlife?.setChimneys(chimneys);
 
   for (const venue of venues) {
     const marker = new THREE.Group();
@@ -506,20 +661,72 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
     marker.add(makeLabel(venue.name, '#b4551f', 260, 34, 1.75));
     const label = marker.children[marker.children.length - 1];
     label.position.set(venue.x + .5, 2.95, venue.y + .5);
-    landmarkRoot.add(marker);
+    const harvested = absorb(marker, landmarkBatch, `venue:${venue.venueId ?? venue.name}`);
+    for (const sprite of harvested.sprites) landmarkRoot.add(sprite);
   }
 
   const gateGroup = new THREE.Group();
+  gateGroup.position.y = heightAt(gate.x, gate.y);
   for (const side of [-1, 1]) addBlock(gateGroup, gate.x + side - .25, .05, gate.y + .28, .5, 4.2, .5, materials.obsidian);
   // The lintel spans the posts and no further. It used to run from -1.25 to
   // +1.75 while the posts stood at -1.25 to +1.25, so the arch overhung by
   // half a tile on one side only - the lopsided doorway.
   addBlock(gateGroup, gate.x - 1.45, 3.9, gate.y + .28, 2.9, .55, .5, materials.obsidian);
   addBlock(gateGroup, gate.x - .68, .45, gate.y + .34, 1.36, 3.32, .3, materials.portal);
-  const gateLight = new THREE.PointLight(0x4fdcff, 8, 12, 1.8);
+  const harvestedGate = absorb(gateGroup, landmarkBatch, 'gate');
+  for (const sprite of harvestedGate.sprites) landmarkRoot.add(sprite);
+  landmarkBatch.flush();
+  // The gate keeps a real light of its own. It is the one place in the world
+  // that is supposed to glow, and it is always worth the draw.
+  const gateLight = new THREE.PointLight(0x4fdcff, 8, 14, 1.8);
   gateLight.position.set(gate.x, 2.3, gate.y + .5);
-  gateGroup.add(gateLight);
-  landmarkRoot.add(gateGroup);
+  landmarkRoot.add(gateLight);
+}
+
+
+/**
+ * Every block a citizen bought with their own tokens and set down by hand.
+ *
+ * Rebuilt only when the set actually changes - a signature compare rather than
+ * a clear-and-rebuild every poll, because this runs every two seconds and a
+ * town that has been building for a month will have a great many of these.
+ */
+const BLOCK_MATERIALS: Record<string, THREE.Material> = {
+  plank: new THREE.MeshStandardMaterial({ color: 0xa97b4f, roughness: .9 }),
+  stone: new THREE.MeshStandardMaterial({ color: 0x9c9a94, roughness: .88 }),
+  brick: new THREE.MeshStandardMaterial({ color: 0xa8543c, roughness: .86 }),
+  glass: new THREE.MeshStandardMaterial({ color: 0x9ee9e9, roughness: .18, metalness: .1, transparent: true, opacity: .55 }),
+  thatch: new THREE.MeshStandardMaterial({ color: 0xc2a555, roughness: .96 }),
+  lantern: new THREE.MeshStandardMaterial({ color: 0xffd08a, emissive: 0xffa540, emissiveIntensity: 1.1, roughness: .6 }),
+  flowers: new THREE.MeshStandardMaterial({ color: 0x7f9f52, roughness: .92 }),
+  path: new THREE.MeshStandardMaterial({ color: 0xb9ae97, roughness: .95 }),
+};
+
+function buildPlacedBlocks(blocks: PlacedBlock[]) {
+  const signature = blocks.map((block) => `${block.x}:${block.y}:${block.level}:${block.kind}`).sort().join('|');
+  if (signature === blockSignature) return;
+  blockSignature = signature;
+  clearGroup(blockRoot);
+  blockSolid = new Set<number>();
+  for (const block of blocks) {
+    const material = BLOCK_MATERIALS[block.kind] ?? BLOCK_MATERIALS.stone;
+    // Lanterns, flower boxes and paving are low things you pass; walls are not.
+    // The renderer asks the same rulebook the Kernel asks, so what looks solid
+    // and what IS solid can never drift apart.
+    const hard = Object.prototype.hasOwnProperty.call(BLOCK_PALETTE, block.kind)
+      && blocksWalking(block.kind as BlockMaterial);
+    const height = hard ? 1 : block.kind === 'lantern' ? .5 : .16;
+    const inset = hard ? .02 : .18;
+    const ground = heightAt(block.x + .5, block.y + .5);
+    addBlock(blockRoot, block.x + inset, ground + (block.level - 1) + .3, block.y + inset,
+      1 - inset * 2, height, 1 - inset * 2, material);
+    if (block.kind === 'lantern') {
+      const glow = new THREE.PointLight(0xffb457, 2.6, 7, 2);
+      glow.position.set(block.x + .5, ground + (block.level - 1) + .95, block.y + .5);
+      blockRoot.add(glow);
+    }
+    if (hard) blockSolid.add(solidKey(block.x, block.y));
+  }
 }
 
 function makeLabel(text: string, background: string, width = 220, height = 42, worldWidth = 1.9) {
@@ -546,12 +753,12 @@ function makeLabel(text: string, background: string, width = 220, height = 42, w
 }
 
 function makeCitizen(row: Citizen): CitizenModel {
-  const group = new THREE.Group();
-  group.userData.agentId = row.agentId;
-  // Every citizen used to wear the same body in four skin tones and five hair
-  // colours, so twenty of them read as one person copied twenty times. A look
-  // is now derived from the agentId - stable forever, unique in practice, and
-  // impossible to claim, which is the same rule everything else here follows.
+  // The body is still assembled exactly as it was, with the same kit that
+  // knows how to build a face, a sash, a pickaxe and a surveyor's hat. What
+  // changes is where it ends up: each joint is assembled into its own throwaway
+  // group, harvested into rig parts, and the groups are dropped. Rewriting the
+  // character art as instance data by hand would have lost details nobody would
+  // notice were missing until much later.
   const look = lookFor(row.agentId, colorForFamily(row.family).getHex());
   const family = new THREE.MeshStandardMaterial({ color: look.cloth, roughness: .75 });
   const trim = new THREE.MeshStandardMaterial({ color: look.trim, roughness: .8 });
@@ -559,46 +766,66 @@ function makeCitizen(row: Citizen): CitizenModel {
   const boot = materials.darkTimber;
   const wide = look.build === 'broad' ? 1.14 : look.build === 'slight' ? .88 : 1;
 
-  const torso = addBlock(group, -.25 * wide, .75, -.15, .5 * wide, .72, .3, family);
-  const head = addBlock(group, -.22, 1.5, -.19, .44, .44, .38, skin);
-  const leftArm = addBlock(group, -.39 * wide, .79, -.11, .13, .66, .22, skin);
-  const rightArm = addBlock(group, .26 * wide, .79, -.11, .13, .66, .22, skin);
-  const leftLeg = addBlock(group, -.2, .12, -.11, .17, .64, .22, trim);
-  const rightLeg = addBlock(group, .03, .12, -.11, .17, .64, .22, trim);
-  addBlock(group, -.2, .06, -.17, .17, .14, .3, boot);
-  addBlock(group, .03, .06, -.17, .17, .14, .3, boot);
-  group.add(makeHair(look), makeFace(look));
-  // A hand's difference either way. Small on purpose: wildly varied sizes
-  // read as a bug, slightly varied ones read as people.
-  group.scale.setScalar(look.height);
-  const badge = addBlock(group, -.06, 1.12, -.165, .12, .12, .04, materials.window);
-  badge.userData.agentId = row.agentId;
-  for (const mesh of [torso, head, leftArm, rightArm, leftLeg, rightLeg]) mesh.userData.agentId = row.agentId;
+  const body = new THREE.Group();
+  const leftArmGroup = new THREE.Group();
+  const rightArmGroup = new THREE.Group();
+  const leftLegGroup = new THREE.Group();
+  const rightLegGroup = new THREE.Group();
 
-  // Everything below is a fact the Kernel already tracked and no renderer
-  // ever drew: the office a citizen holds, the evidence tier they have
-  // earned, and the tool they were given for contributing.
-  if (row.serviceRole) group.add(makeOfficeSash(row.serviceRole, KIT));
+  addBlock(body, -.25 * wide, .75, -.15, .5 * wide, .72, .3, family);
+  addBlock(body, -.22, 1.5, -.19, .44, .44, .38, skin);
+  addBlock(leftArmGroup, -.39 * wide, .79, -.11, .13, .66, .22, skin);
+  addBlock(rightArmGroup, .26 * wide, .79, -.11, .13, .66, .22, skin);
+  addBlock(leftLegGroup, -.2, .12, -.11, .17, .64, .22, trim);
+  addBlock(rightLegGroup, .03, .12, -.11, .17, .64, .22, trim);
+  addBlock(leftLegGroup, -.2, .06, -.17, .17, .14, .3, boot);
+  addBlock(rightLegGroup, .03, .06, -.17, .17, .14, .3, boot);
+  body.add(makeHair(look), makeFace(look));
+  addBlock(body, -.06, 1.12, -.165, .12, .12, .04, materials.window);
+
+  // Facts the Kernel already tracked and no renderer drew: the office a citizen
+  // holds, the evidence tier they earned, the tool they were given.
+  const office = authorityLook(row.serviceRole);
+  if (office) {
+    body.add(makeAuthorityDress(office, KIT));
+    body.add(makeOfficeSash(row.serviceRole!, KIT));
+    const insignia = makeInsignia(office, KIT);
+    if (insignia) {
+      const offHand = new THREE.Group();
+      offHand.position.set(-.32, .5, 0);
+      offHand.add(insignia);
+      leftArmGroup.add(offHand);
+    }
+  }
   const tierMark = makeTierMark(row.experienceTier, KIT);
-  if (tierMark) group.add(tierMark);
+  if (tierMark) body.add(tierMark);
 
-  // The hand is a pivot on the end of the right arm, so a carried tool
-  // swings with the arm rather than floating beside the body.
-  const hand = new THREE.Group();
-  hand.position.set(.32, .5, 0);
-  group.add(hand);
+  const toolKey = String(row.activeTool ?? row.carriedTool ?? '');
   const tool = makeTool(row.activeTool ?? row.carriedTool, KIT);
-  if (tool) hand.add(tool);
+  if (tool) {
+    // A hand on the end of the arm, so a carried tool swings with the arm
+    // rather than floating alongside the body.
+    const hand = new THREE.Group();
+    hand.position.set(.32, .5, 0);
+    hand.add(tool);
+    rightArmGroup.add(hand);
+  }
+
+  const parts: Rig['parts'] = [];
+  harvest(body, 'body', parts);
+  harvest(leftArmGroup, 'leftArm', parts);
+  harvest(rightArmGroup, 'rightArm', parts);
+  harvest(leftLegGroup, 'leftLeg', parts);
+  harvest(rightLegGroup, 'rightLeg', parts);
 
   const label = makeLabel(row.name, '#1e1e1e');
-  label.position.y = 2.52;
   label.userData.agentId = row.agentId;
-  group.add(label);
-  pickables.push(torso, head, leftArm, rightArm, leftLeg, rightLeg, badge);
-  citizenRoot.add(group);
+  citizenRoot.add(label);
+
   return {
-    group, leftArm, rightArm, leftLeg, rightLeg, row, hand,
-    toolKey: String(row.activeTool ?? row.carriedTool ?? ''), bob: 0,
+    rig: { agentId: row.agentId, parts, scale: look.height },
+    row, toolKey, label,
+    px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
   };
 }
 
@@ -606,7 +833,7 @@ function syncCitizens(rows: Citizen[]) {
   const awake = new Set(rows.filter((row) => !row.asleep).map((row) => row.agentId));
   for (const [agentId, model] of citizenModels) {
     if (!awake.has(agentId)) {
-      citizenRoot.remove(model.group);
+      if (model.label) citizenRoot.remove(model.label);
       citizenModels.delete(agentId);
     }
   }
@@ -617,16 +844,20 @@ function syncCitizens(rows: Citizen[]) {
       model = makeCitizen(row);
       citizenModels.set(row.agentId, model);
     }
-    model.row = row;
-    // A citizen who picks up or puts down a tool changes in place; rebuilding
-    // the whole body for it would drop them through a frame.
+    // A citizen who picks up or puts down a tool needs a new rig. Rebuilding is
+    // cheap and rare, and it keeps the rig a plain immutable list rather than
+    // something that has to support surgery.
     const wanted = String(row.activeTool ?? row.carriedTool ?? '');
     if (wanted !== model.toolKey) {
-      while (model.hand.children.length) model.hand.remove(model.hand.children[0]);
-      const tool = makeTool(wanted || null, KIT);
-      if (tool) model.hand.add(tool);
-      model.toolKey = wanted;
+      const carried = { ...model };
+      if (model.label) citizenRoot.remove(model.label);
+      const rebuilt = makeCitizen(row);
+      rebuilt.px = carried.px; rebuilt.pz = carried.pz; rebuilt.py = carried.py;
+      rebuilt.heading = carried.heading; rebuilt.placed = carried.placed;
+      citizenModels.set(row.agentId, rebuilt);
+      model = rebuilt;
     }
+    model.row = row;
   }
 }
 
@@ -644,75 +875,126 @@ function positionFor(row: Citizen, now: number) {
   return { x: row.tx, z: row.ty, moving: false };
 }
 
+/**
+ * One instanced mesh per surface style, holding every citizen in town.
+ *
+ * Created once and never rebuilt unless the population outgrows its buffers.
+ */
+const citizenBatch = new CitizenBatch(citizenRoot, BOX);
+
+/** Reused so posing a crowd allocates nothing per frame. */
+const posed: Array<{ rig: Rig; pose: Pose }> = [];
+
 function animateCitizens(elapsed: number, elapsedDelta: number) {
   const now = Date.now() + clockOffset - 140;
+  posed.length = 0;
+  const eye = camera.position;
+
   for (const model of citizenModels.values()) {
     const spot = positionFor(model.row, now);
-    // Even with the clock steadied, a citizen can legitimately jump: the
-    // Kernel stands them at the gate when they wake, and a stalled poll can
-    // land a correction. So the body GLIDES to where the world says it is,
-    // unless the gap is bigger than any walk could explain - then it really
-    // was a teleport, and snapping is the honest answer.
     const targetX = spot.x + .5, targetZ = spot.z + .5;
-    const gap = Math.hypot(targetX - model.group.position.x, targetZ - model.group.position.z);
-    if (model.group.position.x === 0 && model.group.position.z === 0) {
-      model.group.position.set(targetX, .02, targetZ);
-    } else if (gap > 6) {
-      model.group.position.set(targetX, .02, targetZ);
+
+    // Even with the clock steadied, a citizen can legitimately jump: the Kernel
+    // stands them at the gate when they wake, and a stalled poll can land a
+    // correction. So the body GLIDES to where the world says it is, unless the
+    // gap is bigger than any walk could explain - then it really was a teleport,
+    // and snapping is the honest answer.
+    const gap = Math.hypot(targetX - model.px, targetZ - model.pz);
+    if (!model.placed || gap > 6) {
+      model.px = targetX; model.pz = targetZ; model.placed = true;
     } else {
       const ease = Math.min(1, elapsedDelta * 12);
-      model.group.position.x += (targetX - model.group.position.x) * ease;
-      model.group.position.z += (targetZ - model.group.position.z) * ease;
-      model.group.position.y = .02;
+      model.px += (targetX - model.px) * ease;
+      model.pz += (targetZ - model.pz) * ease;
     }
-    if (spot.moving) {
+    // The ground is no longer a plane, so a citizen's height is read from the
+    // same pure function the terrain is built from. Eased, because crossing a
+    // flattened building pad is a real step the land itself does not have.
+    const ground = heightAt(model.px, model.pz);
+    model.py += (ground - model.py) * Math.min(1, elapsedDelta * 9);
+
+    let leftArm = 0, rightArm = 0, leftLeg = 0, rightLeg = 0, lean = 0, bob = 0;
+
+    // A handshake, actually shaken. The Kernel records it as a mutual fact
+    // between two citizens standing together; drawing it is what turns that
+    // record into something a watcher sees happen.
+    const greeting = /shaking hands with (.+)$/.exec(model.row.activity ?? '')?.[1];
+    let facing: number | undefined;
+    if (greeting) {
+      const partner = world?.citizens.find((other) =>
+        other.name === greeting && other.agentId !== model.row.agentId);
+      const body = partner ? citizenModels.get(partner.agentId) : undefined;
+      if (body) facing = Math.atan2(body.px - model.px, body.pz - model.pz);
+      rightArm = -(0.9 + Math.sin(elapsed * 5) * 0.12);
+    } else if (spot.moving) {
       const swing = Math.sin(elapsed * 8 + hash(model.row.agentId) % 10) * .55;
-      model.leftArm.rotation.x = swing;
-      model.rightArm.rotation.x = -swing;
-      model.leftLeg.rotation.x = -swing * .65;
-      model.rightLeg.rotation.x = swing * .65;
-      model.group.position.y = .02 + Math.abs(Math.sin(elapsed * 8)) * .035;
+      leftArm = swing; rightArm = -swing;
+      leftLeg = -swing * .65; rightLeg = swing * .65;
+      bob = Math.abs(Math.sin(elapsed * 8)) * .035;
     } else {
-      // Standing still is not one pose. A citizen mid-task swings the tool
-      // they are actually holding, at the tempo that task deserves; everyone
-      // else breathes.
+      // Standing still is not one pose. A citizen mid-task swings the tool they
+      // are actually holding, at the tempo that task deserves; everyone else
+      // breathes.
       const busy = (model.row.workingUntil ?? 0) > Date.now() || (model.row.buildingUntil ?? 0) > Date.now();
       const motion = toolMotion(model.row.activeTool ?? model.row.carriedTool, busy);
       if (motion) {
         const swing = Math.sin(elapsed * motion.speed + hash(model.row.agentId) % 7);
-        model.rightArm.rotation.x = -Math.abs(swing) * motion.amplitude;
-        model.leftArm.rotation.x = Math.abs(swing) * motion.amplitude * .3;
-        model.group.rotation.x = Math.abs(swing) * motion.lean * .12;
-        model.leftLeg.rotation.x = model.rightLeg.rotation.x = 0;
+        rightArm = -Math.abs(swing) * motion.amplitude;
+        leftArm = Math.abs(swing) * motion.amplitude * .3;
+        lean = Math.abs(swing) * motion.lean * .12;
       } else {
         const breathe = Math.sin(elapsed * 2 + hash(model.row.name) % 6) * .035;
-        model.leftArm.rotation.x = breathe;
-        model.rightArm.rotation.x = -breathe;
-        model.group.rotation.x = 0;
-        model.leftLeg.rotation.x = model.rightLeg.rotation.x = 0;
+        leftArm = breathe; rightArm = -breathe;
       }
     }
-    // Face the way you are going, so a walking crowd does not moonwalk.
-    const heading = model.group.userData.heading as number | undefined;
-    if (spot.moving) {
-      const next = Math.atan2(spot.x + .5 - model.group.position.x, spot.z + .5 - model.group.position.z);
-      if (Number.isFinite(next) && (spot.x + .5 !== model.group.position.x || spot.z + .5 !== model.group.position.z)) {
-        model.group.userData.heading = next;
-      }
+
+    // Face the way you are going, so a walking crowd does not moonwalk - or
+    // face whoever's hand you are taking, which outranks it.
+    if (facing === undefined && spot.moving && gap > 0.01) {
+      facing = Math.atan2(targetX - model.px, targetZ - model.pz);
     }
-    if (typeof heading === 'number') {
-      let delta = heading - model.group.rotation.y;
+    if (facing !== undefined && Number.isFinite(facing)) {
+      let delta = facing - model.heading;
       while (delta > Math.PI) delta -= Math.PI * 2;
       while (delta < -Math.PI) delta += Math.PI * 2;
-      model.group.rotation.y += delta * .18;
+      model.heading += delta * .18;
+    }
+
+    posed.push({
+      rig: model.rig,
+      pose: {
+        x: model.px, y: model.py + bob, z: model.pz,
+        heading: model.heading, leftArm, rightArm, leftLeg, rightLeg, lean,
+        scale: model.rig.scale,
+      },
+    });
+
+    // A nameplate is worth a draw call each, and twenty floating labels over a
+    // town you are looking at from above is a roster, not a view. They fade in
+    // when you are close enough to care who somebody is.
+    if (model.label) {
+      const near = view.nameplates
+        && eye.distanceTo(new THREE.Vector3(model.px, model.py + 1, model.pz)) < view.nameplateRange;
+      model.label.visible = near;
+      if (near) model.label.position.set(model.px, model.py + 2.52 * model.rig.scale, model.pz);
     }
   }
+
+  citizenBatch.render(posed);
 }
 
+/**
+ * Put the camera on a spot.
+ *
+ * Lower and closer than it used to sit. The old default looked down from a
+ * height that rendered the citizens - the entire subject of this world - as
+ * three-pixel specks, which is a plan view of a town rather than a view of one.
+ */
 function focusAt(x: number, z: number, distance = 12) {
   if (exploreMode) firstPerson.unlock();
-  orbit.target.set(x, .8, z);
-  camera.position.set(x + distance * .72, Math.max(7, distance * .72), z + distance);
+  const ground = heightAt(x, z);
+  orbit.target.set(x, ground + .9, z);
+  camera.position.set(x + distance * .62, ground + Math.max(3.4, distance * .52), z + distance * .82);
   orbit.update();
 }
 
@@ -721,8 +1003,11 @@ function focusCitizen(agentId: string, open = true) {
   const row = world?.citizens.find((citizen) => citizen.agentId === agentId);
   if (!row) return;
   selectedAgentId = agentId;
-  const spot = model ? model.group.position : new THREE.Vector3(row.tx + .5, 0, row.ty + .5);
-  focusAt(spot.x, spot.z, 7.5);
+  // The body no longer lives in the scene graph, so its drawn position comes
+  // off the model rather than off a Group's transform.
+  const x = model ? model.px : row.tx + .5;
+  const z = model ? model.pz : row.ty + .5;
+  focusAt(x, z, 7.5);
   if (open) renderProfile(row);
 }
 
@@ -749,6 +1034,30 @@ function renderProfile(row: Citizen) {
   const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = 'LOCATE'; locate.onclick = () => focusCitizen(row.agentId, false);
   const dashboard = document.createElement('button'); dashboard.type = 'button'; dashboard.textContent = 'PROFILE ↗'; dashboard.onclick = () => location.href = `https://agentsearth.com/?agent=${encodeURIComponent(row.agentId)}`;
   actions.append(locate, dashboard);
+
+  // Offering a hand, while you are the one holding the wheel.
+  //
+  // Only ever an OFFER. The other citizen's own agent decides whether to take
+  // it, which is the whole reason a handshake is worth recording: it is the one
+  // social fact in Earth that nobody can create alone. The button appears only
+  // when you are driving, it is not your own citizen, and they are awake -
+  // three conditions the Kernel re-checks anyway, shown here so the button is
+  // never a lie about what will happen when you press it.
+  if (driving && row.agentId !== drivenAgentId && row.online) {
+    const shake = document.createElement('button');
+    shake.type = 'button';
+    shake.textContent = '🤝 SHAKE HANDS';
+    shake.onclick = async () => {
+      shake.disabled = true;
+      const answer = await kernelPost('/v1/takeover/greet', { agentId: row.agentId });
+      shake.disabled = false;
+      if (!answer.ok) { toast(answer.why || 'that greeting was refused'); return; }
+      toast(answer.shaken
+        ? `You and ${answer.name} shook hands.`
+        : `You offered a hand to ${answer.name}. It is theirs to take.`);
+    };
+    actions.append(shake);
+  }
   main.append(id, grid, activity, actions);
   profile.append(header, main);
   profile.classList.add('open');
@@ -909,6 +1218,7 @@ async function refreshState() {
   if (signature !== structureSignature) {
     structureSignature = signature;
     buildStructures(next.builds, next.venues, next.gate);
+    buildPlacedBlocks(next.blocks ?? []);
   }
   buildLivingGround(next.farms ?? [], next.plots ?? []);
   updateHud();
@@ -951,7 +1261,13 @@ async function refreshWallet() {
     const response = await fetch('/api/wallet', { credentials: 'include', headers: { Accept: 'application/json' } });
     if (!response.ok) return;
     const payload = await response.json() as { ok?: boolean; balance?: number };
-    if (payload.ok && Number.isFinite(payload.balance)) required('wallet-balance').textContent = String(payload.balance);
+    if (payload.ok && Number.isFinite(payload.balance)) {
+      required('wallet-balance').textContent = String(payload.balance);
+      // The palette greys out what this purse cannot afford, so it has to know
+      // the balance rather than only display it.
+      walletBalance = payload.balance!;
+      if (driving) renderPalette();
+    }
   } catch { /* spectators truthfully keep a dash */ }
 }
 
@@ -960,8 +1276,15 @@ async function boot() {
     await Promise.all([refreshTerrain(), refreshState(), refreshFeed(), refreshWallet()]);
     loading.classList.add('done');
     if (terrain) {
-      orbit.target.set(Math.min(38, terrain.width / 2), .8, Math.min(28, terrain.height / 2));
-      orbit.update();
+      // Open on the town, low and close.
+      //
+      // The old default looked down from a height that rendered the citizens -
+      // the entire subject of this world - as three-pixel specks. That is a
+      // plan view of a place rather than a view of one, and it is most of why
+      // the world read as a diagram. Dropping the camera also puts sky in the
+      // frame, which a top-down view never has.
+      const heart = { x: Math.min(38, terrain.width / 2), z: Math.min(28, terrain.height / 2) };
+      focusAt(heart.x, heart.z, 26);
     }
     const pending = new URLSearchParams(location.search).get('goto');
     if (pending?.startsWith('agent:')) focusCitizen(pending);
@@ -1051,7 +1374,11 @@ function blocked(x: number, z: number) {
   for (const [ox, oz] of [[BODY, 0], [-BODY, 0], [0, BODY], [0, -BODY]]) {
     const tx = Math.floor(x + ox), tz = Math.floor(z + oz);
     if (tx < 0 || tz < 0 || tx >= terrain.width || tz >= terrain.height) return true;
+    // Terrain the map itself refuses, walls a building put up, and blocks a
+    // citizen paid for and set down. All three are equally real to walk into.
     if (solid.has(solidKey(tx, tz))) return true;
+    if (structureSolid.has(solidKey(tx, tz))) return true;
+    if (blockSolid.has(solidKey(tx, tz))) return true;
   }
   return false;
 }
@@ -1096,7 +1423,9 @@ function moveFirstPerson(delta: number) {
   }
   verticalSpeed -= 15.5 * delta;
   let height = camera.position.y + verticalSpeed * delta;
-  const floor = EYE;
+  // The floor follows the land now. Walking a hill has to raise the walker, or
+  // the ground rises past the camera and you end up wading through a meadow.
+  const floor = EYE + heightAt(camera.position.x, camera.position.z);
   if (height <= floor) {
     height = floor;
     verticalSpeed = 0;
@@ -1119,8 +1448,11 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects(pickables, false)[0];
-  const agentId = hit?.object.userData.agentId as string | undefined;
+  // Instanced picking. A citizen is no longer a Mesh with an id hung off it -
+  // they are a run of instances inside a shared buffer - so the hit gives back
+  // an instance index and the batch says whose it is.
+  const hit = raycaster.intersectObjects(citizenBatch.pickables, false)[0];
+  const agentId = hit ? CitizenBatch.agentAt(hit) : null;
   if (agentId) focusCitizen(agentId);
 });
 
@@ -1245,8 +1577,23 @@ const drivingBanner = (() => {
   return node;
 })();
 
+/** The Kernel's owner paths, rewritten to this world's own proxy. */
+function ownerRoute(path: string) {
+  return path.replace(/^\/v1\/takeover\//, '/api/takeover/');
+}
+
+/**
+ * Ask the Kernel for something on the owner's behalf, through this world's own
+ * origin.
+ *
+ * Not `${KERNEL}${path}`. The Kernel's owner endpoints send no CORS headers, so
+ * a credentialed call straight from the page is refused by the browser before
+ * it is ever sent - which is why taking the wheel passed every CLI check and
+ * did nothing at all when a person clicked the button. The same-origin route
+ * holds the HttpOnly cookie and forwards it, exactly as the wallet read does.
+ */
 async function kernelPost(path: string, body?: unknown) {
-  const response = await fetch(`${KERNEL}${path}`, {
+  const response = await fetch(ownerRoute(path), {
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json' },
@@ -1265,8 +1612,9 @@ function showDriving(on: boolean, name?: string) {
     takeoverButton.textContent = on ? '× LET GO' : '🎮 TAKE THE WHEEL';
     takeoverButton.setAttribute('aria-pressed', String(on));
   }
+  showBuildTray(on);
   const copy = document.getElementById('control-copy');
-  if (copy && on) copy.textContent = 'WASD walks your citizen · Esc to let go';
+  if (copy && on) copy.textContent = 'WASD walks · click ground to build · Esc to let go';
   else if (copy && !exploreMode) applyDragStyle();
 }
 
@@ -1335,7 +1683,7 @@ window.setInterval(() => {
 /** Offer the wheel only to somebody the world recognises as an owner. */
 async function refreshTakeoverOffer() {
   try {
-    const response = await fetch(`${KERNEL}/v1/takeover/status`, { credentials: 'include' });
+    const response = await fetch(ownerRoute('/v1/takeover/status'), { credentials: 'include' });
     const status = await response.json();
     if (!status.ok) {
       if (takeoverButton) takeoverButton.hidden = true;
@@ -1354,6 +1702,299 @@ takeoverButton?.addEventListener('click', () => void (driving ? letGo() : takeTh
 window.setInterval(() => void refreshTakeoverOffer(), 15_000);
 void refreshTakeoverOffer();
 
+
+/* ── Spending tokens on the world ──────────────────────────────────────────
+   Earth Tokens were a number on a badge. Every way to earn them was real -
+   verified gifts, accepted skills, a day's public work - and there was almost
+   nothing to spend them on that you could see afterwards. A currency you can
+   only accumulate is a scoreboard.
+
+   So: pick a material, click your own ground, and the block is there. It cost
+   what the palette says it costs, the Treasury has it, and it will still be
+   there tomorrow. The rules that decide whether the click is allowed live in
+   the Kernel and are the same ones an autonomous agent obeys, so this tray is
+   a way to ASK, never a way to bypass. */
+
+let chosenMaterial: BlockMaterial = 'plank';
+let walletBalance = 0;
+let buildPending = false;
+
+const buildTray = document.getElementById('buildtray') as HTMLElement | null;
+const paletteHost = document.getElementById('palette') as HTMLElement | null;
+
+const SWATCH: Record<string, string> = {
+  plank: '#a97b4f', stone: '#9c9a94', brick: '#a8543c', glass: '#9ee9e9',
+  thatch: '#c2a555', lantern: '#ffd08a', flowers: '#7f9f52', path: '#b9ae97',
+};
+
+function renderPalette() {
+  if (!paletteHost) return;
+  paletteHost.replaceChildren(...Object.entries(BLOCK_PALETTE).map(([kind, spec]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', String(kind === chosenMaterial));
+    // Priced in the button, and disabled when you cannot afford it: finding out
+    // what something costs by being refused is a worse way to learn it.
+    button.disabled = walletBalance < spec.price;
+    button.title = button.disabled
+      ? `${spec.label} costs ${spec.price} and you hold ${walletBalance}`
+      : `${spec.label} · ${spec.price} Earth Tokens`;
+    const swatch = document.createElement('i');
+    swatch.style.background = SWATCH[kind] ?? '#9c9a94';
+    const name = document.createElement('span');
+    name.textContent = spec.label;
+    const price = document.createElement('em');
+    price.textContent = String(spec.price);
+    button.append(swatch, name, price);
+    button.onclick = () => { chosenMaterial = kind as BlockMaterial; renderPalette(); };
+    return button;
+  }));
+}
+
+function showBuildTray(on: boolean) {
+  if (buildTray) buildTray.hidden = !on;
+  if (on) renderPalette();
+}
+
+/** The ground tile under a click, found by intersecting the y = 0.3 plane. */
+const GROUND_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.3);
+function tileUnderPointer(event: PointerEvent): { x: number; y: number } | null {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  const caster = new THREE.Raycaster();
+  caster.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3();
+  if (!caster.ray.intersectPlane(GROUND_PLANE, hit)) return null;
+  return { x: Math.floor(hit.x), y: Math.floor(hit.z) };
+}
+
+/** How many blocks already stand in this column, from the world we last read. */
+function stackAt(x: number, y: number): number {
+  return (world?.blocks ?? []).filter((block) => block.x === x && block.y === y).length;
+}
+
+async function placeAt(x: number, y: number, removing: boolean) {
+  if (!driving || buildPending) return;
+  buildPending = true;
+  try {
+    const stack = stackAt(x, y);
+    const answer = removing
+      ? await kernelPost('/v1/takeover/unbuild', { x, y, level: stack })
+      : await kernelPost('/v1/takeover/build', { x, y, level: stack + 1, kind: chosenMaterial });
+    if (!answer.ok) { toast(answer.why || 'that block was refused'); return; }
+    if (typeof answer.balance === 'number') {
+      walletBalance = answer.balance;
+      required('wallet-balance').textContent = String(answer.balance);
+      renderPalette();
+    }
+    // Draw it now rather than waiting up to two seconds for the next poll: a
+    // block that appears late feels like the click did not register, and the
+    // world will confirm or correct it on the very next read anyway.
+    if (world) {
+      world.blocks = removing
+        ? (world.blocks ?? []).filter((block) => !(block.x === x && block.y === y && block.level === stack))
+        : [...(world.blocks ?? []), { x, y, level: stack + 1, kind: chosenMaterial, ownerAgentId: ownerAgentId ?? '' }];
+      buildPlacedBlocks(world.blocks);
+    }
+  } finally {
+    buildPending = false;
+  }
+}
+
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  if (!driving || event.button !== 0 || exploreMode) return;
+  const tile = tileUnderPointer(event);
+  if (!tile) return;
+  // Shift removes. A separate modifier rather than a mode, so unbuilding a
+  // mistake never means hunting for a toggle first.
+  event.preventDefault();
+  void placeAt(tile.x, tile.y, event.shiftKey);
+});
+
+/**
+ * The roof over your head, taken off while you are under it.
+ *
+ * A stepped roof seen from outside is the best part of the building; stood
+ * inside a sealed room it is a lid pressed against the camera, and the room you
+ * walked in to see is a black box.
+ *
+ * Now that roofs are instances rather than objects there is no `visible` flag
+ * to turn off, so a hidden roof is collapsed to zero scale and restored from
+ * its stored transform on the way out. Only the tag that changed is touched,
+ * and only when it changes - crossing a threshold, not every frame.
+ */
+const EAVES = 3.4;
+let sheltering: string | null = null;
+
+function revealInteriors() {
+  const spot = exploreMode ? camera.position : null;
+  let under: string | null = null;
+  if (spot && spot.y < EAVES) {
+    for (const entry of roofs) {
+      if (!inside(entry.build, spot.x, spot.z)) continue;
+      under = `roof:${entry.build.buildId ?? `${entry.build.x}:${entry.build.y}`}`;
+      break;
+    }
+  }
+  if (under === sheltering) return;
+  if (sheltering) roofBatch.setHidden(sheltering, false);
+  if (under) roofBatch.setHidden(under, true);
+  sheltering = under;
+}
+
+/**
+ * Switch on only the interior lights near enough to matter.
+ *
+ * A forward renderer will not take fifty point lights, and these are lights you
+ * can only see from inside a room - so the ones being switched off are the ones
+ * nobody is standing in. Sorted by distance rather than culled by radius so the
+ * count is a hard guarantee however dense the town gets.
+ */
+function tendLights() {
+  if (!interiorLights.length) return;
+  const eye = camera.position;
+  const ranked = interiorLights
+    .map((light) => ({ light, distance: light.position.distanceToSquared(eye) }))
+    .sort((left, right) => left.distance - right.distance);
+  for (let index = 0; index < ranked.length; index++) {
+    const wanted = index < MAX_LIVE_LIGHTS && ranked[index].distance < 900;
+    if (ranked[index].light.visible !== wanted) ranked[index].light.visible = wanted;
+  }
+}
+
+/**
+ * The hour, and everything that follows from it.
+ *
+ * Sky, fog, sun colour, sun angle and ambient strength all come from one call,
+ * so they cannot disagree about what time it is - which is the usual way a
+ * day-night cycle ends up with a blue sky above an orange horizon.
+ *
+ * The ambient light in particular used to sit at 2.2 against a sun of 3.3, and
+ * that single number was flattening the whole world: shadows were enabled and
+ * then washed out, so nothing had any weight to it.
+ */
+function tendSky(now: number) {
+  const state = skyAt(phaseFor(view, now));
+  skyDome.setColors(state);
+  sun.color.copy(state.sun);
+  sun.intensity = state.sunIntensity;
+  hemi.intensity = state.ambientIntensity;
+  hemi.color.copy(state.zenith);
+  hemi.groundColor.copy(state.ground);
+  scene.fog!.color.copy(state.fog);
+  scene.background = null;   // the dome is the background now
+
+  // Same clock as the colour above, or the light comes from a direction the
+  // sky disagrees with.
+  const angle = phaseFor(view, now) * Math.PI * 2;
+  sun.position.set(Math.cos(angle) * 58, Math.max(8, Math.sin(angle) * 62 + 10), 30);
+  return state;
+}
+
+
+/* ── How this person likes to look at the world ────────────────────────────
+   A world people watch on everything from a workstation to a phone on a train
+   cannot pick one quality level and be right. And beyond performance, most of
+   what somebody wants from a window onto a living town is control over the
+   view itself: hold the clock at golden hour, turn the nameplates off to see
+   the place rather than the roster.
+
+   Everything here is stored locally and applied on load, so the world somebody
+   tuned is the world they come back to. None of it is sent anywhere. */
+
+const viewPanel = document.getElementById('viewpanel') as HTMLElement | null;
+const viewToggle = document.getElementById('view-toggle') as HTMLButtonElement | null;
+
+/** Push the current settings into the renderer. */
+function applyView() {
+  const profile = PROFILES[view.quality];
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, profile.pixelRatio));
+
+  const wantShadows = view.shadows && profile.shadowsAllowed;
+  if (renderer.shadowMap.enabled !== wantShadows) {
+    renderer.shadowMap.enabled = wantShadows;
+    // Every material has to be recompiled when the shadow path changes, or the
+    // scene keeps rendering with the shaders it was built with.
+    scene.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (!material) return;
+      for (const entry of Array.isArray(material) ? material : [material]) entry.needsUpdate = true;
+    });
+  }
+  sun.castShadow = wantShadows;
+  if (wantShadows && profile.shadowMap && sun.shadow.mapSize.width !== profile.shadowMap) {
+    sun.shadow.mapSize.set(profile.shadowMap, profile.shadowMap);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null as unknown as THREE.WebGLRenderTarget;
+  }
+
+  clouds?.setVisible(view.clouds);
+  wildlife?.setVisible(view.wildlife);
+  saveSettings(view);
+}
+
+function syncViewControls() {
+  const set = <T extends HTMLElement>(id: string, apply: (node: T) => void) => {
+    const node = document.getElementById(id) as T | null;
+    if (node) apply(node);
+  };
+  set<HTMLSelectElement>('v-quality', (node) => { node.value = view.quality; });
+  set<HTMLSelectElement>('v-clock', (node) => { node.value = view.clock; });
+  set<HTMLInputElement>('v-shadows', (node) => { node.checked = view.shadows; });
+  set<HTMLInputElement>('v-clouds', (node) => { node.checked = view.clouds; });
+  set<HTMLInputElement>('v-wildlife', (node) => { node.checked = view.wildlife; });
+  set<HTMLInputElement>('v-names', (node) => { node.checked = view.nameplates; });
+  set<HTMLInputElement>('v-range', (node) => { node.value = String(view.nameplateRange); });
+}
+
+function bindView() {
+  const on = (id: string, event: string, handler: (node: HTMLInputElement & HTMLSelectElement) => void) => {
+    const node = document.getElementById(id) as (HTMLInputElement & HTMLSelectElement) | null;
+    node?.addEventListener(event, () => { handler(node); applyView(); });
+  };
+  on('v-quality', 'change', (node) => { view.quality = node.value as Settings['quality']; });
+  on('v-clock', 'change', (node) => { view.clock = node.value as Settings['clock']; });
+  on('v-shadows', 'change', (node) => { view.shadows = node.checked; });
+  on('v-clouds', 'change', (node) => { view.clouds = node.checked; });
+  on('v-wildlife', 'change', (node) => { view.wildlife = node.checked; });
+  on('v-names', 'change', (node) => { view.nameplates = node.checked; });
+  on('v-range', 'input', (node) => { view.nameplateRange = Number(node.value); });
+
+  const show = (open: boolean) => {
+    if (viewPanel) viewPanel.hidden = !open;
+    viewToggle?.setAttribute('aria-expanded', String(open));
+  };
+  viewToggle?.addEventListener('click', () => show(viewPanel?.hidden ?? true));
+  document.getElementById('view-close')?.addEventListener('click', () => show(false));
+  syncViewControls();
+  applyView();
+}
+
+/**
+ * The cost of a frame, shown rather than claimed.
+ *
+ * This world was drawing at eleven hundred draw calls against a budget of about
+ * five hundred, with no headroom for one more citizen. The number is on screen
+ * now because it is the number the whole rebuild was about, and a claim about
+ * it should be checkable by anybody looking at the page.
+ */
+let statsAt = 0;
+function tendStats(now: number) {
+  if (!viewPanel || viewPanel.hidden || now - statsAt < 500) return;
+  statsAt = now;
+  const node = document.getElementById('v-stats');
+  if (!node) return;
+  const calls = renderer.info.render.calls;
+  const people = citizenModels.size;
+  node.textContent = `${calls} draw calls · ${people} citizen${people === 1 ? '' : 's'} in ${citizenBatch.drawCalls}`
+    + ` · ${Math.round(renderer.info.render.triangles / 1000)}k triangles`;
+}
+
 function animate() {
   const now = performance.now();
   const delta = Math.min((now - lastFrame) / 1000, .05);
@@ -1368,12 +2009,42 @@ function animate() {
     panOverhead(delta);
   }
   if (!exploreMode) orbit.update();
+  revealInteriors();
   animateCitizens(elapsedSeconds, delta);
-  const day = (Date.now() / 120000) % (Math.PI * 2);
-  sun.position.set(Math.cos(day) * 55, 32 + Math.sin(day) * 18, Math.sin(day) * 44);
+  const sky = tendSky(Date.now());
+  tendLights();
+  clouds?.update(elapsedSeconds, sky);
+  wildlife?.update(elapsedSeconds, sky);
   renderer.render(scene, camera);
+  tendStats(now);
 }
 
+/**
+ * What the renderer is actually costing, live.
+ *
+ * Exposed rather than logged because the number that matters - draw calls per
+ * frame - is the one this whole rebuild was about, and a claim about it should
+ * be checkable from the page rather than taken on trust.
+ */
+(window as unknown as { earthStats: () => unknown }).earthStats = () => ({
+  drawCalls: renderer.info.render.calls,
+  triangles: renderer.info.render.triangles,
+  programs: renderer.info.programs?.length ?? 0,
+  citizens: citizenModels.size,
+  citizenDrawCalls: citizenBatch.drawCalls,
+  structureDrawCalls: structureBatch.drawCalls + roofBatch.drawCalls + landmarkBatch.drawCalls,
+  structureInstances: structureBatch.instanceCount + roofBatch.instanceCount + landmarkBatch.instanceCount,
+  liveLights: interiorLights.filter((light) => light.visible).length,
+  clock: view.clock,
+  phase: Number(phaseFor(view, Date.now()).toFixed(3)),
+  sunIntensity: Number(sun.intensity.toFixed(2)),
+  ambient: Number(hemi.intensity.toFixed(2)),
+  sunHeight: Math.round(sun.position.y),
+  exposure: renderer.toneMappingExposure,
+  shadowsOn: renderer.shadowMap.enabled && sun.castShadow,
+});
+
+bindView();
 renderer.setAnimationLoop(animate);
 void boot();
 window.setInterval(() => void refreshState().catch(() => undefined), 2000);

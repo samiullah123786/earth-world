@@ -105,6 +105,10 @@ export const worldObjects = query({
       .map(({ summary: _summary, resolution: _resolution, ...ticket }) => ticket);
     const activityZones = await ctx.db.query('activityZones').collect();
     const chunks = await ctx.db.query('worldChunks').collect();
+    // Blocks citizens set down with their own hands. Small rows and few of
+    // them compared to terrain, and they change constantly, so they travel
+    // live with everything else rather than being cached like the map.
+    const placedBlocks = await ctx.db.query('placedBlocks').collect();
     const now = Date.now();
     // Growth is time, not a stored counter, so every viewer computes the same
     // stage from the same planting without a tick writing rows.
@@ -119,7 +123,7 @@ export const worldObjects = query({
           stage: now >= field.readyAt ? 4 : Math.min(3, 1 + Math.floor(progress * 3)),
         };
       });
-    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, chunks, state: state ? {
+    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, chunks, placedBlocks, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
       mapFormat: state.mapFormat ?? 'tiled-v1', mapVersion: state.mapVersion ?? 1,

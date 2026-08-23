@@ -138,7 +138,13 @@ export const relayHomesteads = internalMutation({
         .withIndex('plotId', (q) => q.eq('plotId', plot.plotId)).collect())
         .filter((build) => build.state !== 'razed' && typeof build.x === 'number')
         .sort((left, right) => left.createdAt - right.createdAt);
-      if (builds.length < 2) continue;
+      // Every plot, not only the crowded ones. This guard was right when the
+      // job was untangling overlaps - one structure cannot overlap anything -
+      // but homeRect also SHRINKS a home to leave a yard, and a plot holding
+      // nothing but a house is exactly the plot whose occupant has no garden.
+      // Skipping those left almost every citizen in the town with a house
+      // covering their whole parcel and nowhere to stand outside it.
+      if (!builds.length) continue;
       inspected += builds.length;
 
       const placed: Array<{ x: number; y: number; w: number; h: number }> = [];

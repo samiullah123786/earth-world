@@ -3,6 +3,8 @@ import { walkableInWorld, type WorldBounds } from './pathfinding';
 import { WORLD_CHUNK_SIZE } from '../shared/wfc';
 import { normalizeTiledChunk } from '../shared/tiled-world';
 import { EARTHFORGE_ASSETS, earthForgeAssetFor, earthForgeSiteContract } from '../shared/earthforge';
+import { encodeChunkRows } from '../shared/voxel';
+import { EARTH_MAP } from './earthMapData';
 
 /**
  * Terrain chunks, cached per isolate and keyed by the world's own size.
@@ -15,6 +17,48 @@ import { EARTHFORGE_ASSETS, earthForgeAssetFor, earthForgeSiteContract } from '.
  * because a house may rise at any moment.
  */
 let cachedChunks: { key: string; rows: any[] } | null = null;
+
+
+/**
+ * The terrain letter at any tile, reading the same cached chunks walkability
+ * reads.
+ *
+ * Walkability answers "may a person stand here", which folds terrain and
+ * buildings into one boolean and cannot tell water apart from a wall. Placing
+ * a block needs to know WHICH, so it can refuse for the honest reason. Sharing
+ * the cache rather than opening a second one matters: loading every chunk on
+ * every tick is the exact read that once froze the town.
+ */
+export async function loadTerrainLetters(ctx: any, bounds: WorldBounds) {
+  const chunkKey = `${bounds.width}x${bounds.height}`;
+  const chunks: any[] = cachedChunks?.key === chunkKey
+    ? cachedChunks.rows
+    : await ctx.db.query('worldChunks').collect().then((rows: any[]) => {
+        cachedChunks = { key: chunkKey, rows };
+        return rows;
+      });
+  // Live expansion chunks win over the bundled base map, the same precedence
+  // every renderer applies.
+  const overlay = new Map<number, string>();
+  for (const chunk of chunks) {
+    const layers = chunk.tiled?.layers;
+    if (!layers) continue;
+    const rows = encodeChunkRows(layers, chunk.size);
+    for (let dz = 0; dz < chunk.size; dz++) {
+      for (let dx = 0; dx < chunk.size; dx++) {
+        overlay.set((chunk.chunkY * chunk.size + dz) * 100_000 + (chunk.chunkX * chunk.size + dx), rows[dz][dx]);
+      }
+    }
+  }
+  return (x: number, y: number): string => {
+    const tx = Math.floor(x), ty = Math.floor(y);
+    if (tx < 0 || ty < 0 || tx >= bounds.width || ty >= bounds.height) return '.';
+    const live = overlay.get(ty * 100_000 + tx);
+    if (live) return live;
+    if (ty < EARTH_MAP.height && tx < EARTH_MAP.width) return EARTH_MAP.rows[ty][tx] ?? '.';
+    return '.';
+  };
+}
 
 export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
   const chunkKey = `${bounds.width}x${bounds.height}`;
@@ -42,6 +86,12 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
     const kind = build.buildId === 'build:earth-bank' ? 'bank' : String(build.blueprint?.kind ?? build.structure);
     const resolved = explicitAsset ? { asset: explicitAsset } : earthForgeAssetFor(kind, build.buildId);
     const plot: any = plotsById.get(build.plotId);
+    // A home's site contract is given the whole PARCEL, and lays out the house
+    // and its yard inside that: for a three-by-three plot it returns collision
+    // on the two north rows and puts the entry on the third. So this already
+    // agrees with homeRect - passing homeRect in instead would describe the
+    // house as one row shorter than it is drawn, and put a walk-through facade
+    // across the back wall of every home in the town.
     const siteWidth = resolved?.asset.kind === 'home' && plot ? plot.w : Number(build.w ?? resolved?.asset.footprint[0] ?? 1);
     const siteHeight = resolved?.asset.kind === 'home' && plot ? plot.h : Number(build.h ?? resolved?.asset.footprint[1] ?? 1);
     const collision = resolved

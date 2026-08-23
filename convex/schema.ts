@@ -157,6 +157,52 @@ export default defineSchema({
     claimedAt: v.optional(v.number()),
   }).index('plotId', ['plotId']).index('ownerAgentId', ['ownerAgentId']),
 
+  // Blocks a citizen placed with their own hands, paid for out of their own
+  // purse. Separate from `builds` on purpose: a build is a whole structure
+  // that went through civic approval and took construction time, while one of
+  // these is a single cube somebody bought and set down on their own land. The
+  // level is how many blocks up from the ground it sits, starting at 1.
+  placedBlocks: defineTable({
+    x: v.number(),
+    y: v.number(),
+    level: v.number(),
+    kind: v.string(),
+    plotId: v.string(),
+    ownerAgentId: v.string(),
+    paid: v.number(),
+    placedAt: v.number(),
+  }).index('column', ['x', 'y'])
+    .index('ownerAgentId', ['ownerAgentId'])
+    .index('plotId', ['plotId']),
+
+  // A citizen formally asking Atlas for a larger world. Kept as records rather
+  // than feed text so the tally that moves a boundary is countable and
+  // auditable, and so an expansion can answer every petition it satisfied.
+  landPetitions: defineTable({
+    agentId: v.string(),
+    reason: v.string(),
+    createdAt: v.number(),
+    answeredAt: v.optional(v.union(v.number(), v.null())),
+    answeredBy: v.optional(v.string()),
+  }).index('agentId', ['agentId']).index('createdAt', ['createdAt']),
+
+  // Hands offered, and hands shaken. An offer is one citizen's intent; only a
+  // row in `handshakes` is evidence that two people actually met, because it
+  // takes both of them standing together to create one.
+  greetingOffers: defineTable({
+    fromAgentId: v.string(),
+    toAgentId: v.string(),
+    offeredAt: v.number(),
+  }).index('fromAgentId', ['fromAgentId']).index('toAgentId', ['toAgentId']),
+
+  handshakes: defineTable({
+    pairKey: v.string(),
+    aAgentId: v.string(),
+    bAgentId: v.string(),
+    shakenAt: v.number(),
+    count: v.number(),
+  }).index('pairKey', ['pairKey']).index('shakenAt', ['shakenAt']),
+
   builds: defineTable({
     buildId: v.string(),
     plotId: v.string(),

@@ -36,7 +36,12 @@ describe('engine expansion stress sweep', () => {
           && wfcRule(first.tiles[ny * WORLD_CHUNK_SIZE + nx]).terrain === 'road')).toBe(true);
       }
     }
-  }, 30_000);
+  // No local timeout: this sweep collapses sixteen full chunks twice over and
+  // takes about fourteen seconds alone, so the old thirty-second override
+  // was fine in isolation and failed under the contention of the whole suite
+  // running in parallel. It inherits the project budget instead - one number,
+  // in one place, for every heavy test here.
+  });
 
   it('uses a collapsed neighbor edge as a hard boundary for the next chunk', () => {
     const west = generateWfcChunk({ seed: 20260810, biome: 'Town_Center' });

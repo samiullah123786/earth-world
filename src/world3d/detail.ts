@@ -21,6 +21,7 @@
  */
 
 import * as THREE from 'three';
+import { heightAt } from '../../shared/elevation';
 
 /** Deterministic per-tile randomness: same tile, same world, forever. */
 export function tileRandom(x: number, z: number, salt = 0) {
@@ -42,9 +43,15 @@ function instance(
   const matrix = new THREE.Matrix4();
   const quaternion = new THREE.Quaternion();
   const axis = new THREE.Vector3(0, 1, 0);
+  const lifted = new THREE.Vector3();
   places.forEach((place, index) => {
     quaternion.setFromAxisAngle(axis, place.rotY);
-    matrix.compose(place.pos, quaternion, place.scale);
+    // Everything scattered on the meadow is placed in flat coordinates and
+    // lifted onto the land here, in the one function they all pass through.
+    // A tuft of grass at sea level on a hillside is the single clearest tell
+    // that a world is a heightmap with props dropped over it.
+    lifted.set(place.pos.x, place.pos.y + heightAt(place.pos.x, place.pos.z), place.pos.z);
+    matrix.compose(lifted, quaternion, place.scale);
     mesh.setMatrixAt(index, matrix);
   });
   mesh.instanceMatrix.needsUpdate = true;

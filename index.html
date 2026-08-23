@@ -41,9 +41,59 @@
 
       <button class="hud action findme" id="findme" type="button" aria-label="Find my agent in the world">⌖ FIND ME</button>
 
+      <button class="hud action view-toggle" id="view-toggle" type="button" aria-expanded="false" aria-controls="viewpanel" aria-label="Open view settings">⚙ VIEW</button>
+
+      <!-- How this person likes to look at the world. Stored on their own
+           machine and never sent anywhere: the Kernel has no business knowing
+           how somebody likes their shadows. -->
+      <section class="hud viewpanel" id="viewpanel" hidden aria-label="View settings">
+        <header><b>VIEW</b><button type="button" class="panel-min" id="view-close" aria-label="Close view settings">×</button></header>
+
+        <label class="vrow" for="v-quality"><span>Quality</span>
+          <select id="v-quality">
+            <option value="low">Low</option>
+            <option value="balanced">Balanced</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+
+        <label class="vrow" for="v-clock"><span>Time of day</span>
+          <select id="v-clock">
+            <option value="live">Live cycle</option>
+            <option value="dawn">Dawn</option>
+            <option value="noon">Noon</option>
+            <option value="golden">Golden hour</option>
+            <option value="night">Night</option>
+          </select>
+        </label>
+
+        <label class="vrow toggle" for="v-shadows"><span>Shadows</span><input type="checkbox" id="v-shadows"></label>
+        <label class="vrow toggle" for="v-clouds"><span>Clouds</span><input type="checkbox" id="v-clouds"></label>
+        <label class="vrow toggle" for="v-wildlife"><span>Birds and smoke</span><input type="checkbox" id="v-wildlife"></label>
+        <label class="vrow toggle" for="v-names"><span>Nameplates</span><input type="checkbox" id="v-names"></label>
+
+        <label class="vrow" for="v-range"><span>Nameplate range</span>
+          <input type="range" id="v-range" min="8" max="70" step="2">
+        </label>
+
+        <!-- The number this whole rebuild was about, shown rather than claimed. -->
+        <div class="vstats" id="v-stats" aria-live="off">—</div>
+      </section>
+
       <button class="hud action grab-toggle" id="grab-toggle" type="button" aria-pressed="false" aria-label="Left-drag orbits the camera. Switch to grab.">⟳ ORBIT</button>
 
       <button class="hud action takeover" id="takeover" type="button" aria-pressed="false" hidden aria-label="Take the wheel of your own citizen">🎮 TAKE THE WHEEL</button>
+
+      <!-- The build tray. Hidden until somebody holds the wheel, because only a
+           person driving a citizen can put a block down, and a palette you
+           cannot use is furniture. -->
+      <section class="hud buildtray" id="buildtray" hidden aria-label="Place blocks">
+        <header>
+          <b>BUILD</b>
+          <span id="build-hint">click ground to place · shift-click to remove</span>
+        </header>
+        <div class="palette" id="palette" role="radiogroup" aria-label="Block material"></div>
+      </section>
 
       <section class="hud controls" id="controls" aria-label="3D controls">
         <strong>3D CONTROLS</strong>

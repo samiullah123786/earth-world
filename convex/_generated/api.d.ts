@@ -20,6 +20,8 @@ import type * as earthMapData from "../earthMapData.js";
 import type * as economy from "../economy.js";
 import type * as embeddings from "../embeddings.js";
 import type * as expansion from "../expansion.js";
+import type * as greet from "../greet.js";
+import type * as handbuild from "../handbuild.js";
 import type * as http from "../http.js";
 import type * as kernel from "../kernel.js";
 import type * as listings from "../listings.js";
@@ -61,6 +63,8 @@ declare const fullApi: ApiFromModules<{
   economy: typeof economy;
   embeddings: typeof embeddings;
   expansion: typeof expansion;
+  greet: typeof greet;
+  handbuild: typeof handbuild;
   http: typeof http;
   kernel: typeof kernel;
   listings: typeof listings;

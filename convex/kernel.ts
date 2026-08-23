@@ -18,6 +18,9 @@ import { LPC_ASSET_STANDARD, LPC_STRUCTURE_TYPES, LPC_WORLD_ASSETS } from '../sh
 import { ARCHETYPES, avatarArchetype, avatarSpecForVariant } from '../shared/avatar-identity';
 import { currentAspiration } from '../shared/aspirations';
 import { homeRect, placeOnPlot } from '../shared/homestead';
+import { placeBlock, removeBlock } from './handbuild';
+import { petitionGloss, standingPetitions, tallyPetitions, validateReason } from '../shared/petition';
+import { greetCitizen } from './greet';
 import { footprintCells, prefabForStructure, requireLpcPrefab, type LpcPrefab } from '../shared/lpc-prefabs';
 import { EARTHFORGE_ASSETS, EARTHFORGE_COMPILER_SYSTEM, EARTHFORGE_PROPS, EARTHFORGE_SITE_SYSTEM, EARTHFORGE_SYSTEM, EARTHFORGE_TERRAIN, EARTHFORGE_VISUAL_SYSTEM, earthForgeAssetFor, earthForgeSiteContract, semanticIntent, semanticIntentForAsset } from '../shared/earthforge';
 import { EARTH_SETTLEMENT_POLICY, rankHomePlots } from '../shared/settlement';
@@ -548,6 +551,7 @@ function validateLpcPlacements(rawPlacements: unknown, footprint?: { w: number; 
   }
   return { placements, width, height };
 }
+
 
 function buildFootprint(plot: any, payload: any, standing: ReadonlyArray<{ x: number; y: number; w: number; h: number }> = []) {
   let structure = String(payload.structure ?? '');
@@ -3240,6 +3244,81 @@ export const act = internalMutation({
         `${citizen.name} requested ${label}. Tock will recheck the protected footprint before construction.`, approvalId);
       return { ok: true, awaitingOwner: true, approvalId, review: review.report,
         buildGuide: nativeBuildingKnowledge(), warning };
+    }
+
+    // --- Building with your own hands ------------------------------------
+    // Earth already had a way to build a HOUSE: propose it, your owner
+    // consents, the Inspector reviews it, the Treasury takes a fee, and a
+    // scaffold stands over real construction time. That process is right for a
+    // house and absurd for a fence post. This is the other half - one block,
+    // bought and set down immediately, on land you hold.
+    //
+    // The rules live in ./handbuild so that a human holding this citizen's
+    // wheel reaches exactly the same ones. Deliberately not written to the
+    // feed: a world that announced every plank would drown its own civic
+    // record in carpentry. The block appears in the world the instant it is
+    // placed, which is the feedback that matters, and the ledger keeps the
+    // auditable half.
+    if (action?.type === 'place_block') {
+      // Keyed on the act's own nonce, which authorizeAgent already refuses to
+      // replay, so one act can only ever pay once.
+      const done = await placeBlock(ctx, citizen, {
+        x: Number(action.x), y: Number(action.y), level: Number(action.level), kind: action.kind,
+      }, `block:${nonce}`);
+      return { ...done, warning };
+    }
+
+    if (action?.type === 'remove_block') {
+      const done = await removeBlock(ctx, citizen, {
+        x: Number(action.x), y: Number(action.y), level: Number(action.level),
+      });
+      return { ...done, warning };
+    }
+
+    // --- Asking Earth to grow ---------------------------------------------
+    if (action?.type === 'petition_land') {
+      const check = validateReason(action.reason);
+      if (!check.ok) throw new Error(check.why);
+      const now = Date.now();
+      const all = await ctx.db.query('landPetitions').collect();
+      if (standingPetitions(all.filter((row: any) => row.agentId === agentId), now).length) {
+        throw new Error('your petition already stands before Atlas; wait for it to be answered');
+      }
+      const petitionId = await ctx.db.insert('landPetitions', {
+        agentId, reason: check.reason, createdAt: now, answeredAt: null,
+      });
+      const population = (await ctx.db.query('citizens').collect()).length;
+      const verdict = tallyPetitions([...all, { agentId, createdAt: now }], population, now);
+      await ctx.db.insert('events', {
+        kind: 'land_petition', actorId: agentId,
+        payload: { reason: check.reason, ...verdict },
+        gloss: petitionGloss(citizen.name, verdict),
+      });
+      if (verdict.carried) {
+        // An expansion answers every petition that was standing when it was
+        // called, so a satisfied demand cannot be counted again toward the next
+        // ring. The scheduler does the surveying: laying a ring is real work
+        // and would blow the one-second mutation wall if it ran here.
+        for (const row of standingPetitions(all, now)) {
+          await ctx.db.patch(row._id, { answeredAt: now, answeredBy: 'agent:atlas-boundary' });
+        }
+        await ctx.db.patch(petitionId, { answeredAt: now, answeredBy: 'agent:atlas-boundary' });
+        await ctx.scheduler.runAfter(0, internal.kernel.runWorldExpansion, {
+          reason: `${verdict.standing} citizens petitioned Atlas for more land`,
+        });
+      }
+      return { ok: true, ...verdict, warning };
+    }
+
+    // --- Shaking hands -----------------------------------------------------
+    // The smallest piece of mutual evidence there is. Every other social record
+    // in Earth is something one citizen asserts; a handshake cannot be asserted
+    // at all, because it does not exist until both people are standing together
+    // and both say so. The rules live in ./greet so a human driving this body
+    // reaches exactly the same ones.
+    if (action?.type === 'handshake') {
+      const done = await greetCitizen(ctx, citizen, String(action.agentId ?? '').trim());
+      return { ...done, warning };
     }
 
     if (action?.type === 'expand_plot') {

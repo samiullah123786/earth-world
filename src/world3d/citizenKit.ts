@@ -136,6 +136,126 @@ export function toolMotion(activeTool: string | null | undefined, working: boole
 }
 
 
+
+/**
+ * What holding an office looks like.
+ *
+ * A sash was honest but nearly invisible: a strip of colour on a body
+ * otherwise identical to everyone else's, which meant the Mayor and a
+ * three-day-old newcomer read the same from any distance you would actually
+ * watch this town from. Offices in Earth are narrow, revocable, and granted
+ * only on published thresholds with the owner's consent - they are the most
+ * consequential thing a citizen can hold, and they were the least legible.
+ *
+ * So an office now comes with a whole silhouette: a uniform coat, a headpiece
+ * belonging to that work, and where it makes sense the thing the office
+ * actually carries. Six roles, each recognisable at a glance from the far side
+ * of the square, and none of it claimable - the Kernel decides who holds an
+ * office, and it is always a server-owned fact.
+ */
+export type AuthorityLook = {
+  /** The coat this office wears, replacing the citizen's own cloth. */
+  coat: number;
+  /** And its lining, for cuffs and hems. */
+  trim: number;
+  headpiece: 'cap' | 'brim' | 'hardhat' | 'helm' | 'crown' | 'none';
+  /** What the office carries in its off hand, if anything. */
+  carries: 'rod' | 'ledger' | 'staff' | 'none';
+};
+
+export function authorityLook(role: string | null | undefined): AuthorityLook | null {
+  if (!role) return null;
+  if (/mayor/i.test(role) && !/deputy/i.test(role)) {
+    return { coat: 0x243a7a, trim: 0xd9a928, headpiece: 'crown', carries: 'none' };
+  }
+  if (/deputy/i.test(role)) {
+    return { coat: 0x2f4d94, trim: 0xc0b06a, headpiece: 'cap', carries: 'none' };
+  }
+  if (/land steward|steward/i.test(role)) {
+    return { coat: 0x6b5322, trim: 0xc9b183, headpiece: 'brim', carries: 'rod' };
+  }
+  if (/surveyor|boundary/i.test(role)) {
+    return { coat: 0x1f6b6b, trim: 0x9fd8d3, headpiece: 'cap', carries: 'staff' };
+  }
+  if (/inspector|build/i.test(role)) {
+    return { coat: 0x3a4551, trim: 0xf2b134, headpiece: 'hardhat', carries: 'ledger' };
+  }
+  if (/warden|security/i.test(role)) {
+    return { coat: 0x7d2222, trim: 0xd7c9a7, headpiece: 'helm', carries: 'none' };
+  }
+  if (/greeter|community/i.test(role)) {
+    return { coat: 0x2f7a4e, trim: 0xe4d9b2, headpiece: 'none', carries: 'none' };
+  }
+  if (/bank|manager|treasur/i.test(role)) {
+    return { coat: 0x4a3560, trim: 0xd9a928, headpiece: 'cap', carries: 'ledger' };
+  }
+  // An office the renderer has not met yet still reads as an office rather
+  // than silently rendering as an ordinary citizen.
+  return { coat: 0x5a5a66, trim: 0xc8c2b4, headpiece: 'cap', carries: 'none' };
+}
+
+/** The headpiece and coat detail for an office, worn over the body. */
+export function makeAuthorityDress(look: AuthorityLook, palette: KitPalette): THREE.Group {
+  const group = new THREE.Group();
+  const coat = new THREE.MeshStandardMaterial({ color: look.coat, roughness: .82 });
+  const trim = new THREE.MeshStandardMaterial({ color: look.trim, roughness: .7, metalness: .25 });
+
+  // The coat itself: a longer body than an ordinary tunic, with a hem, so the
+  // silhouette differs before any colour is read.
+  part(group, coat, -.28, .58, -.17, .56, .62, .32);
+  part(group, trim, -.28, .52, -.175, .56, .09, .33);
+  part(group, trim, -.06, .82, -.19, .12, .5, .04);
+
+  switch (look.headpiece) {
+    case 'crown':
+      part(group, palette.gold, -.24, 2.0, -.2, .48, .1, .42);
+      for (const dx of [-.2, -.02, .16]) part(group, palette.gold, dx, 2.09, -.2, .07, .14, .07);
+      break;
+    case 'cap':
+      part(group, coat, -.25, 1.95, -.2, .5, .16, .44);
+      part(group, trim, -.25, 1.93, -.42, .5, .06, .18);
+      break;
+    case 'brim':
+      part(group, coat, -.24, 1.98, -.2, .48, .18, .42);
+      part(group, coat, -.42, 1.95, -.38, .84, .06, .78);
+      break;
+    case 'hardhat':
+      part(group, trim, -.25, 1.95, -.21, .5, .22, .46);
+      part(group, trim, -.25, 1.93, -.46, .5, .07, .2);
+      part(group, coat, -.04, 1.96, -.215, .08, .24, .47);
+      break;
+    case 'helm':
+      part(group, palette.iron, -.25, 1.94, -.21, .5, .26, .46);
+      part(group, palette.iron, -.06, 1.72, -.235, .12, .24, .06);
+      part(group, trim, -.1, 2.16, -.2, .2, .12, .1);
+      break;
+    default:
+      break;
+  }
+  return group;
+}
+
+/** What an office carries in its off hand: the tool of that work. */
+export function makeInsignia(look: AuthorityLook, palette: KitPalette): THREE.Group | null {
+  if (look.carries === 'none') return null;
+  const group = new THREE.Group();
+  const trim = new THREE.MeshStandardMaterial({ color: look.trim, roughness: .68, metalness: .3 });
+  if (look.carries === 'rod') {
+    // A measuring rod, banded, because a Land Steward settles boundaries.
+    part(group, palette.wood, 0, 0, 0, .05, 1.1, .05);
+    for (const y of [-.4, -.1, .2, .5]) part(group, trim, 0, y, 0, .07, .05, .07);
+  }
+  if (look.carries === 'staff') {
+    part(group, palette.wood, 0, 0, 0, .05, 1.25, .05);
+    part(group, trim, -.06, .62, -.06, .17, .17, .17);
+  }
+  if (look.carries === 'ledger') {
+    part(group, palette.cloth, 0, 0, 0, .3, .38, .06);
+    part(group, trim, .02, .02, -.04, .26, .32, .02);
+  }
+  return group;
+}
+
 /**
  * A citizen's own look, derived from who they verifiably are.
  *

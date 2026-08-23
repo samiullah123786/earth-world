@@ -341,3 +341,57 @@ body.embed .controls { bottom: 12px; }
 }
 .driving-banner.on { display: block; }
 body.embed .takeover, body.embed .driving-banner { display: none !important; }
+
+/* The build tray: what a citizen's Earth Tokens actually buy.
+   Sits above the driving banner rather than beside the other buttons, because
+   it belongs to the wheel - it appears with possession and leaves with it. */
+.buildtray {
+  left: 50%; transform: translateX(-50%); bottom: 62px; z-index: 41;
+  background: var(--cream); color: var(--ink); padding: 8px 10px 10px;
+  min-width: 300px; max-width: min(92vw, 520px);
+}
+.buildtray[hidden] { display: none; }
+.buildtray header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; }
+.buildtray header b { font: 800 11px/1 var(--mono); letter-spacing: .8px; }
+.buildtray header span { font: 500 10px/1.3 var(--mono); opacity: .66; }
+.palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.palette button {
+  display: flex; align-items: center; gap: 6px;
+  border: 2px solid var(--ink); background: #fff; color: var(--ink);
+  padding: 5px 8px; cursor: pointer; font: 700 10px/1 var(--mono);
+}
+.palette button i { width: 12px; height: 12px; border: 1px solid rgba(30,30,30,.55); display: block; }
+.palette button em { font-style: normal; opacity: .6; }
+.palette button[aria-checked="true"] { background: var(--ink); color: var(--cream); }
+.palette button[aria-checked="true"] em { opacity: .8; }
+.palette button:disabled { opacity: .38; cursor: not-allowed; }
+body.embed .buildtray { display: none !important; }
+
+/* View settings. Sits opposite the build tray so the two never collide, and
+   folds away entirely on a phone where the screen is the scarce thing. */
+.view-toggle { right: 12px; bottom: 148px; background: var(--ink); }
+.view-toggle[aria-expanded="true"] { background: #2f6fae; }
+.viewpanel {
+  right: 12px; bottom: 194px; z-index: 42; width: 232px;
+  background: var(--cream); color: var(--ink); padding: 10px 12px 12px;
+}
+.viewpanel[hidden] { display: none; }
+.viewpanel header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.viewpanel header b { font: 800 11px/1 var(--mono); letter-spacing: .9px; }
+.vrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font: 600 11px/1.4 var(--mono); padding: 5px 0; cursor: pointer;
+}
+.vrow select {
+  font: 600 11px/1 var(--mono); padding: 4px 6px;
+  border: 2px solid var(--ink); background: #fff; color: var(--ink); cursor: pointer;
+}
+.vrow input[type="range"] { width: 96px; accent-color: #2f6fae; cursor: pointer; }
+.vrow.toggle input { width: 15px; height: 15px; accent-color: #2f6fae; cursor: pointer; }
+.vrow:focus-within { outline: 2px solid #2f6fae; outline-offset: 2px; }
+.vstats {
+  margin-top: 9px; padding-top: 8px; border-top: 2px solid rgba(30,30,30,.18);
+  font: 500 10px/1.5 var(--mono); opacity: .72; font-variant-numeric: tabular-nums;
+}
+body.embed .view-toggle, body.embed .viewpanel { display: none !important; }
+@media (max-width: 620px) { .viewpanel { width: min(232px, calc(100vw - 24px)); } }

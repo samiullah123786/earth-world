@@ -518,6 +518,13 @@ const worldStateHttp = httpAction(async (ctx) => {
       x: plot.x, y: plot.y, w: plot.w, h: plot.h,
       district: plot.district, owned: Boolean(plot.ownerAgentId),
     })),
+    // Every block a citizen bought and set down by hand. These are what makes
+    // Earth Tokens a material rather than a scoreboard, so they are as much a
+    // part of the world as the houses.
+    blocks: (objects.placedBlocks ?? []).map((block: any) => ({
+      x: block.x, y: block.y, level: block.level, kind: block.kind,
+      ownerAgentId: block.ownerAgentId,
+    })),
     zones: (objects.activityZones ?? []).map((zone: any) => ({
       zoneId: zone.zoneId, name: zone.name ?? zone.zoneId, kind: zone.kind ?? 'zone',
       x: zone.x, y: zone.y, w: zone.w ?? 1, h: zone.h ?? 1,
@@ -623,6 +630,44 @@ const takeoverStatus = httpAction(async (ctx, request) => {
     }));
   } catch (error) {
     return json({ ok: false, why: message(error) }, 403);
+  }
+});
+
+
+const takeoverBuild = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    return json(await ctx.runMutation(internal.takeover.build, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      x: Number(value.x), y: Number(value.y), level: Number(value.level),
+      kind: String(value.kind ?? ''),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const takeoverUnbuild = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    return json(await ctx.runMutation(internal.takeover.unbuild, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      x: Number(value.x), y: Number(value.y), level: Number(value.level),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
+  }
+});
+
+const takeoverGreet = httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    return json(await ctx.runMutation(internal.takeover.greet, {
+      tokenHash: await sha256Hex(bearerToken(request)),
+      agentId: String(value.agentId ?? ''),
+    }));
+  } catch (error) {
+    return json({ ok: false, why: message(error) }, 400);
   }
 });
 
@@ -1169,6 +1214,9 @@ http.route({ path: '/v1/takeover/take', method: 'POST', handler: takeoverTake })
 http.route({ path: '/v1/takeover/release', method: 'POST', handler: takeoverRelease });
 http.route({ path: '/v1/takeover/step', method: 'POST', handler: takeoverStep });
 http.route({ path: '/v1/takeover/status', method: 'GET', handler: takeoverStatus });
+http.route({ path: '/v1/takeover/build', method: 'POST', handler: takeoverBuild });
+http.route({ path: '/v1/takeover/unbuild', method: 'POST', handler: takeoverUnbuild });
+http.route({ path: '/v1/takeover/greet', method: 'POST', handler: takeoverGreet });
 http.route({ path: '/v1/dispatches', method: 'GET', handler: publicDispatches });
 http.route({ path: '/v1/bank', method: 'GET', handler: publicBank });
 http.route({ path: '/v1/skill/search', method: 'POST', handler: skillSearch });
