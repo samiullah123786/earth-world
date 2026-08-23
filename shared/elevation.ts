@@ -65,13 +65,59 @@ function noise(x: number, y: number, seed: number): number {
  * the staircase this is written to avoid, and nobody looking at a town from
  * across a square can see it anyway.
  */
-export function heightAt(x: number, y: number): number {
+export function openHeightAt(x: number, y: number): number {
   const broad = noise(x / WAVELENGTH, y / WAVELENGTH, 0x9e37);
   const rolling = noise(x / (WAVELENGTH / 2.7), y / (WAVELENGTH / 2.7), 0x85eb);
   // Weighted so the broad sweep dominates and the second octave only breaks up
   // its regularity, rather than the two fighting for the silhouette.
   const combined = broad * 0.76 + rolling * 0.24;
   return combined * RELIEF;
+}
+
+/** How far from the map's edge the relief fades out into the shore. */
+export const SHORE_FADE = 16;
+
+/**
+ * The island the town stands on has a rim at sea level.
+ *
+ * Left alone the height field carries the ground to full relief at the very
+ * edge of the map, leaving a cliff hanging over the beach with nothing beneath
+ * it. Fading the relief out over the last stretch is both the fix and what a
+ * coastline actually looks like.
+ */
+export function shoreDamp(x: number, y: number, width: number, height: number): number {
+  const edge = Math.min(x, y, width - 1 - x, height - 1 - y);
+  if (edge >= SHORE_FADE) return 1;
+  const t = Math.max(0, edge) / SHORE_FADE;
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * The world's extent, set once when the terrain arrives.
+ *
+ * Module state, deliberately, and it is worth saying why. The alternative is
+ * threading width and height through every caller - the soil, the trees, the
+ * scatter, the buildings, the hand-placed blocks, the walker's feet and every
+ * citizen's Y position. Miss one and it disagrees with the others, which does
+ * not look like a bug in a parameter list; it looks like a tree floating over a
+ * beach. One shared answer is the property that matters here.
+ */
+let bounds: { width: number; height: number } | null = null;
+
+export function setWorldBounds(width: number, height: number): void {
+  bounds = { width, height };
+}
+
+/**
+ * How high the ground stands at this tile, in world units.
+ *
+ * Everything that touches the ground calls this and only this, so the soil, the
+ * grass on it, the house on top and the citizen walking past cannot end up on
+ * four different surfaces.
+ */
+export function heightAt(x: number, y: number): number {
+  const open = openHeightAt(x, y);
+  return bounds ? open * shoreDamp(x, y, bounds.width, bounds.height) : open;
 }
 
 /**
@@ -132,3 +178,4 @@ export function slopeAt(x: number, y: number): { dx: number; dy: number; grade: 
 export function isGentle(x: number, y: number): boolean {
   return slopeAt(x, y).grade < 0.09;
 }
+

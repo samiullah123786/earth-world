@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  RELIEF, foundationDepth, heightAt, isGentle, siteHeight, slopeAt,
+  RELIEF, SHORE_FADE, foundationDepth, heightAt, isGentle, openHeightAt,
+  setWorldBounds, shoreDamp, siteHeight, slopeAt,
 } from './elevation';
 
 describe('the ground is the same for everyone', () => {
@@ -100,5 +101,40 @@ describe('which way the land falls', () => {
       for (let y = 12; y < 50; y++) { total++; if (isGentle(x, y)) gentle++; }
     }
     expect(gentle / total).toBeGreaterThan(0.8);
+  });
+});
+
+describe('the coast', () => {
+  it('fades the relief to nothing at the very edge of the map', () => {
+    expect(shoreDamp(0, 40, 128, 128)).toBe(0);
+    expect(shoreDamp(40, 0, 128, 128)).toBe(0);
+    expect(shoreDamp(127, 40, 128, 128)).toBe(0);
+  });
+
+  it('leaves the interior at full height', () => {
+    expect(shoreDamp(64, 64, 128, 128)).toBe(1);
+    expect(shoreDamp(SHORE_FADE, SHORE_FADE, 128, 128)).toBe(1);
+  });
+
+  it('rises smoothly rather than stepping up at the fade line', () => {
+    let worst = 0;
+    for (let edge = 0; edge < SHORE_FADE + 4; edge++) {
+      const a = shoreDamp(edge, 64, 256, 256);
+      const b = shoreDamp(edge + 1, 64, 256, 256);
+      worst = Math.max(worst, Math.abs(b - a));
+    }
+    // A hard shoulder here would be a cliff ringing the whole island.
+    expect(worst).toBeLessThan(0.16);
+  });
+
+  it('makes heightAt honour the coast once the world size is known', () => {
+    // Unbounded, heightAt is the open field - which is what the pure tests
+    // above measure.
+    const open = openHeightAt(3, 40);
+    expect(heightAt(3, 40)).toBeCloseTo(open, 10);
+    setWorldBounds(128, 128);
+    expect(heightAt(3, 40)).toBeLessThan(open);
+    expect(heightAt(64, 64)).toBeCloseTo(openHeightAt(64, 64), 10);
+    setWorldBounds(1e9, 1e9);   // leave the shared state wide for other tests
   });
 });

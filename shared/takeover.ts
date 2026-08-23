@@ -79,7 +79,13 @@ export function stepVerdict(
  *
  * Written for the feed and the nameplate, because the whole point is that
  * possession is never hidden.
+ *
+ * It does NOT name anybody. It was originally written to name the owner and
+ * then called with the citizen's own name, so a driven Zee read "being walked
+ * in person by Zee" - which is nonsense twice over. The owner's real name is
+ * private and the citizen's name is already on the nameplate; what a watcher
+ * needs to know is simply that the body is being steered by hand.
  */
-export function drivenActivity(ownerLabel: string): string {
-  return `being walked in person by ${ownerLabel}`;
+export function drivenActivity(): string {
+  return 'being walked in person by their owner';
 }

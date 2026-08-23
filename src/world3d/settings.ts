@@ -41,16 +41,18 @@ export const DEFAULTS: Settings = {
  * What each quality level actually changes.
  *
  * Resolution scale first, because pixel count dominates everything else on the
- * machines that need this setting, and shadow map size second. Draw calls are
- * deliberately NOT on this list - the renderer batches now, so there is no
- * longer a quality level at which the town is too heavy to draw.
+ * machines that need this setting, and shadow map size second. That is the
+ * whole list, deliberately: draw calls no longer belong on it, because the
+ * renderer batches and there is no quality level at which the town is too
+ * heavy to draw. A distance cull was drafted here and cut - a field nothing
+ * reads is a setting that lies about what it does.
  */
 export const PROFILES: Record<Quality, {
-  pixelRatio: number; shadowMap: number; shadowsAllowed: boolean; detailRadius: number;
+  pixelRatio: number; shadowMap: number; shadowsAllowed: boolean;
 }> = {
-  low: { pixelRatio: 1, shadowMap: 0, shadowsAllowed: false, detailRadius: 42 },
-  balanced: { pixelRatio: 1.5, shadowMap: 2048, shadowsAllowed: true, detailRadius: 80 },
-  high: { pixelRatio: 2, shadowMap: 4096, shadowsAllowed: true, detailRadius: 160 },
+  low: { pixelRatio: 1, shadowMap: 0, shadowsAllowed: false },
+  balanced: { pixelRatio: 1.5, shadowMap: 2048, shadowsAllowed: true },
+  high: { pixelRatio: 2, shadowMap: 4096, shadowsAllowed: true },
 };
 
 /** Where the clock sits when it is not following real time. 0.25 is noon. */

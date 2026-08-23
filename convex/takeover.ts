@@ -47,7 +47,7 @@ export const take = internalMutation({
       // Stop whatever the agent was doing mid-stride: two things steering one
       // body is how a citizen ends up twitching between two destinations.
       route: undefined, fx: citizen.tx, fy: citizen.ty, t0: now, t1: now,
-      activity: drivenActivity(citizen.name),
+      activity: drivenActivity(),
     });
     if (!renewing) {
       await ctx.db.insert('events', {
@@ -115,7 +115,7 @@ export const step = internalMutation({
       t0: now, t1: now + STEP_MS, facing: facing as any,
       route: [{ x: citizen.tx, y: citizen.ty, at: now }, { x, y, at: now + STEP_MS }],
       drivenUntil: now + TAKEOVER_LEASE_MS,
-      activity: drivenActivity(citizen.name),
+      activity: drivenActivity(),
     });
     return { ok: true, x, y, until: now + TAKEOVER_LEASE_MS };
   },

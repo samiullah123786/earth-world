@@ -118,6 +118,8 @@ export type Sky = {
   ambientIntensity: number;
   /** 0 at night, 1 in full day - drives whether windows and lamps are lit. */
   daylight: number;
+  /** Multiplier on every emissive surface, so the town lights up after dark. */
+  glow: number;
 };
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -140,7 +142,7 @@ export function skyAt(phase: number): Sky {
   const golden = Math.max(0, 1 - Math.abs(elevation) * 2.2) * Math.min(1, day * 2.5);
 
   const zenith = new THREE.Color().setHSL(
-    lerp(232, 205, day) / 360, lerp(0.42, 0.52, day), lerp(0.10, 0.53, day));
+    lerp(228, 205, day) / 360, lerp(0.46, 0.52, day), lerp(0.13, 0.53, day));
   const horizon = new THREE.Color().setHSL(
     lerp(228, lerp(198, 28, golden), day) / 360,
     lerp(0.30, lerp(0.40, 0.72, golden), day),
@@ -161,15 +163,22 @@ export function skyAt(phase: number): Sky {
     // quickly once it is not.
     //
     // A weak sun at night rather than none: a pitch-black town is not
-    // atmospheric, it is a bug report.
-    sunIntensity: lerp(0.20, 2.4, Math.min(1, day * 1.9)),
+    // atmospheric, it is a bug report. This is the moon, effectively - enough
+    // to read a silhouette by and no more.
+    sunIntensity: lerp(0.45, 2.4, Math.min(1, day * 1.9)),
     // Sky light, which matters most exactly when the sun does not: at golden
     // hour a low sun grazes flat ground and barely lights it, and what keeps a
     // meadow from going black is the sky above it. Still well under the sun, so
     // the directional light can cast - the old rig had ambient at 2.2 against a
     // sun of 3.3, a ratio at which nothing in the world had any shape.
-    ambientIntensity: lerp(0.30, 0.68, Math.min(1, day * 1.9)),
+    ambientIntensity: lerp(0.62, 0.68, Math.min(1, day * 1.9)),
     daylight: day,
+    // How hard every window, lamp and hearth in the town burns.
+    //
+    // A fixed emissive intensity means the windows that look right at noon are
+    // invisible at midnight, which throws away the best hour this world has:
+    // a dark valley with a lit town in it. They come up as the light goes down.
+    glow: 1 + (1 - day) * 2.6,
   };
 }
 

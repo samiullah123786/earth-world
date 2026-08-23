@@ -68,6 +68,8 @@ describe('one step at a time', () => {
 
 describe('possession is public', () => {
   it('says so in words the feed can carry', () => {
-    expect(drivenActivity('Mason')).toMatch(/in person/);
+    // Names nobody: it once took the owner's label and was called with the
+    // citizen's own name, so a driven Zee read "walked in person by Zee".
+    expect(drivenActivity()).toBe('being walked in person by their owner');
   });
 });

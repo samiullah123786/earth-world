@@ -11,7 +11,7 @@ import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/bloc
 import { BlockBatch, absorb, shadedBox } from './world3d/batch';
 import { AmbientLife, Clouds, makeSkyDome } from './world3d/sky';
 import { CitizenBatch, harvest, type Pose, type Rig } from './world3d/rig';
-import { heightAt, siteHeight } from '../shared/elevation';
+import { heightAt, setWorldBounds, siteHeight } from '../shared/elevation';
 import { skyAt, worldMaterials } from './world3d/palette';
 import { PROFILES, loadSettings, phaseFor, saveSettings, suggestQuality, type Settings } from './world3d/settings';
 
@@ -335,7 +335,10 @@ function addInstancedTiles(letter: string, locations: Array<{ x: number; z: numb
     // sitting on a plane, so a rise in the terrain is a rise in the soil under
     // it rather than a floating slab. Water is the exception: it finds its own
     // level, the way water does, instead of following the hill.
-    const lift = letter === 'w' ? 0 : heightAt(spot.x + .5, spot.z + .5);
+    // Water follows the land it runs through. Holding it at a fixed sea level
+    // while the ground around it rose turned every inland stream into a trench
+    // with two-unit banks; recessed into the local ground, it reads as a river.
+    const lift = heightAt(spot.x + .5, spot.z + .5);
     const height = letter === 'w' ? .34 : .5 + lift;
     matrix.compose(
       new THREE.Vector3(spot.x + .5, spot.top + lift - height / 2, spot.z + .5),
@@ -345,10 +348,34 @@ function addInstancedTiles(letter: string, locations: Array<{ x: number; z: numb
   });
   mesh.instanceMatrix.needsUpdate = true;
   mesh.receiveShadow = true;
+  // Water is the one surface in a still world that should never be still.
+  if (letter === 'w') waterMesh = mesh;
   terrainRoot.add(mesh);
 }
 
+/** The river, kept so it can breathe. */
+let waterMesh: THREE.InstancedMesh | null = null;
+
+/**
+ * A slow swell on the water, and a glint that tracks the sun.
+ *
+ * Moving the whole instanced mesh rather than its instances: one transform a
+ * frame instead of thousands, and at this amplitude nobody can tell the
+ * difference between a river rising together and a river rippling.
+ */
+function tendWater(elapsed: number, state: ReturnType<typeof skyAt>) {
+  if (!waterMesh) return;
+  waterMesh.position.y = Math.sin(elapsed * 0.55) * 0.035;
+  const material = waterMesh.material as THREE.MeshStandardMaterial;
+  material.emissive.copy(state.horizon);
+  material.emissiveIntensity = 0.06 + state.daylight * 0.12;
+}
+
 function buildTerrain(data: Terrain) {
+  waterMesh = null;
+  // Before a single tile is placed: the height field needs the map's extent
+  // to know where the coast is, and everything downstream reads it.
+  setWorldBounds(data.width, data.height);
   clearGroup(terrainRoot);
   const byLetter: Record<string, Array<{ x: number; z: number; top: number }>> = {};
   const treeTrunks: Array<{ x: number; z: number; top: number }> = [];
@@ -365,26 +392,67 @@ function buildTerrain(data: Terrain) {
   }
   for (const [letter, locations] of Object.entries(byLetter)) addInstancedTiles(letter, locations);
 
+  // Three crown blocks per tree rather than two, jittered and varied per tile.
+  // Every tree used to be the identical pair of cubes on the identical trunk,
+  // which is invisible from a plan view and glaring the moment the camera comes
+  // down to where people are - a row of copy-pasted broccoli.
   const trunkMesh = new THREE.InstancedMesh(BOX, materials.trunk, treeTrunks.length);
-  const crownMesh = new THREE.InstancedMesh(BOX, materials.leaf, treeTrunks.length * 2 + bushes.length);
+  const crownMesh = new THREE.InstancedMesh(BOX, materials.leaf, treeTrunks.length * 3 + bushes.length);
+  crownMesh.instanceColor = new THREE.InstancedBufferAttribute(
+    new Float32Array((treeTrunks.length * 3 + bushes.length) * 3), 3);
+  const crownTint = new THREE.Color();
+  /** A stable roll per tree, so a tree keeps its shape between rebuilds. */
+  const roll = (x: number, z: number, salt: number) => {
+    let state = (Math.imul(x + 1, 0x27d4eb2d) ^ Math.imul(z + 1, 0x165667b1) ^ salt) >>> 0;
+    state = Math.imul(state ^ (state >>> 15), 0x2c1b3c6d) >>> 0;
+    return ((state ^ (state >>> 13)) >>> 0) / 4294967296;
+  };
   const matrix = new THREE.Matrix4();
   // A tree rooted at sea level on a hillside is the tell that a world is a
   // heightmap with props dropped on it, so everything that grows reads the
   // same ground function the soil under it does.
   treeTrunks.forEach((spot, index) => {
     const base = heightAt(spot.x + .5, spot.z + .5);
-    matrix.compose(new THREE.Vector3(spot.x + .5, base + 1.05, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.32, 2.1, .32));
+    // A tree's whole character is its proportions, and these are the only two
+    // numbers that carry it: how tall the trunk runs and how wide the crown
+    // sits on top.
+    const tall = .78 + roll(spot.x, spot.z, 3) * .62;
+    const broad = .86 + roll(spot.x, spot.z, 5) * .38;
+    const lean = (roll(spot.x, spot.z, 7) - .5) * .3;
+    const trunkTop = base + 1.05 * tall;
+    matrix.compose(
+      new THREE.Vector3(spot.x + .5, base + 1.05 * tall, spot.z + .5),
+      new THREE.Quaternion(), new THREE.Vector3(.3, 2.1 * tall, .3));
     trunkMesh.setMatrixAt(index, matrix);
-    matrix.compose(new THREE.Vector3(spot.x + .5, base + 2.15, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(1.55, 1.15, 1.55));
-    crownMesh.setMatrixAt(index * 2, matrix);
-    matrix.compose(new THREE.Vector3(spot.x + .5, base + 2.9, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.92, .72, .92));
-    crownMesh.setMatrixAt(index * 2 + 1, matrix);
+
+    const courses: Array<[number, number, number]> = [
+      [1.02, 1.68 * broad, .96],
+      [1.72, 1.24 * broad, .78],
+      [2.28, .68 * broad, .52],
+    ];
+    courses.forEach(([lift, width, depth], course) => {
+      matrix.compose(
+        new THREE.Vector3(spot.x + .5 + lean * course, trunkTop + lift * tall, spot.z + .5 + lean * course * .6),
+        new THREE.Quaternion(), new THREE.Vector3(width, depth, width));
+      crownMesh.setMatrixAt(index * 3 + course, matrix);
+      // Each course a shade lighter toward the crown, which is where the light
+      // reaches - a single flat green is what makes a canopy read as a cube.
+      crownTint.copy(materials.leaf.color)
+        .lerp(materials.leafLight.color, course * .34 + roll(spot.x, spot.z, 11) * .2);
+      crownMesh.setColorAt(index * 3 + course, crownTint);
+    });
   });
   bushes.forEach((spot, index) => {
     const base = heightAt(spot.x + .5, spot.z + .5);
-    matrix.compose(new THREE.Vector3(spot.x + .5, base + .5, spot.z + .5), new THREE.Quaternion(), new THREE.Vector3(.8, .8, .8));
-    crownMesh.setMatrixAt(treeTrunks.length * 2 + index, matrix);
+    const size = .62 + roll(spot.x, spot.z, 13) * .34;
+    matrix.compose(
+      new THREE.Vector3(spot.x + .5, base + size * .6, spot.z + .5),
+      new THREE.Quaternion(), new THREE.Vector3(size, size, size));
+    crownMesh.setMatrixAt(treeTrunks.length * 3 + index, matrix);
+    crownTint.copy(materials.leafLight.color).lerp(materials.leaf.color, roll(spot.x, spot.z, 17));
+    crownMesh.setColorAt(treeTrunks.length * 3 + index, crownTint);
   });
+  if (crownMesh.instanceColor) crownMesh.instanceColor.needsUpdate = true;
   trunkMesh.instanceMatrix.needsUpdate = true;
   crownMesh.instanceMatrix.needsUpdate = true;
   trunkMesh.castShadow = trunkMesh.receiveShadow = true;
@@ -652,6 +720,7 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
   }
   structureBatch.flush();
   roofBatch.flush();
+  emissiveCache = null;   // new material clones to find
   wildlife?.setChimneys(chimneys);
 
   for (const venue of venues) {
@@ -1892,7 +1961,46 @@ function tendSky(now: number) {
   // sky disagrees with.
   const angle = phaseFor(view, now) * Math.PI * 2;
   sun.position.set(Math.cos(angle) * 58, Math.max(8, Math.sin(angle) * 62 + 10), 30);
+
+  // Every lit thing in the world comes up as the light goes down. A fixed
+  // emissive intensity means the windows that look right at noon disappear at
+  // midnight - which throws away the best hour this place has, a dark valley
+  // with a lit town in it. The batches hold clones of these materials, so the
+  // originals AND the copies both have to be told.
+  if (Math.abs(glowNow - state.glow) > 0.01) {
+    glowNow = state.glow;
+    for (const material of emissiveMaterials()) {
+      material.emissiveIntensity = (material.userData.baseGlow as number) * state.glow;
+    }
+  }
   return state;
+}
+
+/**
+ * Every emissive material in the scene, found once and remembered.
+ *
+ * Walking the graph each frame would be wasteful, and the set only grows when
+ * the town is rebuilt - so it is refreshed then, and the base intensity each
+ * material was authored with is stashed the first time it is seen.
+ */
+let glowNow = 1;
+let emissiveCache: THREE.MeshStandardMaterial[] | null = null;
+function emissiveMaterials(): THREE.MeshStandardMaterial[] {
+  if (emissiveCache) return emissiveCache;
+  const found = new Set<THREE.MeshStandardMaterial>();
+  scene.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (!material) return;
+    for (const entry of Array.isArray(material) ? material : [material]) {
+      const standard = entry as THREE.MeshStandardMaterial;
+      if (!standard.emissiveIntensity || !standard.emissive || standard.emissive.getHex() === 0) continue;
+      if (standard.userData.baseGlow === undefined) standard.userData.baseGlow = standard.emissiveIntensity;
+      found.add(standard);
+    }
+  });
+  emissiveCache = [...found];
+  return emissiveCache;
 }
 
 
@@ -2015,6 +2123,7 @@ function animate() {
   tendLights();
   clouds?.update(elapsedSeconds, sky);
   wildlife?.update(elapsedSeconds, sky);
+  tendWater(elapsedSeconds, sky);
   renderer.render(scene, camera);
   tendStats(now);
 }
