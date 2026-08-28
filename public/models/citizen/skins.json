@@ -1,72 +1,873 @@
 {
- "grid": 8,
- "cell": 128,
- "count": 64,
- "hand_drawn": 18,
- "origins": [
-  "texture-a",
-  "texture-b",
-  "texture-c",
-  "texture-d",
-  "texture-e",
-  "texture-f",
-  "texture-g",
-  "texture-h",
-  "texture-i",
-  "texture-j",
-  "texture-k",
-  "texture-l",
-  "texture-m",
-  "texture-n",
-  "texture-o",
-  "texture-p",
-  "texture-q",
-  "texture-r",
-  "gen-skin:018",
-  "gen-skin:019",
-  "gen-skin:020",
-  "gen-skin:021",
-  "gen-skin:022",
-  "gen-skin:023",
-  "gen-skin:024",
-  "gen-skin:025",
-  "gen-skin:026",
-  "gen-skin:027",
-  "gen-skin:028",
-  "gen-skin:029",
-  "gen-skin:030",
-  "gen-skin:031",
-  "gen-skin:032",
-  "gen-skin:033",
-  "gen-skin:034",
-  "gen-skin:035",
-  "gen-skin:036",
-  "gen-skin:037",
-  "gen-skin:038",
-  "gen-skin:039",
-  "gen-skin:040",
-  "gen-skin:041",
-  "gen-skin:042",
-  "gen-skin:043",
-  "gen-skin:044",
-  "gen-skin:045",
-  "gen-skin:046",
-  "gen-skin:047",
-  "gen-skin:048",
-  "gen-skin:049",
-  "gen-skin:050",
-  "gen-skin:051",
-  "gen-skin:052",
-  "gen-skin:053",
-  "gen-skin:054",
-  "gen-skin:055",
-  "gen-skin:056",
-  "gen-skin:057",
-  "gen-skin:058",
-  "gen-skin:059",
-  "gen-skin:060",
-  "gen-skin:061",
-  "gen-skin:062",
-  "gen-skin:063"
+ "grid": 12,
+ "cell": 256,
+ "count": 144,
+ "handDrawn": 18,
+ "note": "A citizen wears the slot at hash(agentId) % count. See tools/skinsmith.py.",
+ "skins": [
+  {
+   "slot": 0,
+   "origin": "texture-a",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 1,
+   "origin": "texture-b",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 2,
+   "origin": "texture-c",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 3,
+   "origin": "texture-d",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 4,
+   "origin": "texture-e",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 5,
+   "origin": "texture-f",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 6,
+   "origin": "texture-g",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 7,
+   "origin": "texture-h",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 8,
+   "origin": "texture-i",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 9,
+   "origin": "texture-j",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 10,
+   "origin": "texture-k",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 11,
+   "origin": "texture-l",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 12,
+   "origin": "texture-m",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 13,
+   "origin": "texture-n",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 14,
+   "origin": "texture-o",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 15,
+   "origin": "texture-p",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 16,
+   "origin": "texture-q",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 17,
+   "origin": "texture-r",
+   "kind": "original",
+   "seed": null
+  },
+  {
+   "slot": 18,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:018"
+  },
+  {
+   "slot": 19,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:019"
+  },
+  {
+   "slot": 20,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:020"
+  },
+  {
+   "slot": 21,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:021"
+  },
+  {
+   "slot": 22,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:022"
+  },
+  {
+   "slot": 23,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:023"
+  },
+  {
+   "slot": 24,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:024"
+  },
+  {
+   "slot": 25,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:025"
+  },
+  {
+   "slot": 26,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:026"
+  },
+  {
+   "slot": 27,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:027"
+  },
+  {
+   "slot": 28,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:028"
+  },
+  {
+   "slot": 29,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:029"
+  },
+  {
+   "slot": 30,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:030"
+  },
+  {
+   "slot": 31,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:031"
+  },
+  {
+   "slot": 32,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:032"
+  },
+  {
+   "slot": 33,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:033"
+  },
+  {
+   "slot": 34,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:034"
+  },
+  {
+   "slot": 35,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:035"
+  },
+  {
+   "slot": 36,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:036"
+  },
+  {
+   "slot": 37,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:037"
+  },
+  {
+   "slot": 38,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:038"
+  },
+  {
+   "slot": 39,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:039"
+  },
+  {
+   "slot": 40,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:040"
+  },
+  {
+   "slot": 41,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:041"
+  },
+  {
+   "slot": 42,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:042"
+  },
+  {
+   "slot": 43,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:043"
+  },
+  {
+   "slot": 44,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:044"
+  },
+  {
+   "slot": 45,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:045"
+  },
+  {
+   "slot": 46,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:046"
+  },
+  {
+   "slot": 47,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:047"
+  },
+  {
+   "slot": 48,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:048"
+  },
+  {
+   "slot": 49,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:049"
+  },
+  {
+   "slot": 50,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:050"
+  },
+  {
+   "slot": 51,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:051"
+  },
+  {
+   "slot": 52,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:052"
+  },
+  {
+   "slot": 53,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:053"
+  },
+  {
+   "slot": 54,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:054"
+  },
+  {
+   "slot": 55,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:055"
+  },
+  {
+   "slot": 56,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:056"
+  },
+  {
+   "slot": 57,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:057"
+  },
+  {
+   "slot": 58,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:058"
+  },
+  {
+   "slot": 59,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:059"
+  },
+  {
+   "slot": 60,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:060"
+  },
+  {
+   "slot": 61,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:061"
+  },
+  {
+   "slot": 62,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:062"
+  },
+  {
+   "slot": 63,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:063"
+  },
+  {
+   "slot": 64,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:064"
+  },
+  {
+   "slot": 65,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:065"
+  },
+  {
+   "slot": 66,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:066"
+  },
+  {
+   "slot": 67,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:067"
+  },
+  {
+   "slot": 68,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:068"
+  },
+  {
+   "slot": 69,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:069"
+  },
+  {
+   "slot": 70,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:070"
+  },
+  {
+   "slot": 71,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:071"
+  },
+  {
+   "slot": 72,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:072"
+  },
+  {
+   "slot": 73,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:073"
+  },
+  {
+   "slot": 74,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:074"
+  },
+  {
+   "slot": 75,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:075"
+  },
+  {
+   "slot": 76,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:076"
+  },
+  {
+   "slot": 77,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:077"
+  },
+  {
+   "slot": 78,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:078"
+  },
+  {
+   "slot": 79,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:079"
+  },
+  {
+   "slot": 80,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:080"
+  },
+  {
+   "slot": 81,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:081"
+  },
+  {
+   "slot": 82,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:082"
+  },
+  {
+   "slot": 83,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:083"
+  },
+  {
+   "slot": 84,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:084"
+  },
+  {
+   "slot": 85,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:085"
+  },
+  {
+   "slot": 86,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:086"
+  },
+  {
+   "slot": 87,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:087"
+  },
+  {
+   "slot": 88,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:088"
+  },
+  {
+   "slot": 89,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:089"
+  },
+  {
+   "slot": 90,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:090"
+  },
+  {
+   "slot": 91,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:091"
+  },
+  {
+   "slot": 92,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:092"
+  },
+  {
+   "slot": 93,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:093"
+  },
+  {
+   "slot": 94,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:094"
+  },
+  {
+   "slot": 95,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:095"
+  },
+  {
+   "slot": 96,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:096"
+  },
+  {
+   "slot": 97,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:097"
+  },
+  {
+   "slot": 98,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:098"
+  },
+  {
+   "slot": 99,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:099"
+  },
+  {
+   "slot": 100,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:100"
+  },
+  {
+   "slot": 101,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:101"
+  },
+  {
+   "slot": 102,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:102"
+  },
+  {
+   "slot": 103,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:103"
+  },
+  {
+   "slot": 104,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:104"
+  },
+  {
+   "slot": 105,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:105"
+  },
+  {
+   "slot": 106,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:106"
+  },
+  {
+   "slot": 107,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:107"
+  },
+  {
+   "slot": 108,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:108"
+  },
+  {
+   "slot": 109,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:109"
+  },
+  {
+   "slot": 110,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:110"
+  },
+  {
+   "slot": 111,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:111"
+  },
+  {
+   "slot": 112,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:112"
+  },
+  {
+   "slot": 113,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:113"
+  },
+  {
+   "slot": 114,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:114"
+  },
+  {
+   "slot": 115,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:115"
+  },
+  {
+   "slot": 116,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:116"
+  },
+  {
+   "slot": 117,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:117"
+  },
+  {
+   "slot": 118,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:118"
+  },
+  {
+   "slot": 119,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:119"
+  },
+  {
+   "slot": 120,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:120"
+  },
+  {
+   "slot": 121,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:121"
+  },
+  {
+   "slot": 122,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:122"
+  },
+  {
+   "slot": 123,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:123"
+  },
+  {
+   "slot": 124,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:124"
+  },
+  {
+   "slot": 125,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:125"
+  },
+  {
+   "slot": 126,
+   "origin": "texture-a",
+   "kind": "generated",
+   "seed": "skin:126"
+  },
+  {
+   "slot": 127,
+   "origin": "texture-b",
+   "kind": "generated",
+   "seed": "skin:127"
+  },
+  {
+   "slot": 128,
+   "origin": "texture-c",
+   "kind": "generated",
+   "seed": "skin:128"
+  },
+  {
+   "slot": 129,
+   "origin": "texture-d",
+   "kind": "generated",
+   "seed": "skin:129"
+  },
+  {
+   "slot": 130,
+   "origin": "texture-e",
+   "kind": "generated",
+   "seed": "skin:130"
+  },
+  {
+   "slot": 131,
+   "origin": "texture-f",
+   "kind": "generated",
+   "seed": "skin:131"
+  },
+  {
+   "slot": 132,
+   "origin": "texture-g",
+   "kind": "generated",
+   "seed": "skin:132"
+  },
+  {
+   "slot": 133,
+   "origin": "texture-h",
+   "kind": "generated",
+   "seed": "skin:133"
+  },
+  {
+   "slot": 134,
+   "origin": "texture-i",
+   "kind": "generated",
+   "seed": "skin:134"
+  },
+  {
+   "slot": 135,
+   "origin": "texture-j",
+   "kind": "generated",
+   "seed": "skin:135"
+  },
+  {
+   "slot": 136,
+   "origin": "texture-k",
+   "kind": "generated",
+   "seed": "skin:136"
+  },
+  {
+   "slot": 137,
+   "origin": "texture-l",
+   "kind": "generated",
+   "seed": "skin:137"
+  },
+  {
+   "slot": 138,
+   "origin": "texture-m",
+   "kind": "generated",
+   "seed": "skin:138"
+  },
+  {
+   "slot": 139,
+   "origin": "texture-n",
+   "kind": "generated",
+   "seed": "skin:139"
+  },
+  {
+   "slot": 140,
+   "origin": "texture-o",
+   "kind": "generated",
+   "seed": "skin:140"
+  },
+  {
+   "slot": 141,
+   "origin": "texture-p",
+   "kind": "generated",
+   "seed": "skin:141"
+  },
+  {
+   "slot": 142,
+   "origin": "texture-q",
+   "kind": "generated",
+   "seed": "skin:142"
+  },
+  {
+   "slot": 143,
+   "origin": "texture-r",
+   "kind": "generated",
+   "seed": "skin:143"
+  }
  ]
 }

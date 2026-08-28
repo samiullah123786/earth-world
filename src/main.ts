@@ -8,6 +8,7 @@ import { conversationSubtitle, conversationTitle, groupConversations } from './w
 import { lookFor, makeFace, makeHair } from './world3d/citizenKit';
 import { furnishHome, inside, interiorPalette, wallTiles } from './world3d/interior';
 import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/blocks';
+import { assetsFor, facingOf, manifest, pick, rollOf } from '../shared/catalogue';
 import { BlockBatch, absorb, shadedBox } from './world3d/batch';
 import { AmbientLife, Clouds, makeSkyDome } from './world3d/sky';
 import { CitizenBatch, harvest, rigFromModel, skinAtlasMaterial, type Pose, type Rig } from './world3d/rig';
@@ -84,6 +85,16 @@ type CitizenModel = {
   px: number; pz: number; py: number;
   heading: number;
   placed: boolean;
+  /**
+   * When this citizen stepped through the gate, and when they started back.
+   *
+   * A citizen appearing and disappearing between two polls is the truth about
+   * an agent connecting and disconnecting, but it reads as a glitch. The gate
+   * is the world's own explanation for it - so arriving and leaving are given
+   * the seconds they need to be seen happening.
+   */
+  arrivedAt: number;
+  leavingSince: number | null;
 };
 
 const required = <T extends HTMLElement>(id: string) => {
@@ -414,6 +425,43 @@ function buildTerrain(data: Terrain) {
   // and the weather all stay on one path rather than two.
   for (const set of treeInstances) set.dispose();
   treeInstances.length = 0;
+
+  // Rocks, stumps, bushes and flowers on open ground.
+  //
+  // This is what replaced the strewn boxes: about one tile in forty gets a
+  // single modelled thing rather than every second tile getting four green
+  // slabs. Sparse enough to read as detail instead of as litter, and it grows
+  // with the map for free because it is derived from the tile.
+  if (floraKit.length) {
+    const byFlora = new Map<Model, ModelInstances>();
+    for (let z = 2; z < data.height - 2; z++) {
+      const row = data.rows[z] ?? '';
+      for (let x = 2; x < data.width - 2; x++) {
+        const letter = row[x] ?? '.';
+        if (letter !== 'g' && letter !== 'u') continue;
+        if (tileRandom(x, z, 91) > 0.026) continue;
+        const model = floraKit[Math.min(floraKit.length - 1,
+          Math.floor(tileRandom(x, z, 93) * floraKit.length))];
+        let set = byFlora.get(model);
+        if (!set) {
+          set = new ModelInstances(scatterRoot, model);
+          byFlora.set(model, set);
+          treeInstances.push(set);
+        }
+        const spread = Math.max(model.size.x, model.size.z, 0.001);
+        const scale = (0.5 + tileRandom(x, z, 95) * 0.6) / spread;
+        set.add(new THREE.Matrix4().compose(
+          new THREE.Vector3(x + 0.25 + tileRandom(x, z, 97) * 0.5,
+            heightAt(x + 0.5, z + 0.5),
+            z + 0.25 + tileRandom(x, z, 99) * 0.5),
+          new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0), tileRandom(x, z, 101) * Math.PI * 2),
+          new THREE.Vector3(scale, scale, scale)));
+      }
+    }
+    for (const set of byFlora.values()) set.flush();
+  }
+
   if (treeKit.length) {
     const byTree = new Map<Model, ModelInstances>();
     const plant = (x: number, z: number, salt: number, sizeScale: number) => {
@@ -504,6 +552,8 @@ function buildTerrain(data: Terrain) {
   islandRoot.add(buildIsland(data.width, data.height));
 
   clearGroup(scatterRoot);
+  // The old box speckle, off by default. The modelled flora above is what
+  // replaced it.
   if (view.groundDetail) scatterRoot.add(buildScatter(data.rows, data.width, data.height, DETAIL));
 
   // What a walker cannot pass through. Trees and water are the map's own
@@ -520,7 +570,6 @@ function buildTerrain(data: Terrain) {
   // Weather needs to know how big the world is, and the world only says so
   // when the terrain arrives. Built once; a later expansion widens the map
   // without needing a second sky.
-  populateWild(data);
   if (!clouds) clouds = new Clouds(atmosphereRoot, BOX, Math.max(data.width, data.height));
   if (!wildlife) wildlife = new AmbientLife(atmosphereRoot, BOX, Math.max(data.width, data.height));
   clouds.setVisible(view.clouds);
@@ -710,10 +759,8 @@ let structureSolid = new Set<number>();
 // Each kit keeps its own folder because every model asks for
 // `Textures/colormap.png` relative to itself, and two kits sharing one folder
 // would fight over that name.
-const HOME_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']
-  .map((letter) => `/models/home/${letter}.glb`);
-const CIVIC_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
-  .map((letter) => `/models/civic/${letter}.glb`);
+const HOME_MODELS = manifest('home');
+const CIVIC_MODELS = manifest('civic');
 
 // One body for everybody.
 //
@@ -723,27 +770,22 @@ const CIVIC_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
 // being capped at eighteen faces.
 const CITIZEN_MODEL = '/models/citizen/a.glb';
 const SKIN_ATLAS = '/models/citizen/skins.png';
-const SKIN_GRID = 8;
+const SKIN_GRID = 12;   // 144 skins at 256px a cell; see tools/skinsmith.py
 
-// Twenty-seven creatures. Not citizens - they carry no identity, hold nothing,
-// and are never in the directory. A town with a fox trotting past is simply a
-// town somebody watches for longer.
-// Twelve of the twenty-four, because each species is its own draw call and a
-// street needs variety rather than a zoo. The ones left out are the ones least
-// at home in a town: the giraffe, the polar bear, the parrot.
-const ANIMAL_MODELS = [
-  'cat', 'dog', 'fox', 'deer', 'bunny', 'chick',
-  'pig', 'cow', 'hog', 'penguin', 'crab', 'bee',
-].map((name) => `/models/animal/${name}.glb`);
-const TREE_MODELS = [0, 1, 2, 3, 4, 5, 6, 7].map((index) => `/models/tree/${index}.glb`);
-const GARDEN_MODELS = [0, 1, 2, 3, 4, 5].map((index) => `/models/garden/${index}.glb`);
+// What exists, and what may stand where, is decided in shared/catalogue.ts -
+// not in lists kept here. The renderer draws what the catalogue says belongs;
+// deciding what belongs where is a question about the world, answered somewhere
+// the Kernel could read too.
+const TREE_MODELS = manifest('tree');
+const FLORA_MODELS = manifest('flora');
+const GARDEN_MODELS = manifest('garden');
 
 let homeKit: Model[] = [];
 let civicKit: Model[] = [];
 let citizenBody: Model | null = null;
 let skinMaterial: THREE.Material | null = null;
-let animalKit: Model[] = [];
 let treeKit: Model[] = [];
+let floraKit: Model[] = [];
 let gardenKit: Model[] = [];
 let kitReady = false;
 /** Bumped when the art changes, so every body knows it is stale. */
@@ -752,26 +794,28 @@ const modelInstances: ModelInstances[] = [];
 const treeInstances: ModelInstances[] = [];
 
 async function loadKit() {
-  const [homes, civics, people, trees, garden, animals, atlas] = await Promise.all([
+  const [homes, civics, people, trees, flora, garden, atlas] = await Promise.all([
     loadModels(HOME_MODELS),
     loadModels(CIVIC_MODELS),
     loadModels([CITIZEN_MODEL]),
     loadModels(TREE_MODELS),
+    loadModels(FLORA_MODELS),
     loadModels(GARDEN_MODELS),
-    loadModels(ANIMAL_MODELS),
     new THREE.TextureLoader().loadAsync(SKIN_ATLAS).catch(() => null),
   ]);
   homeKit = homes;
   civicKit = civics;
   citizenBody = people[0] ?? null;
   skinMaterial = atlas ? skinAtlasMaterial(atlas, SKIN_GRID) : null;
-  animalKit = animals;
   treeKit = trees;
+  floraKit = flora;
   gardenKit = garden;
   kitReady = homes.length > 0;
-  // Redraw with the real art now that it is here. Citizens rebuild themselves
-  // on the next poll; the town and the woodland have to be asked.
-  for (const model of citizenModels.values()) model.toolKey = '\u0000force-rebuild';
+  // Redraw with the real art now that it is here. Bumping the generation is
+  // what makes every existing body stale - the sentinel string this replaced
+  // worked only because it happened never to equal a generation key, which is
+  // luck rather than a mechanism. The town and the woodland are asked directly.
+  kitGeneration += 1;
   if (world) buildStructures(world.builds, world.venues, world.gate);
   if (terrain) buildTerrain(terrain);
 }
@@ -785,7 +829,24 @@ async function loadKit() {
  */
 function modelFor(build: Build, kit: Model[]): Model | null {
   if (!kit.length) return null;
-  return kit[hash(build.buildId ?? `${build.x}:${build.y}`) % kit.length];
+  // The catalogue decides WHICH, weighted so a street is mostly ordinary houses
+  // with the occasional tall one; the kit is only what actually downloaded.
+  const kind = kit === civicKit ? 'civic' : 'home';
+  const asset = pick(assetsFor(kind, 'plot'), buildIdOf(build));
+  const byUrl = kit.find((model) => model.url === asset?.url);
+  return byUrl ?? kit[Math.floor(rollOf(buildIdOf(build)) * kit.length)] ?? null;
+}
+
+/**
+ * A building's identity, for everything derived from it.
+ *
+ * The buildId when there is one, and the tile it stands on when there is not -
+ * so a structure keeps its face across reloads either way, and two buildings
+ * can never collide on the same identity because two buildings cannot stand on
+ * the same tile.
+ */
+function buildIdOf(build: Build): string {
+  return build.buildId ?? `plot:${build.x}:${build.y}`;
 }
 
 function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y: number }) {
@@ -865,7 +926,7 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
       }
       // A quarter turn per building, chosen from the id, so a row of the same
       // model does not read as a row of the same model.
-      const facing = (hash(`${build.buildId}:facing`) % 4) * (Math.PI / 2);
+      const facing = facingOf(buildIdOf(build));
       set.add(fitToPlot(model, build, siteHeight(build), facing), build.buildId ?? '');
       for (const tile of wallTiles(build)) structureSolid.add(solidKey(tile.x, tile.y));
       chimneys.push({ x: build.x + build.w - 0.4, y: siteHeight(build) + 3.4, z: build.y + 0.5 });
@@ -1053,6 +1114,7 @@ function makeCitizen(row: Citizen): CitizenModel {
         { material: skinMaterial, cell }),
       row, toolKey: `${kitGeneration}:`, label,
       px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
+      arrivedAt: performance.now(), leavingSince: null,
     };
   }
 
@@ -1134,16 +1196,30 @@ function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): Citizen
     rig: { agentId: row.agentId, parts, scale: look.height },
     row, toolKey: `${kitGeneration}:${toolKey}`, label,
     px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
+    arrivedAt: performance.now(), leavingSince: null,
   };
 }
 
+/** How long a citizen takes to rise through the gate, or sink back into it. */
+const GATE_MS = 1100;
+
 function syncCitizens(rows: Citizen[]) {
+  const now = performance.now();
   const awake = new Set(rows.filter((row) => !row.asleep).map((row) => row.agentId));
   for (const [agentId, model] of citizenModels) {
-    if (!awake.has(agentId)) {
-      if (model.label) citizenRoot.remove(model.label);
-      citizenModels.delete(agentId);
+    if (awake.has(agentId)) {
+      // Back before they finished leaving: a dropped connection that recovered.
+      // Cancel the departure rather than let them fade out and pop back.
+      model.leavingSince = null;
+      continue;
     }
+    if (model.leavingSince === null) {
+      model.leavingSince = now;
+      continue;
+    }
+    if (now - model.leavingSince < GATE_MS) continue;
+    if (model.label) citizenRoot.remove(model.label);
+    citizenModels.delete(agentId);
   }
   for (const row of rows) {
     if (row.asleep) continue;
@@ -1169,6 +1245,10 @@ function syncCitizens(rows: Citizen[]) {
       const rebuilt = makeCitizen(row);
       rebuilt.px = carried.px; rebuilt.pz = carried.pz; rebuilt.py = carried.py;
       rebuilt.heading = carried.heading; rebuilt.placed = carried.placed;
+      // A change of art is not a second birth: keep the arrival they already had
+      // so nobody re-materialises because the models finished downloading.
+      rebuilt.arrivedAt = carried.arrivedAt;
+      rebuilt.leavingSince = carried.leavingSince;
       citizenModels.set(row.agentId, rebuilt);
       model = rebuilt;
     }
@@ -1202,6 +1282,7 @@ const posed: Array<{ rig: Rig; pose: Pose }> = [];
 
 function animateCitizens(elapsed: number, elapsedDelta: number) {
   const now = Date.now() + clockOffset - 140;
+  const frameNow = performance.now();
   posed.length = 0;
   const eye = camera.position;
 
@@ -1275,12 +1356,30 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
       model.heading += delta * .18;
     }
 
+    // Rising through the gate, or sinking back into it.
+    //
+    // Deliberately not a fade: a translucent citizen would need its own draw
+    // call outside the shared batch, and a body that is HALF THERE is a worse
+    // lie than one that is arriving. So they come up out of the ground turning,
+    // which the instanced path can express with the matrix it already writes.
+    const sinceArrival = frameNow - model.arrivedAt;
+    const gate = model.leavingSince !== null
+      ? 1 - Math.min(1, (frameNow - model.leavingSince) / GATE_MS)
+      : Math.min(1, sinceArrival / GATE_MS);
+    // Eased so the last third is slow: the moment a citizen becomes whole is
+    // the one worth watching.
+    const risen = gate * gate * (3 - 2 * gate);
+    const sunken = (1 - risen) * 1.9;
+    const spin = (1 - risen) * (model.leavingSince !== null ? -5.2 : 5.2);
+
     posed.push({
       rig: model.rig,
       pose: {
-        x: model.px, y: model.py + bob, z: model.pz,
-        heading: model.heading, leftArm, rightArm, leftLeg, rightLeg, lean,
-        scale: model.rig.scale,
+        x: model.px, y: model.py + bob - sunken, z: model.pz,
+        heading: model.heading + spin, leftArm, rightArm, leftLeg, rightLeg, lean,
+        // Never quite zero: a scale of nothing collapses the matrix and the
+        // GPU renders whatever the previous instance left behind.
+        scale: model.rig.scale * Math.max(0.05, risen),
       },
     });
 
@@ -1288,7 +1387,7 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
     // town you are looking at from above is a roster, not a view. They fade in
     // when you are close enough to care who somebody is.
     if (model.label) {
-      const near = view.nameplates
+      const near = view.nameplates && risen > 0.85
         && eye.distanceTo(new THREE.Vector3(model.px, model.py + 1, model.pz)) < view.nameplateRange;
       model.label.visible = near;
       // Just above the head. The rig scale is now a ratio between two kits'
@@ -2360,124 +2459,6 @@ function tendStats(now: number) {
 }
 
 
-/* ── Animals ───────────────────────────────────────────────────────────────
-   Not citizens, and the distinction matters. These carry no identity, hold
-   nothing, own no land, appear in no directory and are recorded nowhere. They
-   are scenery that moves, placed deterministically from the tile they stand on
-   so the same fox is on the same corner every session.
-
-   A town where nothing moves but the people is a diagram of a town. A fox
-   trotting across a road and a chicken pecking outside a house is most of the
-   difference between a place you look at and a place you watch. */
-
-type Beast = {
-  model: Model;
-  /** The patch it keeps to, in tiles. */
-  home: THREE.Vector2;
-  range: number;
-  speed: number;
-  phase: number;
-  scale: number;
-};
-
-const beastRoot = new THREE.Group();
-scene.add(beastRoot);
-let beasts: Beast[] = [];
-let beastMeshes = new Map<Model, THREE.InstancedMesh[]>();
-const beastMatrix = new THREE.Matrix4();
-const beastPos = new THREE.Vector3();
-const beastQuat = new THREE.Quaternion();
-const beastScale = new THREE.Vector3();
-const BEAST_UP = new THREE.Vector3(0, 1, 0);
-
-/** How tall an animal stands, so a bee and a cow are not the same size. */
-const BEAST_HEIGHT: Record<string, number> = {
-  bee: 0.3, chick: 0.32, crab: 0.3, bunny: 0.42, cat: 0.45,
-  fox: 0.5, dog: 0.5, penguin: 0.5, pig: 0.55, hog: 0.6, deer: 0.85, cow: 0.85,
-};
-
-function populateWild(data: Terrain) {
-  for (const meshes of beastMeshes.values()) {
-    for (const mesh of meshes) { beastRoot.remove(mesh); mesh.dispose(); }
-  }
-  beastMeshes = new Map();
-  beasts = [];
-  if (!animalKit.length) return;
-
-  // Somewhere open, away from the water and the roads, and inside the settled
-  // half of the map so the animals are where the people are.
-  const spots: Array<{ x: number; z: number }> = [];
-  for (let z = 4; z < data.height - 4; z++) {
-    const row = data.rows[z] ?? '';
-    for (let x = 4; x < data.width - 4; x++) {
-      if ((row[x] ?? '.') !== 'g') continue;
-      if (tileRandom(x, z, 71) > 0.006) continue;
-      spots.push({ x, z });
-    }
-  }
-
-  for (const spot of spots.slice(0, 46)) {
-    const model = animalKit[Math.floor(tileRandom(spot.x, spot.z, 73) * animalKit.length)] ?? animalKit[0];
-    const species = model.name.replace('.glb', '');
-    const height = BEAST_HEIGHT[species] ?? 0.5;
-    beasts.push({
-      model,
-      home: new THREE.Vector2(spot.x + 0.5, spot.z + 0.5),
-      range: 1.4 + tileRandom(spot.x, spot.z, 75) * 3.4,
-      speed: 0.14 + tileRandom(spot.x, spot.z, 77) * 0.24,
-      phase: tileRandom(spot.x, spot.z, 79) * Math.PI * 2,
-      scale: height / Math.max(model.size.y, 0.001),
-    });
-  }
-
-  // One instanced mesh per species, sized to how many of that species there are.
-  const bySpecies = new Map<Model, Beast[]>();
-  for (const beast of beasts) {
-    const list = bySpecies.get(beast.model) ?? [];
-    list.push(beast);
-    bySpecies.set(beast.model, list);
-  }
-  for (const [model, herd] of bySpecies) {
-    const meshes = model.pieces.map((piece) => {
-      const mesh = new THREE.InstancedMesh(piece.geometry, piece.material, herd.length);
-      mesh.castShadow = true;
-      mesh.frustumCulled = false;
-      beastRoot.add(mesh);
-      return mesh;
-    });
-    beastMeshes.set(model, meshes);
-  }
-}
-
-/**
- * Walk them.
- *
- * A slow circuit around the patch each one was placed on, facing the way it is
- * going, with a small hop for the ones that hop. Wholly client-side: nothing
- * here is reported to the Kernel, because none of it happened.
- */
-function tendWild(elapsed: number) {
-  if (!beasts.length) return;
-  const counts = new Map<Model, number>();
-  for (const beast of beasts) {
-    const index = counts.get(beast.model) ?? 0;
-    counts.set(beast.model, index + 1);
-    const angle = elapsed * beast.speed + beast.phase;
-    const x = beast.home.x + Math.cos(angle) * beast.range;
-    const z = beast.home.y + Math.sin(angle) * beast.range * 0.7;
-    const hop = Math.abs(Math.sin(elapsed * beast.speed * 9 + beast.phase)) * 0.06;
-    beastPos.set(x, heightAt(x, z) + hop, z);
-    // Facing along the tangent of the circuit, which is where it is walking.
-    beastQuat.setFromAxisAngle(BEAST_UP, Math.atan2(-Math.sin(angle), Math.cos(angle) * 0.7) + Math.PI / 2);
-    beastScale.setScalar(beast.scale);
-    beastMatrix.compose(beastPos, beastQuat, beastScale);
-    for (const mesh of beastMeshes.get(beast.model) ?? []) mesh.setMatrixAt(index, beastMatrix);
-  }
-  for (const meshes of beastMeshes.values()) {
-    for (const mesh of meshes) mesh.instanceMatrix.needsUpdate = true;
-  }
-}
-
 function animate() {
   const now = performance.now();
   const delta = Math.min((now - lastFrame) / 1000, .05);
@@ -2499,7 +2480,6 @@ function animate() {
   clouds?.update(elapsedSeconds, sky);
   wildlife?.update(elapsedSeconds, sky);
   tendWater(elapsedSeconds, sky);
-  tendWild(elapsedSeconds);
   renderer.render(scene, camera);
   tendStats(now);
 }
@@ -2520,11 +2500,9 @@ function animate() {
   structureDrawCalls: structureBatch.drawCalls + roofBatch.drawCalls + landmarkBatch.drawCalls,
   structureInstances: structureBatch.instanceCount + roofBatch.instanceCount + landmarkBatch.instanceCount,
   liveLights: interiorLights.filter((light) => light.visible).length,
-  animals: beasts.length,
-  animalDrawCalls: [...beastMeshes.values()].reduce((sum, meshes) => sum + meshes.length, 0),
   modelDrawCalls: modelInstances.reduce((sum, set) => sum + set.drawCalls, 0),
-  kitLoaded: `${homeKit.length} homes, ${civicKit.length} civic, ${treeKit.length} trees, `
-    + `${animalKit.length} animals, ${citizenBody ? 'body+' : 'no body, '}${skinMaterial ? `${SKIN_GRID * SKIN_GRID} skins` : 'no skins'}`,
+  kitLoaded: `${homeKit.length} homes, ${civicKit.length} civic, ${treeKit.length} trees, ${floraKit.length} flora, `
+    + `${citizenBody ? 'body+' : 'no body, '}${skinMaterial ? `${SKIN_GRID * SKIN_GRID} skins` : 'no skins'}`,
   treeDrawCalls: treeInstances.reduce((sum, set) => sum + set.drawCalls, 0),
   citizenRig: (() => {
     const first = [...citizenModels.values()][0];

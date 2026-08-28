@@ -4,12 +4,10 @@
  * The world used to end at a flat blue clear-colour. That is the difference
  * between a render and a place: a render stops at the edge of its geometry, and
  * a place carries on past it. What is here is a gradient dome, clouds that
- * drift, birds that circle, and smoke from the chimneys of houses that are
- * actually occupied.
+ * drift and birds that circle.
  *
- * All of it is instanced. The entire atmosphere - every cloud, every bird,
- * every wisp of smoke - costs three draw calls, which is the only reason it is
- * affordable to add at all in a renderer that was already over budget.
+ * All of it is instanced: the entire atmosphere costs two draw calls, which is
+ * the only reason it is affordable in a renderer that was already over budget.
  */
 
 import * as THREE from 'three';
@@ -158,11 +156,10 @@ export class Clouds {
 }
 
 /**
- * Birds, and smoke from lived-in chimneys.
+ * Birds.
  *
- * One instanced mesh for both, because they are the same thing to the GPU - a
- * small pale box in the air - and separating them would double the cost of the
- * cheapest part of the scene.
+ * One instanced mesh, because a flock is the cheapest thing in the scene and
+ * ought to stay that way.
  */
 export class AmbientLife {
   private mesh: THREE.InstancedMesh;
@@ -198,9 +195,13 @@ export class AmbientLife {
     root.add(this.mesh);
   }
 
-  /** Where smoke should rise from: the chimney of every occupied house. */
-  setChimneys(spots: Array<{ x: number; y: number; z: number }>): void {
-    this.chimneys = spots.slice(0, 64).map((spot, index) => ({ ...spot, seed: index * 0.7 }));
+  /**
+   * Kept as a no-op so the caller does not have to know smoke is gone.
+   *
+   * The renderer still knows where every chimney is; nothing is drawn on them.
+   */
+  setChimneys(_spots: Array<{ x: number; y: number; z: number }>): void {
+    this.chimneys = [];
   }
 
   update(elapsed: number, state: SkyState): void {
@@ -231,23 +232,19 @@ export class AmbientLife {
       }
     }
 
-    // Smoke. Denser and more visible at night and in cold light, which is also
-    // when a lit chimney means the most.
-    const smoke = new THREE.Color(0xd8d4cc).lerp(state.horizon, 0.35);
-    for (const chimney of this.chimneys) {
-      for (let puff = 0; puff < 5; puff++) {
-        const life = ((elapsed * 0.42 + chimney.seed + puff * 0.2) % 1);
-        const rise = life * 4.4;
-        const spread = life * 1.1;
-        write(
-          chimney.x + Math.sin(elapsed * 0.6 + puff + chimney.seed) * spread,
-          chimney.y + rise,
-          chimney.z + Math.cos(elapsed * 0.5 + puff) * spread * 0.6,
-          0.3 + life * 0.75,
-          smoke,
-          1 - life);
-      }
-    }
+    // Chimney smoke used to rise here, and it was removed rather than fixed
+    // twice over.
+    //
+    // The bug: each puff faded by multiplying its colour toward zero, because
+    // one instanced mesh shares a single opacity and per-instance alpha was not
+    // available. Multiplying a colour to zero does not fade it - it turns it
+    // BLACK. So every occupied house wore a column of black cubes, which is
+    // exactly what it looked like.
+    //
+    // It could have been fixed by shrinking the puffs instead, or by lerping
+    // them toward the sky. It is gone instead because smoke over a bright town
+    // was never carrying its weight, and a wrong thing removed beats a wrong
+    // thing patched.
 
     this.mesh.count = index;
     this.mesh.instanceMatrix.needsUpdate = true;

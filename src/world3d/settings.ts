@@ -14,7 +14,22 @@
  */
 
 export type Quality = 'low' | 'balanced' | 'high';
-export type ClockMode = 'live' | 'dawn' | 'day' | 'noon' | 'golden' | 'night';
+/**
+ * The hours this world keeps.
+ *
+ * There is no night, and no cycle that reaches one.
+ *
+ * A day-night cycle is a lovely thing in a game somebody has chosen to play
+ * for an hour. This is a window onto a living town that people leave open, land
+ * on from a link, and screenshot - and half of those moments falling in the
+ * dark served nobody. It was tried both ways: weighted three-to-one toward
+ * daylight, roughly one visit in four still arrived at night, and anybody who
+ * left the tab open watched the town they came to see go black.
+ *
+ * The sun still moves - morning through golden hour is a real range and the
+ * light genuinely changes across it. It just never sets.
+ */
+export type ClockMode = 'morning' | 'day' | 'noon' | 'golden';
 
 export type Settings = {
   quality: Quality;
@@ -44,14 +59,6 @@ export const DEFAULTS: Settings = {
   // planting do the job it was there to do, and do it properly. Anyone who
   // wants the old speckle back can switch it on.
   groundDetail: false,
-  // Daylight, not the cycle.
-  //
-  // A moving sun is a lovely thing to have and a terrible thing to open on.
-  // Even weighted three-to-one toward daylight, a six-minute cycle means
-  // roughly one visit in four arrives in the dark, and somebody who leaves the
-  // tab open watches the town they came to see go black. The cycle is one
-  // click away in the view panel for anybody who wants it; the front door is
-  // always open in the afternoon.
   clock: 'day',
   nameplateRange: 26,
 };
@@ -82,14 +89,14 @@ export const PROFILES: Record<Quality, {
  * spends very little of a sine wave near the horizon, and dawn and golden hour
  * are entirely about being near the horizon.
  */
-export const CLOCK_PHASES: Record<Exclude<ClockMode, 'live'>, number> = {
-  dawn: 0.04,
-  // Mid-morning: full daylight, but the sun is off to one side so buildings
-  // still cast. Noon is brighter and flatter - the shadows go straight down.
+export const CLOCK_PHASES: Record<ClockMode, number> = {
+  // Early, with long shadows and a warm cast, but fully lit.
+  morning: 0.09,
+  // Mid-morning: full daylight, sun off to one side so buildings still cast.
+  // Noon is brighter and flatter - the shadows go straight down.
   day: 0.16,
   noon: 0.25,
   golden: 0.45,
-  night: 0.75,
 };
 
 const KEY = 'earth.view';
@@ -106,7 +113,9 @@ export function loadSettings(): Settings {
       ...stored,
       quality: (['low', 'balanced', 'high'] as const).includes(stored.quality as Quality)
         ? stored.quality as Quality : DEFAULTS.quality,
-      clock: (['live', 'dawn', 'day', 'noon', 'golden', 'night'] as const).includes(stored.clock as ClockMode)
+      // Anything saved under the old scheme - live, dawn, night - lands back
+      // on daylight rather than resurrecting an hour that no longer exists.
+      clock: (['morning', 'day', 'noon', 'golden'] as const).includes(stored.clock as ClockMode)
         ? stored.clock as ClockMode : DEFAULTS.clock,
     };
   } catch {
@@ -136,20 +145,7 @@ export function suggestQuality(): Quality {
   return 'high';
 }
 
-/** The clock phase to render at, given the settings and the wall clock. */
-export function phaseFor(settings: Settings, now: number): number {
-  if (settings.clock !== 'live') return CLOCK_PHASES[settings.clock];
-  // A full day every six minutes - long enough that the light is not strobing,
-  // short enough that somebody watching for a minute sees it move.
-  //
-  // The cycle is deliberately NOT uniform. An even split means half of everyone
-  // who opens the world arrives at night, which is a poor way to meet a place
-  // and says nothing true about it either. Daylight gets three quarters of the
-  // wall clock and night the remaining quarter, so dusk still comes round and
-  // is still worth waiting for.
-  const raw = (now / 360_000) % 1;
-  const DAY_SHARE = 0.75;
-  return raw < DAY_SHARE
-    ? (raw / DAY_SHARE) * 0.5
-    : 0.5 + ((raw - DAY_SHARE) / (1 - DAY_SHARE)) * 0.5;
+/** The clock phase to render at. Always daylight; see ClockMode. */
+export function phaseFor(settings: Settings, _now: number): number {
+  return CLOCK_PHASES[settings.clock] ?? CLOCK_PHASES.day;
 }

@@ -12,8 +12,8 @@ be GENERATED from their agent id - stable forever, unique in practice, and
 impossible to claim, which is the rule every other fact in this world already
 follows.
 
-This script bakes the result into one atlas so the whole town still costs one
-draw call: N skins in a grid, and the renderer picks a cell per citizen with an
+This bakes the result into one atlas so the whole town still costs six draw
+calls: N skins in a grid, and the renderer picks a cell per citizen with an
 instanced UV offset. Run it when the palette or the cell count changes; the
 output is committed, so a browser never generates anything.
 
@@ -31,12 +31,26 @@ from PIL import Image
 BASE = 'assets/kenney/blocky/Models/GLB format/Textures'
 OUT_DIR = 'public/models/citizen'
 
-# Sixty-four skins in an eight-by-eight grid. Sixty-four is not a limit on
-# distinct citizens - it is how many DIFFERENT LOOKS exist before two people
-# start sharing one, and at 128 pixels a cell the whole sheet is a single
-# 1024-pixel texture that any phone will hold.
-GRID = 8
-CELL = 128
+# TWO HUNDRED AND FIFTY-SIX PIXELS A CELL, and this is the number that was wrong.
+#
+# The first atlas packed each skin into 128 pixels, which sounded generous
+# against a 1024-pixel source until you look at where the face actually is: the
+# head occupies about a third of the sheet, so a face rendered at 128 gets
+# roughly forty pixels and an EYE gets four. Four pixels is not an eye. Every
+# citizen in the town had their features smeared into a blob, which is exactly
+# what it looked like.
+#
+# At 256 the head gets ninety pixels and an eye gets seven, which reads. The
+# cost is a 3072-pixel sheet instead of a 2048-pixel one.
+CELL = 256
+
+# Twelve by twelve: 144 skins.
+#
+# Fewer than the 256 this briefly had, and deliberately - readable faces are
+# worth more than a bigger number nobody can tell apart. Raising either is one
+# constant and a re-run; what it costs is texture memory, never draw calls,
+# because the whole cast shares this one sheet however many people are in town.
+GRID = 12
 
 
 def stream(seed: str):
@@ -64,19 +78,45 @@ def is_skin(rgb) -> bool:
     return 0.02 <= h <= 0.13 and 0.12 <= s <= 0.72 and v >= 0.35
 
 
+def is_hair(rgb) -> bool:
+    """Hair and beards: browns and greys darker than skin, above the outlines."""
+    h, s, v = colorsys.rgb_to_hsv(*[c / 255 for c in rgb])
+    return 0.22 <= v <= 0.58 and s <= 0.55 and (h <= 0.12 or h >= 0.92 or s < 0.14)
+
+
 def is_structural(rgb) -> bool:
     """Background, outlines, whites and near-blacks. Never recoloured."""
     _, s, v = colorsys.rgb_to_hsv(*[c / 255 for c in rgb])
-    return s < 0.16 or v < 0.22
+    return v < 0.18 or (s < 0.06 and v > 0.9)
 
 
 def reskin(base: Image.Image, seed: str) -> Image.Image:
-    """Rotate one base skin's clothing hues by a deterministic amount."""
+    """
+    One citizen's skin, from one base and one seed.
+
+    Three independent moves, because varying only the clothing produced a
+    hundred and forty-four people who were plainly the same eighteen faces in
+    different shirts:
+
+      CLOTHING turns freely. Any hue, and a second smaller turn for the darker
+      colours so trousers do not always match the shirt.
+
+      SKIN shifts a little. Warmer or cooler, lighter or darker, but never off
+      the range of human complexions - a face is the one thing here that must
+      not go green.
+
+      HAIR turns within the range hair comes in: black through brown to fair,
+      plus the greys. Not blue.
+    """
     nxt = stream(seed)
-    shift = nxt(360) / 360.0
-    # A second, smaller turn so trousers do not always match the shirt.
-    split = nxt(140) / 360.0
-    lift = 0.84 + nxt(36) / 100.0
+    cloth_turn = nxt(360) / 360.0
+    cloth_split = nxt(140) / 360.0
+    cloth_lift = 0.84 + nxt(36) / 100.0
+    skin_warm = (nxt(60) - 30) / 3000.0          # +/- 0.01 in hue
+    skin_depth = 0.82 + nxt(40) / 100.0          # 0.82 .. 1.22 in value
+    hair_hue = 0.02 + nxt(90) / 1000.0           # 0.02 .. 0.11, hair browns
+    hair_depth = 0.7 + nxt(60) / 100.0
+    grey_hair = nxt(100) < 14
 
     out = base.convert('RGB')
     pixels = out.load()
@@ -87,19 +127,31 @@ def reskin(base: Image.Image, seed: str) -> Image.Image:
             rgb = pixels[x, y]
             hit = seen.get(rgb)
             if hit is None:
-                if is_structural(rgb) or is_skin(rgb):
+                h, s, v = colorsys.rgb_to_hsv(*[c / 255 for c in rgb])
+                if is_structural(rgb):
                     hit = rgb
+                elif is_skin(rgb):
+                    r, g, b = colorsys.hsv_to_rgb(
+                        max(0.015, min(0.14, h + skin_warm)),
+                        min(0.78, s * 1.02),
+                        max(0.3, min(0.99, v * skin_depth)))
+                    hit = (int(r * 255), int(g * 255), int(b * 255))
+                elif is_hair(rgb):
+                    r, g, b = colorsys.hsv_to_rgb(
+                        hair_hue,
+                        0.04 if grey_hair else min(0.6, s * 1.1),
+                        max(0.14, min(0.86, v * (1.35 if grey_hair else hair_depth))))
+                    hit = (int(r * 255), int(g * 255), int(b * 255))
                 else:
-                    h, s, v = colorsys.rgb_to_hsv(*[c / 255 for c in rgb])
                     # Darker colours are trousers and shoes more often than
                     # shirts, so they take the second turn. Crude; reads right.
-                    turn = shift if v > 0.42 else (shift + split) % 1.0
+                    turn = cloth_turn if v > 0.42 else (cloth_turn + cloth_split) % 1.0
                     # Slightly DESATURATED, not boosted. The world's palette is
                     # built on four muted hue anchors, and a cast in neon pink
                     # walking past it reads as two projects stapled together.
                     r, g, b = colorsys.hsv_to_rgb((h + turn) % 1.0,
                                                   min(1.0, s * 0.88),
-                                                  min(1.0, v * lift))
+                                                  min(1.0, v * cloth_lift))
                     hit = (int(r * 255), int(g * 255), int(b * 255))
                 seen[rgb] = hit
             pixels[x, y] = hit
@@ -113,23 +165,33 @@ def main() -> None:
 
     count = GRID * GRID
     atlas = Image.new('RGB', (GRID * CELL, GRID * CELL), (0, 0, 0))
-    origins = []
+    catalogue = []
     for index in range(count):
         seed = f'skin:{index:03d}'
+        origin = bases[index % len(bases)]
         # The first eighteen cells are Kenney's originals, untouched. Anything
-        # generated should have to beat the hand-drawn version, not replace it
-        # silently.
-        source = Image.open(os.path.join(BASE, bases[index % len(bases)]))
+        # generated should have to beat the hand-drawn version, not silently
+        # replace it.
+        source = Image.open(os.path.join(BASE, origin))
         cell = source if index < len(bases) else reskin(source, seed)
-        atlas.paste(cell.convert('RGB').resize((CELL, CELL), Image.NEAREST),
+        atlas.paste(cell.convert('RGB').resize((CELL, CELL), Image.LANCZOS),
                     ((index % GRID) * CELL, (index // GRID) * CELL))
-        origins.append(bases[index % len(bases)][:-4] if index < len(bases) else f'gen-{seed}')
+        catalogue.append({
+            'slot': index,
+            'origin': origin[:-4],
+            'kind': 'original' if index < len(bases) else 'generated',
+            'seed': None if index < len(bases) else seed,
+        })
 
     os.makedirs(OUT_DIR, exist_ok=True)
     atlas.save(os.path.join(OUT_DIR, 'skins.png'), optimize=True)
     with open(os.path.join(OUT_DIR, 'skins.json'), 'w', encoding='utf-8') as handle:
-        json.dump({'grid': GRID, 'cell': CELL, 'count': count,
-                   'hand_drawn': len(bases), 'origins': origins}, handle, indent=1)
+        json.dump({
+            'grid': GRID, 'cell': CELL, 'count': count,
+            'handDrawn': len(bases),
+            'note': 'A citizen wears the slot at hash(agentId) % count. See tools/skinsmith.py.',
+            'skins': catalogue,
+        }, handle, indent=1)
 
     size = os.path.getsize(os.path.join(OUT_DIR, 'skins.png'))
     print(f'{count} skins ({len(bases)} original, {count - len(bases)} generated)')

@@ -36,6 +36,8 @@ export type Piece = {
 
 export type Model = {
   name: string;
+  /** The url it was fetched from, so a catalogue entry can be matched to it. */
+  url: string;
   pieces: Piece[];
   /** Size in world units, so a model can be scaled onto a plot. */
   size: THREE.Vector3;
@@ -103,6 +105,7 @@ export function loadModel(url: string): Promise<Model> {
       box.getSize(size);
       resolve({
         name: url.split('/').pop() ?? url,
+        url,
         pieces, size,
         clips: gltf.animations ?? [],
         scene: gltf.scene,

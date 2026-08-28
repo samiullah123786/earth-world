@@ -24,8 +24,14 @@ import * as THREE from 'three';
 
 /** The four hues the whole world is built from, in degrees. */
 export const ANCHORS = {
-  /** Everything growing. Deliberately yellow-of-green, not blue-of-green. */
-  foliage: 96,
+  /**
+   * Everything growing. Deliberately yellow-of-green, not blue-of-green.
+   *
+   * Nudged warmer once the modelled buildings arrived: Kenney's kits are
+   * painted in warm ochres and terracottas, and a cool meadow under them read
+   * as two palettes meeting rather than one.
+   */
+  foliage: 88,
   /** Soil, timber, roof tile, thatch - one warm earth family. */
   earth: 27,
   /** Stone, road, metal. Barely a hue at all, biased cool so it reads as shade. */
@@ -53,17 +59,17 @@ export function hue(anchor: Anchor, saturation: number, lightness: number, shift
 
 export const WORLD = {
   // Ground. Three greens that are obviously the same plant in different light.
-  grass:      hue('foliage', 0.32, 0.40),
-  grassPale:  hue('foliage', 0.28, 0.465, -6),
-  grassDeep:  hue('foliage', 0.34, 0.31, 8),
+  grass:      hue('foliage', 0.38, 0.43, -3),
+  grassPale:  hue('foliage', 0.34, 0.50, -8),
+  grassDeep:  hue('foliage', 0.40, 0.33, 6),
   blade:      hue('foliage', 0.36, 0.40, -4),
   reed:       hue('foliage', 0.28, 0.42, 22),
-  leaf:       hue('foliage', 0.36, 0.275, 6),
-  leafLight:  hue('foliage', 0.33, 0.36, -5),
+  leaf:       hue('foliage', 0.42, 0.30, 4),
+  leafLight:  hue('foliage', 0.38, 0.39, -6),
 
   // Earth. Soil through to a fired roof tile, all one family.
   soil:       hue('earth', 0.34, 0.28),
-  dirt:       hue('earth', 0.30, 0.38),
+  dirt:       hue('earth', 0.34, 0.42),
   crop:       hue('earth', 0.33, 0.31),
   trunk:      hue('earth', 0.32, 0.24),
   timber:     hue('earth', 0.35, 0.31),
@@ -78,7 +84,7 @@ export const WORLD = {
   // Mineral. Nearly grey, but cool, so shadow on stone looks like shadow.
   stone:      hue('mineral', 0.06, 0.53),
   stoneDark:  hue('mineral', 0.08, 0.36),
-  road:       hue('mineral', 0.05, 0.58),
+  road:       hue('earth', 0.08, 0.62, 6),
   metal:      hue('mineral', 0.10, 0.40),
   obsidian:   hue('mineral', 0.24, 0.12),
   fence:      hue('earth', 0.28, 0.34),
@@ -162,7 +168,7 @@ export function skyAt(phase: number): Sky {
     // gloomy afternoon. It holds near full while the sun is up and falls away
     // quickly once it is not.
     //
-    // Twice: this has been wrong in both directions and the second was worse.
+    // Twice wrong in both directions, and the second was worse.
     //
     // The original rig ran ambient 2.2 against a sun of 3.3 - a ratio at which
     // nothing in the world had any shape, because the fill drowned the key.

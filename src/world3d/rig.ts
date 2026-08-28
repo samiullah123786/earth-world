@@ -201,14 +201,20 @@ export function skinAtlasMaterial(texture: THREE.Texture, grid: number): THREE.M
   texture.generateMipmaps = false;
 
   const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.86 });
-  const scale = (1 / grid).toFixed(8);
+  // A hair inside the cell rather than exactly on its edge.
+  //
+  // A UV of precisely 1.0 lands on the next cell's zero, so a citizen standing
+  // at the seam wears a stripe of their neighbour's skin down one arm. The
+  // inset is a fraction of a texel and costs nothing.
+  const scale = ((1 / grid) * 0.998).toFixed(8);
+  const inset = ((1 / grid) * 0.001).toFixed(8);
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = 'attribute vec2 aSkinCell;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <uv_vertex>',
       `#include <uv_vertex>
       #ifdef USE_MAP
-        vMapUv = vMapUv * ${scale} + aSkinCell;
+        vMapUv = vMapUv * ${scale} + aSkinCell + ${inset};
       #endif`,
     );
   };
