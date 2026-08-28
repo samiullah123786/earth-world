@@ -504,7 +504,7 @@ function buildTerrain(data: Terrain) {
   islandRoot.add(buildIsland(data.width, data.height));
 
   clearGroup(scatterRoot);
-  scatterRoot.add(buildScatter(data.rows, data.width, data.height, DETAIL));
+  if (view.groundDetail) scatterRoot.add(buildScatter(data.rows, data.width, data.height, DETAIL));
 
   // What a walker cannot pass through. Trees and water are the map's own
   // refusals; remembering them here is what lets explore mode collide with
@@ -795,7 +795,8 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
     // A garden or a park is a fountain with planting round it, not the grey
     // stone slab the box renderer drew. These were the last things in the world
     // still reading as untextured blocks.
-    if (gardenKit.length && build.state === 'built' && /garden|park|fountain|bench|training/.test(text)) {
+    if (gardenKit.length && build.state === 'built'
+      && /garden|park|fountain|bench|laptop|training|greenhouse|orchard/.test(text)) {
       const spots: Array<[number, number, number]> = [
         [build.w / 2, build.h / 2, 0], [0.6, 0.6, 1], [build.w - 0.6, 0.7, 2],
         [0.7, build.h - 0.6, 3], [build.w - 0.7, build.h - 0.7, 4],
@@ -1002,8 +1003,18 @@ function makeCitizen(row: Citizen): CitizenModel {
     const label = makeLabel(row.name, '#1e1e1e');
     label.userData.agentId = row.agentId;
     citizenRoot.add(label);
+    // Scaled to a target HEIGHT rather than by the model's own units.
+    //
+    // Two kits, two native scales: the character models are 2.7 units tall and
+    // the city-kit houses are 0.83, so taking each at face value made the
+    // citizens taller than the buildings they live in. Everything in this world
+    // is sized against the tile grid instead, and a person is a bit over one
+    // tile - which is what puts them at roughly two thirds the height of a
+    // single-storey house, where a person belongs.
+    const CITIZEN_HEIGHT = 1.2;
     return {
-      rig: rigFromModel(model.scene, row.agentId, look.height),
+      rig: rigFromModel(model.scene, row.agentId,
+        (CITIZEN_HEIGHT / Math.max(model.size.y, 0.001)) * look.height),
       row, toolKey: String(row.activeTool ?? row.carriedTool ?? ''), label,
       px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
     };
@@ -1237,7 +1248,10 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
       const near = view.nameplates
         && eye.distanceTo(new THREE.Vector3(model.px, model.py + 1, model.pz)) < view.nameplateRange;
       model.label.visible = near;
-      if (near) model.label.position.set(model.px, model.py + 2.52 * model.rig.scale, model.pz);
+      // Just above the head. The rig scale is now a ratio between two kits'
+      // units rather than a height, so the plate reads the citizen's actual
+      // top rather than multiplying by it.
+      if (near) model.label.position.set(model.px, model.py + 1.7, model.pz);
     }
   }
 
@@ -2250,6 +2264,7 @@ function syncViewControls() {
   set<HTMLInputElement>('v-clouds', (node) => { node.checked = view.clouds; });
   set<HTMLInputElement>('v-wildlife', (node) => { node.checked = view.wildlife; });
   set<HTMLInputElement>('v-names', (node) => { node.checked = view.nameplates; });
+  set<HTMLInputElement>('v-ground', (node) => { node.checked = view.groundDetail; });
   set<HTMLInputElement>('v-range', (node) => { node.value = String(view.nameplateRange); });
 }
 
@@ -2264,6 +2279,11 @@ function bindView() {
   on('v-clouds', 'change', (node) => { view.clouds = node.checked; });
   on('v-wildlife', 'change', (node) => { view.wildlife = node.checked; });
   on('v-names', 'change', (node) => { view.nameplates = node.checked; });
+  on('v-ground', 'change', (node) => {
+    view.groundDetail = node.checked;
+    // The speckle is baked into the terrain build, so it has to be re-laid.
+    if (terrain) buildTerrain(terrain);
+  });
   on('v-range', 'input', (node) => { view.nameplateRange = Number(node.value); });
 
   const show = (open: boolean) => {
@@ -2340,6 +2360,18 @@ function animate() {
   modelDrawCalls: modelInstances.reduce((sum, set) => sum + set.drawCalls, 0),
   kitLoaded: `${homeKit.length} homes, ${civicKit.length} civic, ${citizenKit.length} people, ${treeKit.length} trees`,
   treeDrawCalls: treeInstances.reduce((sum, set) => sum + set.drawCalls, 0),
+  citizenRig: (() => {
+    const first = [...citizenModels.values()][0];
+    if (!first) return 'no citizens';
+    const model = citizenKit.length ? citizenKit[0] : null;
+    const size = model ? [model.size.x, model.size.y, model.size.z].map((n) => n.toFixed(2)).join('x') : 'n/a';
+    const parts = first.rig.parts.map((part) => part.joint).join(',');
+    const scales = first.rig.parts.slice(0, 2).map((part) => {
+      const s = new THREE.Vector3(); part.matrix.decompose(new THREE.Vector3(), new THREE.Quaternion(), s);
+      return s.x.toFixed(2);
+    }).join('/');
+    return `modelSize=${size} parts=${first.rig.parts.length}[${parts}] partScale=${scales} rigScale=${first.rig.scale.toFixed(2)}`;
+  })(),
   darkBoxes: (() => {
     // What is still being drawn as a box, and how dark it is - the black
     // cubes in the render have to be one of these.

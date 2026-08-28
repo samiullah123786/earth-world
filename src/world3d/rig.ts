@@ -44,8 +44,20 @@ export type RigPart = {
   /** Local transform, relative to the citizen standing at the origin. */
   matrix: THREE.Matrix4;
   color: THREE.Color;
-  /** Which shading bucket this box belongs in. */
+  /** Which shading bucket this piece belongs in. */
   style: string;
+  /**
+   * The shape to draw.
+   *
+   * Carried per part rather than assumed, which is exactly what a modelled
+   * character needs. The first version of this batch drew every part with one
+   * shared unit cube, so harvesting a real character collected its transforms
+   * and its colours perfectly - and then rendered the whole cast as boxes
+   * anyway, which is a bug that looks like nothing happening at all.
+   */
+  geometry?: THREE.BufferGeometry;
+  /** The material it came with, for a part that brought its own texture. */
+  material?: THREE.Material;
 };
 
 export type Rig = {
@@ -136,16 +148,20 @@ export function rigFromModel(
     if (!joint) return;
     // The joint turns where its node sits, in the model's own space.
     pivots[joint] = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
-    for (const child of node.children.length ? [node, ...node.children] : [node]) {
-      const mesh = child as THREE.Mesh;
-      if (!mesh.isMesh || NODE_JOINTS[child.name] !== joint) continue;
-      const material = mesh.material as THREE.MeshStandardMaterial;
-      parts.push({
-        joint, matrix: mesh.matrixWorld.clone(),
-        color: material.color?.clone?.() ?? new THREE.Color(0xffffff),
-        style: styleOf(material),
-      });
-    }
+    // The node itself, and only the node. Walking its children as well
+    // collected the torso twice - once reached through `root` and once as
+    // itself - and drew every citizen's chest on top of their chest.
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    parts.push({
+      joint, matrix: mesh.matrixWorld.clone(),
+      color: material.color?.clone?.() ?? new THREE.Color(0xffffff),
+      style: styleOf(material),
+      // The whole point: the shape somebody drew, rather than a unit cube.
+      geometry: mesh.geometry,
+      material,
+    });
   });
   return { agentId, parts, scale, pivots };
 }
@@ -176,6 +192,8 @@ export class CitizenBatch {
   private capacity = new Map<string, number>();
   private geometry: THREE.BufferGeometry;
   private tags = new Map<string, string[]>();
+  /** What each bucket is made of, keyed the same way the buckets are. */
+  private shapes = new Map<string, { geometry: THREE.BufferGeometry; material?: THREE.Material }>();
 
   private jointMatrix = new THREE.Matrix4();
   private bodyMatrix = new THREE.Matrix4();
@@ -191,34 +209,47 @@ export class CitizenBatch {
     this.geometry = geometry;
   }
 
-  private ensure(style: string, needed: number): THREE.InstancedMesh {
-    const existing = this.meshes.get(style);
-    if (existing && (this.capacity.get(style) ?? 0) >= needed) return existing;
+  private ensure(key: string, needed: number): THREE.InstancedMesh {
+    const existing = this.meshes.get(key);
+    if (existing && (this.capacity.get(key) ?? 0) >= needed) return existing;
     if (existing) {
       this.root.remove(existing);
       existing.dispose();
     }
     // Round up so a town gaining one citizen does not rebuild every buffer.
     const size = Math.max(64, Math.ceil(needed * 1.5));
-    const [roughness, metalness, transparent, opacity, emissive, emissiveIntensity] =
-      style.split('|').map(Number);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness, metalness,
-      transparent: Boolean(transparent), opacity,
-      emissive: new THREE.Color(emissive), emissiveIntensity,
-      vertexColors: true,
-      ...STYLE_TEMPLATES[style],
-    });
-    const mesh = new THREE.InstancedMesh(this.geometry, material, size);
+    const shape = this.shapes.get(key);
+    let material: THREE.Material;
+    if (shape?.material) {
+      // A modelled part brings its own material - the character's texture
+      // atlas - and a per-instance tint would only fight it.
+      material = shape.material;
+    } else {
+      const [roughness, metalness, transparent, opacity, emissive, emissiveIntensity] =
+        key.split('|').map(Number);
+      material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness, metalness,
+        transparent: Boolean(transparent), opacity,
+        emissive: new THREE.Color(emissive), emissiveIntensity,
+        vertexColors: true,
+        ...STYLE_TEMPLATES[key],
+      });
+    }
+    const mesh = new THREE.InstancedMesh(shape?.geometry ?? this.geometry, material, size);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;   // the batch spans the whole town
     mesh.count = 0;
     this.root.add(mesh);
-    this.meshes.set(style, mesh);
-    this.capacity.set(style, size);
+    this.meshes.set(key, mesh);
+    this.capacity.set(key, size);
     return mesh;
+  }
+
+  /** The bucket a part belongs in: the same shape AND the same shading. */
+  private static keyOf(part: RigPart): string {
+    return part.geometry ? `${part.geometry.uuid}|${part.style}` : part.style;
   }
 
   /**
@@ -237,10 +268,14 @@ export class CitizenBatch {
     const needed = new Map<string, number>();
     for (const entry of entries) {
       for (const part of entry.rig.parts) {
-        needed.set(part.style, (needed.get(part.style) ?? 0) + 1);
+        const key = CitizenBatch.keyOf(part);
+        needed.set(key, (needed.get(key) ?? 0) + 1);
+        if (part.geometry && !this.shapes.has(key)) {
+          this.shapes.set(key, { geometry: part.geometry, material: part.material });
+        }
       }
     }
-    for (const [style, count] of needed) this.ensure(style, count);
+    for (const [key, count] of needed) this.ensure(key, count);
     for (const style of this.meshes.keys()) {
       counts.set(style, 0);
       this.tags.set(style, this.tags.get(style) ?? []);
@@ -271,13 +306,16 @@ export class CitizenBatch {
         } else {
           this.partMatrix.copy(this.bodyMatrix).multiply(part.matrix);
         }
-        const mesh = this.meshes.get(part.style)!;
-        const index = counts.get(part.style) ?? 0;
+        const key = CitizenBatch.keyOf(part);
+        const mesh = this.meshes.get(key)!;
+        const index = counts.get(key) ?? 0;
         mesh.setMatrixAt(index, this.partMatrix);
-        mesh.setColorAt(index, part.color);
-        const tags = this.tags.get(part.style)!;
+        // Per-instance colour only where the part has no material of its own.
+        // Tinting a textured character would throw the atlas away.
+        if (!this.shapes.get(key)?.material) mesh.setColorAt(index, part.color);
+        const tags = this.tags.get(key)!;
         tags[index] = rig.agentId;
-        counts.set(part.style, index + 1);
+        counts.set(key, index + 1);
       }
     }
 

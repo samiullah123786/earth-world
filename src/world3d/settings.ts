@@ -22,6 +22,8 @@ export type Settings = {
   clouds: boolean;
   wildlife: boolean;
   nameplates: boolean;
+  /** Loose blades, pebbles and flowers strewn over open ground. */
+  groundDetail: boolean;
   clock: ClockMode;
   /** How far a nameplate is still worth drawing, in tiles. */
   nameplateRange: number;
@@ -33,6 +35,15 @@ export const DEFAULTS: Settings = {
   clouds: true,
   wildlife: true,
   nameplates: true,
+  // Off.
+  //
+  // The meadow was strewn with thousands of grass blades, pebbles and flowers,
+  // each drawn as a small box. At a distance it read as litter and up close as
+  // green fence posts - a blade 0.38 units tall is fifteen per cent of a
+  // person's height, which is not grass, it is a shrub. Real modelled trees and
+  // planting do the job it was there to do, and do it properly. Anyone who
+  // wants the old speckle back can switch it on.
+  groundDetail: false,
   // Daylight, not the cycle.
   //
   // A moving sun is a lovely thing to have and a terrible thing to open on.
