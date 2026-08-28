@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import './style.css';
-import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette } from './world3d/detail';
+import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette, tileRandom } from './world3d/detail';
 import { authorityLook, kitPalette, makeAuthorityDress, makeInsignia, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
 import { conversationSubtitle, conversationTitle, groupConversations } from './world3d/conversations';
 import { lookFor, makeFace, makeHair } from './world3d/citizenKit';
@@ -10,7 +10,7 @@ import { furnishHome, inside, interiorPalette, wallTiles } from './world3d/inter
 import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/blocks';
 import { BlockBatch, absorb, shadedBox } from './world3d/batch';
 import { AmbientLife, Clouds, makeSkyDome } from './world3d/sky';
-import { CitizenBatch, harvest, rigFromModel, type Pose, type Rig } from './world3d/rig';
+import { CitizenBatch, harvest, rigFromModel, skinAtlasMaterial, type Pose, type Rig } from './world3d/rig';
 import { ModelInstances, fitToPlot, loadModels, type Model } from './world3d/assets';
 import { heightAt, setWorldBounds, siteHeight } from '../shared/elevation';
 import { skyAt, worldMaterials } from './world3d/palette';
@@ -520,6 +520,7 @@ function buildTerrain(data: Terrain) {
   // Weather needs to know how big the world is, and the world only says so
   // when the terrain arrives. Built once; a later expansion widens the map
   // without needing a second sky.
+  populateWild(data);
   if (!clouds) clouds = new Clouds(atmosphereRoot, BOX, Math.max(data.width, data.height));
   if (!wildlife) wildlife = new AmbientLife(atmosphereRoot, BOX, Math.max(data.width, data.height));
   clouds.setVisible(view.clouds);
@@ -714,31 +715,57 @@ const HOME_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']
 const CIVIC_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
   .map((letter) => `/models/civic/${letter}.glb`);
 
-const CITIZEN_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r']
-  .map((letter) => `/models/citizen/${letter}.glb`);
+// One body for everybody.
+//
+// All eighteen Blocky characters are the same mesh with a different texture
+// painted on, so the world loads ONE of them and dresses each citizen from the
+// skin atlas instead. Eighteen downloads became one, and the population stopped
+// being capped at eighteen faces.
+const CITIZEN_MODEL = '/models/citizen/a.glb';
+const SKIN_ATLAS = '/models/citizen/skins.png';
+const SKIN_GRID = 8;
+
+// Twenty-seven creatures. Not citizens - they carry no identity, hold nothing,
+// and are never in the directory. A town with a fox trotting past is simply a
+// town somebody watches for longer.
+// Twelve of the twenty-four, because each species is its own draw call and a
+// street needs variety rather than a zoo. The ones left out are the ones least
+// at home in a town: the giraffe, the polar bear, the parrot.
+const ANIMAL_MODELS = [
+  'cat', 'dog', 'fox', 'deer', 'bunny', 'chick',
+  'pig', 'cow', 'hog', 'penguin', 'crab', 'bee',
+].map((name) => `/models/animal/${name}.glb`);
 const TREE_MODELS = [0, 1, 2, 3, 4, 5, 6, 7].map((index) => `/models/tree/${index}.glb`);
 const GARDEN_MODELS = [0, 1, 2, 3, 4, 5].map((index) => `/models/garden/${index}.glb`);
 
 let homeKit: Model[] = [];
 let civicKit: Model[] = [];
-let citizenKit: Model[] = [];
+let citizenBody: Model | null = null;
+let skinMaterial: THREE.Material | null = null;
+let animalKit: Model[] = [];
 let treeKit: Model[] = [];
 let gardenKit: Model[] = [];
 let kitReady = false;
+/** Bumped when the art changes, so every body knows it is stale. */
+let kitGeneration = 0;
 const modelInstances: ModelInstances[] = [];
 const treeInstances: ModelInstances[] = [];
 
 async function loadKit() {
-  const [homes, civics, people, trees, garden] = await Promise.all([
+  const [homes, civics, people, trees, garden, animals, atlas] = await Promise.all([
     loadModels(HOME_MODELS),
     loadModels(CIVIC_MODELS),
-    loadModels(CITIZEN_MODELS),
+    loadModels([CITIZEN_MODEL]),
     loadModels(TREE_MODELS),
     loadModels(GARDEN_MODELS),
+    loadModels(ANIMAL_MODELS),
+    new THREE.TextureLoader().loadAsync(SKIN_ATLAS).catch(() => null),
   ]);
   homeKit = homes;
   civicKit = civics;
-  citizenKit = people;
+  citizenBody = people[0] ?? null;
+  skinMaterial = atlas ? skinAtlasMaterial(atlas, SKIN_GRID) : null;
+  animalKit = animals;
   treeKit = trees;
   gardenKit = garden;
   kitReady = homes.length > 0;
@@ -998,8 +1025,16 @@ function makeCitizen(row: Citizen): CitizenModel {
   // two legs - so they need no skinning and go through the same instanced path
   // the box people did. Which citizen you get is keyed on the agent id, so a
   // person keeps their face forever.
-  if (citizenKit.length) {
-    const model = citizenKit[hash(row.agentId) % citizenKit.length];
+  if (citizenBody && skinMaterial) {
+    const model = citizenBody;
+    // Which of the sixty-four skins this citizen wears, from their agent id
+    // alone - so it is the same face every session, on every machine, and
+    // nobody can pick somebody else's.
+    const slot = hash(row.agentId) % (SKIN_GRID * SKIN_GRID);
+    const cell: [number, number] = [
+      (slot % SKIN_GRID) / SKIN_GRID,
+      Math.floor(slot / SKIN_GRID) / SKIN_GRID,
+    ];
     const label = makeLabel(row.name, '#1e1e1e');
     label.userData.agentId = row.agentId;
     citizenRoot.add(label);
@@ -1014,8 +1049,9 @@ function makeCitizen(row: Citizen): CitizenModel {
     const CITIZEN_HEIGHT = 1.2;
     return {
       rig: rigFromModel(model.scene, row.agentId,
-        (CITIZEN_HEIGHT / Math.max(model.size.y, 0.001)) * look.height),
-      row, toolKey: String(row.activeTool ?? row.carriedTool ?? ''), label,
+        (CITIZEN_HEIGHT / Math.max(model.size.y, 0.001)) * look.height,
+        { material: skinMaterial, cell }),
+      row, toolKey: `${kitGeneration}:`, label,
       px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
     };
   }
@@ -1096,7 +1132,7 @@ function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): Citizen
 
   return {
     rig: { agentId: row.agentId, parts, scale: look.height },
-    row, toolKey, label,
+    row, toolKey: `${kitGeneration}:${toolKey}`, label,
     px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
   };
 }
@@ -1119,7 +1155,14 @@ function syncCitizens(rows: Citizen[]) {
     // A citizen who picks up or puts down a tool needs a new rig. Rebuilding is
     // cheap and rare, and it keeps the rig a plain immutable list rather than
     // something that has to support surgery.
-    const wanted = String(row.activeTool ?? row.carriedTool ?? '');
+    // What this body was built from and for.
+    //
+    // The first version compared `model.toolKey` against itself once the kit had
+    // loaded, so it was never unequal and no citizen was ever rebuilt - the town
+    // kept its box bodies for the whole session while the models sat loaded and
+    // unused. The generation counter is the honest version of the same idea:
+    // when the kit changes, every body is stale.
+    const wanted = `${kitGeneration}:${citizenBody ? '' : String(row.activeTool ?? row.carriedTool ?? '')}`;
     if (wanted !== model.toolKey) {
       const carried = { ...model };
       if (model.label) citizenRoot.remove(model.label);
@@ -2316,6 +2359,125 @@ function tendStats(now: number) {
     + ` · ${Math.round(renderer.info.render.triangles / 1000)}k triangles`;
 }
 
+
+/* ── Animals ───────────────────────────────────────────────────────────────
+   Not citizens, and the distinction matters. These carry no identity, hold
+   nothing, own no land, appear in no directory and are recorded nowhere. They
+   are scenery that moves, placed deterministically from the tile they stand on
+   so the same fox is on the same corner every session.
+
+   A town where nothing moves but the people is a diagram of a town. A fox
+   trotting across a road and a chicken pecking outside a house is most of the
+   difference between a place you look at and a place you watch. */
+
+type Beast = {
+  model: Model;
+  /** The patch it keeps to, in tiles. */
+  home: THREE.Vector2;
+  range: number;
+  speed: number;
+  phase: number;
+  scale: number;
+};
+
+const beastRoot = new THREE.Group();
+scene.add(beastRoot);
+let beasts: Beast[] = [];
+let beastMeshes = new Map<Model, THREE.InstancedMesh[]>();
+const beastMatrix = new THREE.Matrix4();
+const beastPos = new THREE.Vector3();
+const beastQuat = new THREE.Quaternion();
+const beastScale = new THREE.Vector3();
+const BEAST_UP = new THREE.Vector3(0, 1, 0);
+
+/** How tall an animal stands, so a bee and a cow are not the same size. */
+const BEAST_HEIGHT: Record<string, number> = {
+  bee: 0.3, chick: 0.32, crab: 0.3, bunny: 0.42, cat: 0.45,
+  fox: 0.5, dog: 0.5, penguin: 0.5, pig: 0.55, hog: 0.6, deer: 0.85, cow: 0.85,
+};
+
+function populateWild(data: Terrain) {
+  for (const meshes of beastMeshes.values()) {
+    for (const mesh of meshes) { beastRoot.remove(mesh); mesh.dispose(); }
+  }
+  beastMeshes = new Map();
+  beasts = [];
+  if (!animalKit.length) return;
+
+  // Somewhere open, away from the water and the roads, and inside the settled
+  // half of the map so the animals are where the people are.
+  const spots: Array<{ x: number; z: number }> = [];
+  for (let z = 4; z < data.height - 4; z++) {
+    const row = data.rows[z] ?? '';
+    for (let x = 4; x < data.width - 4; x++) {
+      if ((row[x] ?? '.') !== 'g') continue;
+      if (tileRandom(x, z, 71) > 0.006) continue;
+      spots.push({ x, z });
+    }
+  }
+
+  for (const spot of spots.slice(0, 46)) {
+    const model = animalKit[Math.floor(tileRandom(spot.x, spot.z, 73) * animalKit.length)] ?? animalKit[0];
+    const species = model.name.replace('.glb', '');
+    const height = BEAST_HEIGHT[species] ?? 0.5;
+    beasts.push({
+      model,
+      home: new THREE.Vector2(spot.x + 0.5, spot.z + 0.5),
+      range: 1.4 + tileRandom(spot.x, spot.z, 75) * 3.4,
+      speed: 0.14 + tileRandom(spot.x, spot.z, 77) * 0.24,
+      phase: tileRandom(spot.x, spot.z, 79) * Math.PI * 2,
+      scale: height / Math.max(model.size.y, 0.001),
+    });
+  }
+
+  // One instanced mesh per species, sized to how many of that species there are.
+  const bySpecies = new Map<Model, Beast[]>();
+  for (const beast of beasts) {
+    const list = bySpecies.get(beast.model) ?? [];
+    list.push(beast);
+    bySpecies.set(beast.model, list);
+  }
+  for (const [model, herd] of bySpecies) {
+    const meshes = model.pieces.map((piece) => {
+      const mesh = new THREE.InstancedMesh(piece.geometry, piece.material, herd.length);
+      mesh.castShadow = true;
+      mesh.frustumCulled = false;
+      beastRoot.add(mesh);
+      return mesh;
+    });
+    beastMeshes.set(model, meshes);
+  }
+}
+
+/**
+ * Walk them.
+ *
+ * A slow circuit around the patch each one was placed on, facing the way it is
+ * going, with a small hop for the ones that hop. Wholly client-side: nothing
+ * here is reported to the Kernel, because none of it happened.
+ */
+function tendWild(elapsed: number) {
+  if (!beasts.length) return;
+  const counts = new Map<Model, number>();
+  for (const beast of beasts) {
+    const index = counts.get(beast.model) ?? 0;
+    counts.set(beast.model, index + 1);
+    const angle = elapsed * beast.speed + beast.phase;
+    const x = beast.home.x + Math.cos(angle) * beast.range;
+    const z = beast.home.y + Math.sin(angle) * beast.range * 0.7;
+    const hop = Math.abs(Math.sin(elapsed * beast.speed * 9 + beast.phase)) * 0.06;
+    beastPos.set(x, heightAt(x, z) + hop, z);
+    // Facing along the tangent of the circuit, which is where it is walking.
+    beastQuat.setFromAxisAngle(BEAST_UP, Math.atan2(-Math.sin(angle), Math.cos(angle) * 0.7) + Math.PI / 2);
+    beastScale.setScalar(beast.scale);
+    beastMatrix.compose(beastPos, beastQuat, beastScale);
+    for (const mesh of beastMeshes.get(beast.model) ?? []) mesh.setMatrixAt(index, beastMatrix);
+  }
+  for (const meshes of beastMeshes.values()) {
+    for (const mesh of meshes) mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 function animate() {
   const now = performance.now();
   const delta = Math.min((now - lastFrame) / 1000, .05);
@@ -2337,6 +2499,7 @@ function animate() {
   clouds?.update(elapsedSeconds, sky);
   wildlife?.update(elapsedSeconds, sky);
   tendWater(elapsedSeconds, sky);
+  tendWild(elapsedSeconds);
   renderer.render(scene, camera);
   tendStats(now);
 }
@@ -2357,13 +2520,16 @@ function animate() {
   structureDrawCalls: structureBatch.drawCalls + roofBatch.drawCalls + landmarkBatch.drawCalls,
   structureInstances: structureBatch.instanceCount + roofBatch.instanceCount + landmarkBatch.instanceCount,
   liveLights: interiorLights.filter((light) => light.visible).length,
+  animals: beasts.length,
+  animalDrawCalls: [...beastMeshes.values()].reduce((sum, meshes) => sum + meshes.length, 0),
   modelDrawCalls: modelInstances.reduce((sum, set) => sum + set.drawCalls, 0),
-  kitLoaded: `${homeKit.length} homes, ${civicKit.length} civic, ${citizenKit.length} people, ${treeKit.length} trees`,
+  kitLoaded: `${homeKit.length} homes, ${civicKit.length} civic, ${treeKit.length} trees, `
+    + `${animalKit.length} animals, ${citizenBody ? 'body+' : 'no body, '}${skinMaterial ? `${SKIN_GRID * SKIN_GRID} skins` : 'no skins'}`,
   treeDrawCalls: treeInstances.reduce((sum, set) => sum + set.drawCalls, 0),
   citizenRig: (() => {
     const first = [...citizenModels.values()][0];
     if (!first) return 'no citizens';
-    const model = citizenKit.length ? citizenKit[0] : null;
+    const model = citizenBody;
     const size = model ? [model.size.x, model.size.y, model.size.z].map((n) => n.toFixed(2)).join('x') : 'n/a';
     const parts = first.rig.parts.map((part) => part.joint).join(',');
     const scales = first.rig.parts.slice(0, 2).map((part) => {

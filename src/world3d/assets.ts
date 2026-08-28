@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /** One loaded model, flattened to what the batcher needs. */
 export type Piece = {
@@ -70,6 +71,33 @@ export function loadModel(url: string): Promise<Model> {
         const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
         pieces.push({ geometry, material });
       });
+      // Merge everything that shares a material into one piece.
+      //
+      // Kenney's kits paint a whole model from one texture atlas, so a cat that
+      // arrives as seven meshes - body, head, ears, legs, tail - is seven draw
+      // calls for one animal and no visual difference at all. Twelve animals
+      // came to sixty-three calls before this; afterwards, twelve.
+      const merged: Piece[] = [];
+      const byMaterial = new Map<THREE.Material, THREE.BufferGeometry[]>();
+      for (const piece of pieces) {
+        const list = byMaterial.get(piece.material) ?? [];
+        list.push(piece.geometry);
+        byMaterial.set(piece.material, list);
+      }
+      for (const [material, geometries] of byMaterial) {
+        if (geometries.length === 1) {
+          merged.push({ geometry: geometries[0], material });
+          continue;
+        }
+        // Merging needs matching attribute sets; if a model mixes them, keep
+        // the pieces rather than lose one.
+        const one = mergeGeometries(geometries, false);
+        if (one) merged.push({ geometry: one, material });
+        else for (const geometry of geometries) merged.push({ geometry, material });
+      }
+      pieces.length = 0;
+      pieces.push(...merged);
+
       const box = new THREE.Box3().setFromObject(gltf.scene);
       const size = new THREE.Vector3();
       box.getSize(size);

@@ -66,6 +66,14 @@ export type Rig = {
   /** Height multiplier from this citizen's own look. */
   scale: number;
   /**
+   * Which cell of the skin atlas this citizen wears.
+   *
+   * Every citizen shares one mesh and one texture; what makes them look like
+   * themselves is a UV offset written per instance. That is the whole trick
+   * behind a town of thousands of distinct people costing six draw calls.
+   */
+  skinCell?: [number, number];
+  /**
    * Where this rig's joints turn, when they are not the built-in ones.
    *
    * A modelled character brings its own proportions, and its shoulders are
@@ -139,6 +147,7 @@ const NODE_JOINTS: Record<string, Joint> = {
  */
 export function rigFromModel(
   scene: THREE.Object3D, agentId: string, scale: number,
+  skin?: { material: THREE.Material; cell: [number, number] },
 ): Rig {
   const parts: RigPart[] = [];
   const pivots: Partial<Record<Joint, THREE.Vector3>> = {};
@@ -157,13 +166,56 @@ export function rigFromModel(
     parts.push({
       joint, matrix: mesh.matrixWorld.clone(),
       color: material.color?.clone?.() ?? new THREE.Color(0xffffff),
-      style: styleOf(material),
+      // One style for every citizen when they share the atlas, so all of them
+      // land in the same six buckets - one per body part - however many people
+      // are in town.
+      style: skin ? 'atlas' : styleOf(material),
       // The whole point: the shape somebody drew, rather than a unit cube.
       geometry: mesh.geometry,
-      material,
+      material: skin ? skin.material : material,
     });
   });
-  return { agentId, parts, scale, pivots };
+  return { agentId, parts, scale, pivots, skinCell: skin?.cell };
+}
+
+
+/**
+ * The material every citizen wears.
+ *
+ * One texture holding sixty-four skins in a grid, and a per-instance offset
+ * that picks a cell. The alternative - a material per look - would be sixty-four
+ * draw calls for a crowd that currently costs six, and would grow with the
+ * town rather than staying flat.
+ *
+ * The shader edit is four lines. Three.js computes `vMapUv` from the mesh's own
+ * UVs; this scales that into one cell and shifts it to the right square. Nothing
+ * else about the standard material changes, so it keeps its lighting, its
+ * shadows and its fog.
+ */
+export function skinAtlasMaterial(texture: THREE.Texture, grid: number): THREE.MeshStandardMaterial {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // Nearest, because these are blocky skins and smoothing them bleeds one
+  // citizen's collar into the next citizen's cell.
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+
+  const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.86 });
+  const scale = (1 / grid).toFixed(8);
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'attribute vec2 aSkinCell;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <uv_vertex>',
+      `#include <uv_vertex>
+      #ifdef USE_MAP
+        vMapUv = vMapUv * ${scale} + aSkinCell;
+      #endif`,
+    );
+  };
+  // Without this, a second material with the same parameters could be handed
+  // this one's compiled program - and arrive without the attribute.
+  material.customProgramCacheKey = () => `skin-atlas-${grid}`;
+  return material;
 }
 
 /** How each joint is turned this frame. */
@@ -194,6 +246,8 @@ export class CitizenBatch {
   private tags = new Map<string, string[]>();
   /** What each bucket is made of, keyed the same way the buckets are. */
   private shapes = new Map<string, { geometry: THREE.BufferGeometry; material?: THREE.Material }>();
+  /** The per-instance atlas cell, one buffer per bucket. */
+  private cells = new Map<string, THREE.InstancedBufferAttribute>();
 
   private jointMatrix = new THREE.Matrix4();
   private bodyMatrix = new THREE.Matrix4();
@@ -237,6 +291,12 @@ export class CitizenBatch {
       });
     }
     const mesh = new THREE.InstancedMesh(shape?.geometry ?? this.geometry, material, size);
+    // The attribute the skin shader reads. Allocated with the mesh so it is
+    // always exactly as long as the instance buffer beside it.
+    const cell = new THREE.InstancedBufferAttribute(new Float32Array(size * 2), 2);
+    cell.setUsage(THREE.DynamicDrawUsage);
+    mesh.geometry.setAttribute('aSkinCell', cell);
+    this.cells.set(key, cell);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;   // the batch spans the whole town
@@ -313,6 +373,10 @@ export class CitizenBatch {
         // Per-instance colour only where the part has no material of its own.
         // Tinting a textured character would throw the atlas away.
         if (!this.shapes.get(key)?.material) mesh.setColorAt(index, part.color);
+        const cell = this.cells.get(key);
+        if (cell && rig.skinCell) {
+          cell.setXY(index, rig.skinCell[0], rig.skinCell[1]);
+        }
         const tags = this.tags.get(key)!;
         tags[index] = rig.agentId;
         counts.set(key, index + 1);
@@ -323,6 +387,8 @@ export class CitizenBatch {
       mesh.count = counts.get(style) ?? 0;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      const cell = this.cells.get(style);
+      if (cell) cell.needsUpdate = true;
       mesh.userData.tags = this.tags.get(style);
     }
   }
