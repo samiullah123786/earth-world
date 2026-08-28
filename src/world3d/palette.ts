@@ -162,16 +162,25 @@ export function skyAt(phase: number): Sky {
     // gloomy afternoon. It holds near full while the sun is up and falls away
     // quickly once it is not.
     //
-    // A weak sun at night rather than none: a pitch-black town is not
-    // atmospheric, it is a bug report. This is the moon, effectively - enough
-    // to read a silhouette by and no more.
-    sunIntensity: lerp(0.45, 2.4, Math.min(1, day * 1.9)),
+    // Twice: this has been wrong in both directions and the second was worse.
+    //
+    // The original rig ran ambient 2.2 against a sun of 3.3 - a ratio at which
+    // nothing in the world had any shape, because the fill drowned the key.
+    // Fixing the RATIO by cutting both to 0.68 and 2.4 fixed the flatness and
+    // took a third of the total light out of the world with it, so the place
+    // read as permanently overcast and full noon looked like dusk.
+    //
+    // What was needed was the ratio AND the level: roughly three to one, at a
+    // sun brighter than the original. Night keeps a real floor - moonlight, not
+    // a power cut - because a town you cannot see is not a mood, it is a bug
+    // report.
+    sunIntensity: lerp(1.15, 3.25, Math.min(1, day * 1.9)),
     // Sky light, which matters most exactly when the sun does not: at golden
     // hour a low sun grazes flat ground and barely lights it, and what keeps a
     // meadow from going black is the sky above it. Still well under the sun, so
     // the directional light can cast - the old rig had ambient at 2.2 against a
     // sun of 3.3, a ratio at which nothing in the world had any shape.
-    ambientIntensity: lerp(0.62, 0.68, Math.min(1, day * 1.9)),
+    ambientIntensity: lerp(0.85, 1.15, Math.min(1, day * 1.9)),
     daylight: day,
     // How hard every window, lamp and hearth in the town burns.
     //

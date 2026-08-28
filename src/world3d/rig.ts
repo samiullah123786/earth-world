@@ -53,6 +53,15 @@ export type Rig = {
   parts: RigPart[];
   /** Height multiplier from this citizen's own look. */
   scale: number;
+  /**
+   * Where this rig's joints turn, when they are not the built-in ones.
+   *
+   * A modelled character brings its own proportions, and its shoulders are
+   * wherever the artist put them. Reading the pivot off the model rather than
+   * assuming the old box-body numbers is the difference between an arm that
+   * swings and an arm that pivots through the chest.
+   */
+  pivots?: Partial<Record<Joint, THREE.Vector3>>;
 };
 
 /**
@@ -93,6 +102,52 @@ export function harvest(source: THREE.Object3D, joint: Joint, into: RigPart[]): 
     });
   });
   return into;
+}
+
+
+/** Kenney's character nodes, mapped onto this rig's joints. */
+const NODE_JOINTS: Record<string, Joint> = {
+  torso: 'body', root: 'body', head: 'head',
+  'arm-left': 'leftArm', 'arm-right': 'rightArm',
+  'leg-left': 'leftLeg', 'leg-right': 'rightLeg',
+};
+
+/**
+ * Turn a modelled character into a rig this batch can draw.
+ *
+ * The happy accident that made this cheap: Kenney's blocky characters are
+ * built from exactly the joints this rig already had - torso, head, two arms,
+ * two legs - moved by node rotations rather than by a skeleton deforming a
+ * skin. Which means they need no skinning, no bone matrices, and no special
+ * case; they go through the same instanced path the box people did, so a town
+ * of two thousand modelled citizens costs what twenty did.
+ *
+ * The pivots come off the model rather than from this file's constants,
+ * because an artist's shoulder is wherever they put it.
+ */
+export function rigFromModel(
+  scene: THREE.Object3D, agentId: string, scale: number,
+): Rig {
+  const parts: RigPart[] = [];
+  const pivots: Partial<Record<Joint, THREE.Vector3>> = {};
+  scene.updateMatrixWorld(true);
+  scene.traverse((node) => {
+    const joint = NODE_JOINTS[node.name];
+    if (!joint) return;
+    // The joint turns where its node sits, in the model's own space.
+    pivots[joint] = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
+    for (const child of node.children.length ? [node, ...node.children] : [node]) {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || NODE_JOINTS[child.name] !== joint) continue;
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      parts.push({
+        joint, matrix: mesh.matrixWorld.clone(),
+        color: material.color?.clone?.() ?? new THREE.Color(0xffffff),
+        style: styleOf(material),
+      });
+    }
+  });
+  return { agentId, parts, scale, pivots };
 }
 
 /** How each joint is turned this frame. */
@@ -207,7 +262,7 @@ export class CitizenBatch {
               : part.joint === 'rightLeg' ? pose.rightLeg
                 : 0;
         if (angle !== 0) {
-          const pivot = PIVOTS[part.joint];
+          const pivot = rig.pivots?.[part.joint] ?? PIVOTS[part.joint];
           this.pivotOut.makeTranslation(pivot.x, pivot.y, pivot.z);
           this.pivotBack.makeTranslation(-pivot.x, -pivot.y, -pivot.z);
           this.rotation.makeRotationX(angle);

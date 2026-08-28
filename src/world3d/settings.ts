@@ -14,7 +14,7 @@
  */
 
 export type Quality = 'low' | 'balanced' | 'high';
-export type ClockMode = 'live' | 'dawn' | 'noon' | 'golden' | 'night';
+export type ClockMode = 'live' | 'dawn' | 'day' | 'noon' | 'golden' | 'night';
 
 export type Settings = {
   quality: Quality;
@@ -33,7 +33,15 @@ export const DEFAULTS: Settings = {
   clouds: true,
   wildlife: true,
   nameplates: true,
-  clock: 'live',
+  // Daylight, not the cycle.
+  //
+  // A moving sun is a lovely thing to have and a terrible thing to open on.
+  // Even weighted three-to-one toward daylight, a six-minute cycle means
+  // roughly one visit in four arrives in the dark, and somebody who leaves the
+  // tab open watches the town they came to see go black. The cycle is one
+  // click away in the view panel for anybody who wants it; the front door is
+  // always open in the afternoon.
+  clock: 'day',
   nameplateRange: 26,
 };
 
@@ -65,6 +73,9 @@ export const PROFILES: Record<Quality, {
  */
 export const CLOCK_PHASES: Record<Exclude<ClockMode, 'live'>, number> = {
   dawn: 0.04,
+  // Mid-morning: full daylight, but the sun is off to one side so buildings
+  // still cast. Noon is brighter and flatter - the shadows go straight down.
+  day: 0.16,
   noon: 0.25,
   golden: 0.45,
   night: 0.75,
@@ -84,7 +95,7 @@ export function loadSettings(): Settings {
       ...stored,
       quality: (['low', 'balanced', 'high'] as const).includes(stored.quality as Quality)
         ? stored.quality as Quality : DEFAULTS.quality,
-      clock: (['live', 'dawn', 'noon', 'golden', 'night'] as const).includes(stored.clock as ClockMode)
+      clock: (['live', 'dawn', 'day', 'noon', 'golden', 'night'] as const).includes(stored.clock as ClockMode)
         ? stored.clock as ClockMode : DEFAULTS.clock,
     };
   } catch {

@@ -10,7 +10,8 @@ import { furnishHome, inside, interiorPalette, wallTiles } from './world3d/inter
 import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/blocks';
 import { BlockBatch, absorb, shadedBox } from './world3d/batch';
 import { AmbientLife, Clouds, makeSkyDome } from './world3d/sky';
-import { CitizenBatch, harvest, type Pose, type Rig } from './world3d/rig';
+import { CitizenBatch, harvest, rigFromModel, type Pose, type Rig } from './world3d/rig';
+import { ModelInstances, fitToPlot, loadModels, type Model } from './world3d/assets';
 import { heightAt, setWorldBounds, siteHeight } from '../shared/elevation';
 import { skyAt, worldMaterials } from './world3d/palette';
 import { PROFILES, loadSettings, phaseFor, saveSettings, suggestQuality, type Settings } from './world3d/settings';
@@ -408,6 +409,41 @@ function buildTerrain(data: Terrain) {
     return ((state ^ (state >>> 13)) >>> 0) / 4294967296;
   };
   const matrix = new THREE.Matrix4();
+  // Real trees, when the kit has landed. The box version below still runs and
+  // is simply drawn zero times, so the island, the scatter, the collision map
+  // and the weather all stay on one path rather than two.
+  for (const set of treeInstances) set.dispose();
+  treeInstances.length = 0;
+  if (treeKit.length) {
+    const byTree = new Map<Model, ModelInstances>();
+    const plant = (x: number, z: number, salt: number, sizeScale: number) => {
+      const pick = Math.min(treeKit.length - 1, Math.floor(roll(x, z, salt) * treeKit.length));
+      const model = treeKit[pick];
+      let set = byTree.get(model);
+      if (!set) {
+        set = new ModelInstances(terrainRoot, model);
+        byTree.set(model, set);
+        treeInstances.push(set);
+      }
+      // Scaled to a real height rather than to the model's own units, so trees
+      // from different kits stand in the same forest without one being a shrub.
+      //
+      // Two metres, not three. At three they stood taller than the houses and
+      // the town disappeared into its own woodland - which is a reminder that
+      // scale between kits is a composition decision, not a property of either
+      // model.
+      const scale = (2.0 / Math.max(model.size.y, 0.001)) * sizeScale;
+      set.add(new THREE.Matrix4().compose(
+        new THREE.Vector3(x + .5, heightAt(x + .5, z + .5), z + .5),
+        new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(0, 1, 0), roll(x, z, salt + 1) * Math.PI * 2),
+        new THREE.Vector3(scale, scale, scale)));
+    };
+    for (const spot of treeTrunks) plant(spot.x, spot.z, 23, 0.82 + roll(spot.x, spot.z, 29) * 0.46);
+    for (const spot of bushes) plant(spot.x, spot.z, 31, 0.3 + roll(spot.x, spot.z, 37) * 0.18);
+    for (const set of byTree.values()) set.flush();
+  }
+
   // A tree rooted at sea level on a hillside is the tell that a world is a
   // heightmap with props dropped on it, so everything that grows reads the
   // same ground function the soil under it does.
@@ -453,6 +489,8 @@ function buildTerrain(data: Terrain) {
     crownMesh.setColorAt(treeTrunks.length * 3 + index, crownTint);
   });
   if (crownMesh.instanceColor) crownMesh.instanceColor.needsUpdate = true;
+  // Drawn zero times when the modelled woodland took over.
+  if (treeKit.length) { trunkMesh.count = 0; crownMesh.count = 0; }
   trunkMesh.instanceMatrix.needsUpdate = true;
   crownMesh.instanceMatrix.needsUpdate = true;
   trunkMesh.castShadow = trunkMesh.receiveShadow = true;
@@ -653,12 +691,85 @@ const INTERIOR = interiorPalette();
 /** Tiles a building's walls occupy, so explore mode collides with them. */
 let structureSolid = new Set<number>();
 
+
+/* ── The art the world was missing ─────────────────────────────────────────
+   Every house, tree and person here used to be assembled at runtime out of
+   axis-aligned boxes by code, which is why it looked like programmer art: it
+   WAS programmer art. There were no assets in the project of any kind.
+
+   These are Kenney's kits - CC0, public domain, free - drawn by a professional
+   and shipped as glTF with one material each over a shared atlas, which is
+   exactly the shape that instances well. A street of houses of the same type
+   is one draw call.
+
+   The models load in the background and the world redraws when they arrive, so
+   a slow connection sees the box town first and the real one a moment later,
+   rather than an empty field and a spinner. */
+
+// Each kit keeps its own folder because every model asks for
+// `Textures/colormap.png` relative to itself, and two kits sharing one folder
+// would fight over that name.
+const HOME_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']
+  .map((letter) => `/models/home/${letter}.glb`);
+const CIVIC_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+  .map((letter) => `/models/civic/${letter}.glb`);
+
+const CITIZEN_MODELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r']
+  .map((letter) => `/models/citizen/${letter}.glb`);
+const TREE_MODELS = [0, 1, 2, 3, 4, 5, 6, 7].map((index) => `/models/tree/${index}.glb`);
+const GARDEN_MODELS = [0, 1, 2, 3, 4, 5].map((index) => `/models/garden/${index}.glb`);
+
+let homeKit: Model[] = [];
+let civicKit: Model[] = [];
+let citizenKit: Model[] = [];
+let treeKit: Model[] = [];
+let gardenKit: Model[] = [];
+let kitReady = false;
+const modelInstances: ModelInstances[] = [];
+const treeInstances: ModelInstances[] = [];
+
+async function loadKit() {
+  const [homes, civics, people, trees, garden] = await Promise.all([
+    loadModels(HOME_MODELS),
+    loadModels(CIVIC_MODELS),
+    loadModels(CITIZEN_MODELS),
+    loadModels(TREE_MODELS),
+    loadModels(GARDEN_MODELS),
+  ]);
+  homeKit = homes;
+  civicKit = civics;
+  citizenKit = people;
+  treeKit = trees;
+  gardenKit = garden;
+  kitReady = homes.length > 0;
+  // Redraw with the real art now that it is here. Citizens rebuild themselves
+  // on the next poll; the town and the woodland have to be asked.
+  for (const model of citizenModels.values()) model.toolKey = '\u0000force-rebuild';
+  if (world) buildStructures(world.builds, world.venues, world.gate);
+  if (terrain) buildTerrain(terrain);
+}
+
+/**
+ * Which building a plot gets, chosen once and never re-rolled.
+ *
+ * Keyed on the build's own id, so a house keeps its face forever - a town whose
+ * buildings shuffle every time the page reloads is a town nobody can learn
+ * their way around.
+ */
+function modelFor(build: Build, kit: Model[]): Model | null {
+  if (!kit.length) return null;
+  return kit[hash(build.buildId ?? `${build.x}:${build.y}`) % kit.length];
+}
+
 function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y: number }) {
   clearGroup(structureRoot);
   clearGroup(landmarkRoot);
   structureBatch.clear();
   roofBatch.clear();
   landmarkBatch.clear();
+  for (const set of modelInstances) set.dispose();
+  modelInstances.length = 0;
+  const byModel = new Map<Model, ModelInstances>();
   roofs.length = 0;
   structureSolid = new Set<number>();
   interiorLights = [];
@@ -678,6 +789,62 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
     // bench, a greenhouse of glass - does not. Asking the dispatch rather than
     // running a second regex over the same string means the two can never
     // disagree about whether a building is a place you can enter.
+    // A real model, when one has arrived and the building is finished. A
+    // scaffold still gets the box treatment, because a half-built house is
+    // supposed to look like a half-built house rather than a finished one.
+    // A garden or a park is a fountain with planting round it, not the grey
+    // stone slab the box renderer drew. These were the last things in the world
+    // still reading as untextured blocks.
+    if (gardenKit.length && build.state === 'built' && /garden|park|fountain|bench|training/.test(text)) {
+      const spots: Array<[number, number, number]> = [
+        [build.w / 2, build.h / 2, 0], [0.6, 0.6, 1], [build.w - 0.6, 0.7, 2],
+        [0.7, build.h - 0.6, 3], [build.w - 0.7, build.h - 0.7, 4],
+      ];
+      const pad = siteHeight(build);
+      for (const [dx, dz, pick] of spots) {
+        const model = gardenKit[Math.min(gardenKit.length - 1, pick)];
+        if (!model) continue;
+        let set = byModel.get(model);
+        if (!set) {
+          set = new ModelInstances(structureRoot, model);
+          byModel.set(model, set);
+          modelInstances.push(set);
+        }
+        // The fountain sits at the centre and gets the room; the planting is
+        // scattered small around it.
+        const wanted = pick === 0 ? Math.min(build.w, build.h) * 0.62 : 0.9;
+        const scale = wanted / Math.max(model.size.x, model.size.z, 0.001);
+        set.add(new THREE.Matrix4().compose(
+          new THREE.Vector3(build.x + dx, pad, build.y + dz),
+          new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0), (hash(`${build.buildId}:${pick}`) % 8) * (Math.PI / 4)),
+          new THREE.Vector3(scale, scale, scale)));
+      }
+      structureRoot.add(group);
+      continue;
+    }
+
+    const civic = /bank|civic|hall|library|pavilion|rotunda|data.center|server|workshop|industry/.test(text);
+    const kit = civic ? civicKit : homeKit;
+    const model = build.state === 'built' && !/garden|park|fountain|bench|laptop|training|greenhouse|orchard/.test(text)
+      ? modelFor(build, kit) : null;
+    if (model) {
+      let set = byModel.get(model);
+      if (!set) {
+        set = new ModelInstances(structureRoot, model);
+        byModel.set(model, set);
+        modelInstances.push(set);
+      }
+      // A quarter turn per building, chosen from the id, so a row of the same
+      // model does not read as a row of the same model.
+      const facing = (hash(`${build.buildId}:facing`) % 4) * (Math.PI / 2);
+      set.add(fitToPlot(model, build, siteHeight(build), facing), build.buildId ?? '');
+      for (const tile of wallTiles(build)) structureSolid.add(solidKey(tile.x, tile.y));
+      chimneys.push({ x: build.x + build.w - 0.4, y: siteHeight(build) + 3.4, z: build.y + 0.5 });
+      structureRoot.add(group);
+      continue;
+    }
+
     let walled = false;
     if (build.state === 'building') makeScaffold(group, build);
     else if (/garden|park|fountain|training/.test(text)) makeGarden(group, build);
@@ -718,6 +885,7 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
       chimneys.push({ x: build.x + build.w - 0.4, y: 3.6, z: build.y + 0.5 });
     }
   }
+  for (const set of byModel.values()) set.flush();
   structureBatch.flush();
   roofBatch.flush();
   emissiveCache = null;   // new material clones to find
@@ -822,13 +990,37 @@ function makeLabel(text: string, background: string, width = 220, height = 42, w
 }
 
 function makeCitizen(row: Citizen): CitizenModel {
+  const look = lookFor(row.agentId, colorForFamily(row.family).getHex());
+
+  // A modelled body, when the kit has arrived. Kenney's blocky characters are
+  // built from exactly the joints this rig already had - torso, head, two arms,
+  // two legs - so they need no skinning and go through the same instanced path
+  // the box people did. Which citizen you get is keyed on the agent id, so a
+  // person keeps their face forever.
+  if (citizenKit.length) {
+    const model = citizenKit[hash(row.agentId) % citizenKit.length];
+    const label = makeLabel(row.name, '#1e1e1e');
+    label.userData.agentId = row.agentId;
+    citizenRoot.add(label);
+    return {
+      rig: rigFromModel(model.scene, row.agentId, look.height),
+      row, toolKey: String(row.activeTool ?? row.carriedTool ?? ''), label,
+      px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
+    };
+  }
+
+  // The box body, still here as the fallback for the moment before the models
+  // land - and as the honest floor if they never do.
+  return makeBoxCitizen(row, look);
+}
+
+function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): CitizenModel {
   // The body is still assembled exactly as it was, with the same kit that
   // knows how to build a face, a sash, a pickaxe and a surveyor's hat. What
   // changes is where it ends up: each joint is assembled into its own throwaway
   // group, harvested into rig parts, and the groups are dropped. Rewriting the
   // character art as instance data by hand would have lost details nobody would
   // notice were missing until much later.
-  const look = lookFor(row.agentId, colorForFamily(row.family).getHex());
   const family = new THREE.MeshStandardMaterial({ color: look.cloth, roughness: .75 });
   const trim = new THREE.MeshStandardMaterial({ color: look.trim, roughness: .8 });
   const skin = new THREE.MeshStandardMaterial({ color: look.skin, roughness: .78 });
@@ -1342,6 +1534,7 @@ async function refreshWallet() {
 
 async function boot() {
   try {
+    void loadKit();   // in the background: the box town shows first, the real one lands a moment later
     await Promise.all([refreshTerrain(), refreshState(), refreshFeed(), refreshWallet()]);
     loading.classList.add('done');
     if (terrain) {
@@ -2144,6 +2337,26 @@ function animate() {
   structureDrawCalls: structureBatch.drawCalls + roofBatch.drawCalls + landmarkBatch.drawCalls,
   structureInstances: structureBatch.instanceCount + roofBatch.instanceCount + landmarkBatch.instanceCount,
   liveLights: interiorLights.filter((light) => light.visible).length,
+  modelDrawCalls: modelInstances.reduce((sum, set) => sum + set.drawCalls, 0),
+  kitLoaded: `${homeKit.length} homes, ${civicKit.length} civic, ${citizenKit.length} people, ${treeKit.length} trees`,
+  treeDrawCalls: treeInstances.reduce((sum, set) => sum + set.drawCalls, 0),
+  darkBoxes: (() => {
+    // What is still being drawn as a box, and how dark it is - the black
+    // cubes in the render have to be one of these.
+    const found: string[] = [];
+    structureRoot.traverse((node) => {
+      const mesh = node as THREE.InstancedMesh;
+      if (!mesh.isInstancedMesh || !mesh.count) return;
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      found.push(`${mesh.count}x rough${material.roughness?.toFixed(1)}`);
+    });
+    terrainRoot.traverse((node) => {
+      const mesh = node as THREE.InstancedMesh;
+      if (!mesh.isInstancedMesh || !mesh.count) return;
+      found.push(`terrain:${mesh.count}`);
+    });
+    return found.join(' | ');
+  })(),
   clock: view.clock,
   phase: Number(phaseFor(view, Date.now()).toFixed(3)),
   sunIntensity: Number(sun.intensity.toFixed(2)),
