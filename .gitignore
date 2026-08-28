@@ -8,3 +8,11 @@ __pycache__/
 
 # The chunk preview harness writes its scratch output here.
 preview-chunks.json
+
+# The raw Kenney kits: 112 MB of OBJ, FBX and per-model PNGs that exist only so
+# models can be PICKED from them. Only the ~50 actually placed in the world are
+# copied into public/models/, and those are committed. Re-download the kits from
+# kenney.nl if you need to choose different ones - the URLs are in
+# assets/kenney/LICENSE.md.
+assets/kenney/*
+!assets/kenney/LICENSE.md
