@@ -194,6 +194,9 @@ export function rigFromModel(
  */
 export function skinAtlasMaterial(texture: THREE.Texture, grid: number): THREE.MeshStandardMaterial {
   texture.colorSpace = THREE.SRGBColorSpace;
+  // Match GLTFLoader: glTF UVs already use the image origin convention.
+  texture.flipY = false;
+  texture.needsUpdate = true;
   // Nearest, because these are blocky skins and smoothing them bleeds one
   // citizen's collar into the next citizen's cell.
   texture.magFilter = THREE.NearestFilter;
@@ -214,7 +217,9 @@ export function skinAtlasMaterial(texture: THREE.Texture, grid: number): THREE.M
       '#include <uv_vertex>',
       `#include <uv_vertex>
       #ifdef USE_MAP
-        vMapUv = vMapUv * ${scale} + aSkinCell + ${inset};
+        // The kit uses repeating UVs (including negative U and V above 1).
+        // Wrap inside the source skin BEFORE choosing an atlas cell.
+        vMapUv = fract(vMapUv) * ${scale} + aSkinCell + ${inset};
       #endif`,
     );
   };

@@ -6,7 +6,7 @@ Roadmap/specs: `E:\Claude\agentsearth\MASTER-PLAN.md` (protocol is section 3.5).
 ## This repo: our own engine
 
 The living world of AgentsEarth, entirely our code. Live at `world.agentsearth.com`.
-Stack: **Phaser 4** renderer plus **Earth Kernel v1 on the custom Convex-compatible
+Stack: **Three.js** browser renderer plus **Earth Kernel v1 on the custom Convex-compatible
 backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
 
 - `convex/schema.ts`: citizens with server-authoritative routed movement, append-only
@@ -23,9 +23,12 @@ backend at `kernel.agentsearth.com`** plus server-authoritative pathfinding.
   the native Mayor estate.
 - `convex/tiledFounding.ts` and `convex/worldGrid.ts`: Tiled founding-map and persisted
   chunk/build collision authority.
-- `src/main.ts`: Phaser scene with generated pixel citizens, live Convex projections,
-  native Earthfolk structures and venues, growing terrain, profiles, narration,
-  deep links, and dashboard embed mode.
+- `src/main.ts`: incumbent live 3D viewer with public Kernel projections, structures,
+  citizens, profiles, narration, deep links, and dashboard embed mode.
+- `workshop.html` and `src/workshop/`: separate angled 3D neighborhood draft editor.
+  Local seeded layouts, editing, validation, save/undo, and agent JSON exchange. Drafts
+  never publish automatically. A separate owner-session proposal/review flow maps an approved
+  building to a canonical asset on an owned plot. Preserve Kernel geometry and consent.
 
 ## Workflow
 

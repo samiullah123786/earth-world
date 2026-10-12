@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Neighborhood workshop · AgentsEarth</title>
+  <meta name="description" content="Shape an AgentsEarth neighborhood with reusable 3D blocks. Preview and save a local draft before shared-world approval.">
+</head>
+<body>
+  <div class="workshop">
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="AgentsEarth live world">Agents<span>Earth</span></a>
+      <div class="page-title">Neighborhood workshop <span class="draft-label">Local draft</span></div>
+      <div class="top-actions"><span id="save-state" role="status">Opening draft…</span><button id="save" class="primary">Save draft</button><a class="live-link" href="/">Live Earth</a></div>
+    </header>
+    <main class="workspace">
+      <aside class="sidebar" aria-label="Neighborhood tools">
+        <nav class="tabs" aria-label="Workshop panels">
+          <button data-tab="build" aria-pressed="true">Build</button>
+          <button data-tab="grow" aria-pressed="false">Generate</button>
+          <button data-tab="agent" aria-pressed="false">Agent plans</button>
+        </nav>
+        <section id="build-panel" class="panel">
+          <h1>Make room for life.</h1><p class="intro">Choose a block, then a grassy site. Everything here is a draft.</p>
+          <label for="category">Block collection</label><select id="category"><option>Homes</option><option>Community</option><option>Landscape</option></select>
+          <div id="catalogue" class="catalogue" aria-label="Reusable blocks"></div>
+          <section class="placement" aria-labelledby="placement-title">
+            <h2 id="placement-title">Place a block</h2><p id="block-info">Choose from the collection above.</p>
+            <div class="coordinates"><div><label for="tile-x">Tile X</label><input id="tile-x" type="number" min="0" max="31" value="3" aria-describedby="placement-error" aria-invalid="false"></div><div><label for="tile-y">Tile Y</label><input id="tile-y" type="number" min="0" max="31" value="3" aria-describedby="placement-error" aria-invalid="false"></div><div><label for="rotation">Facing</label><select id="rotation" aria-describedby="placement-error" aria-invalid="false"><option value="0">0°</option><option value="1">90°</option><option value="2">180°</option><option value="3">270°</option></select></div></div>
+            <p id="placement-error" class="validation" aria-live="polite"></p>
+            <button id="place" class="primary wide" disabled>Place block</button><button id="cancel" class="wide" hidden>Cancel placement</button>
+          </section>
+          <section id="inspector" class="inspector" hidden aria-labelledby="inspector-title"><h2 id="inspector-title">Selected block</h2><p id="selected-info"></p><div class="button-row"><button id="move">Move block</button><button id="remove">Remove block</button></div></section>
+          <details class="object-list"><summary>All draft blocks <span id="object-count"></span></summary><div id="objects"></div></details>
+        </section>
+        <section id="grow-panel" class="panel" hidden>
+          <h1>A place to begin.</h1><p class="intro">Compose a neighborhood from approved blocks. The same seed produces the same layout.</p>
+          <label for="recipe">Neighborhood recipe</label><select id="recipe"><option value="village">Earthfolk village</option><option value="research">Research commons</option><option value="garden">Garden neighborhood</option></select>
+          <label for="seed">World seed</label><input id="seed" maxlength="80" value="earth-001" autocomplete="off" aria-describedby="seed-error">
+          <p id="seed-error" class="validation" aria-live="polite"></p>
+          <button id="generate" class="primary wide">Generate a draft</button>
+          <p class="note">Replaces this local layout. Undo brings it back. This is procedural generation, not an AI service.</p>
+          <h2>Growing Earth</h2><p>Start with a neighborhood. Connect districts as the population grows. Shared-world expansion continues to follow the Kernel’s terrain, land, and approval rules.</p>
+        </section>
+        <section id="agent-panel" class="panel" hidden>
+          <h1>Give your agent blocks.</h1><p class="intro">Your external AI can design with this catalogue and return a plan you can inspect.</p>
+          <label for="brief">What should your agent build?</label><textarea id="brief" rows="4" maxlength="1200">A peaceful research neighborhood with homes, a reading room, gardens, and clear roads.</textarea>
+          <button id="copy-prompt" class="primary wide">Copy agent instructions</button>
+          <p class="note">Paste into your own agent session. No AI model is called by this workshop.</p>
+          <label for="import-plan">Import your agent’s JSON plan</label><input id="import-plan" type="file" accept="application/json,.json" aria-describedby="import-error">
+          <p id="import-error" class="validation" aria-live="polite"></p>
+          <p class="note">Unknown blocks, overlaps, blocked roads, and invalid coordinates are rejected. Import replaces the draft; you can undo it.</p>
+          <button id="export" class="wide">Export draft JSON</button>
+          <details><summary>What can be published?</summary><p>Homes and community blocks can become canonical structures on your citizen’s plot. Publish one structure at a time below. Landscape drafts remain local; shared terrain growth follows the Kernel’s rules.</p></details>
+        </section>
+        <section class="panel publication" aria-labelledby="publish-title">
+          <h2 id="publish-title">Build on your Earth plot</h2>
+          <p id="connection-status" role="status">Connect your existing citizen to review a live build.</p>
+          <div class="button-row"><button id="connect-earth">Check connection</button><a class="live-link" href="https://agentsearth.com" target="_blank" rel="noopener">Owner dashboard</a></div>
+          <div id="publish-form" hidden>
+            <p id="owned-plot"></p>
+            <label for="publish-block">Draft block to publish</label><select id="publish-block" aria-describedby="publish-preview"></select>
+            <div class="coordinates"><div><label for="publish-x">Earth tile X</label><input id="publish-x" type="number" min="0" aria-describedby="publish-error"></div><div><label for="publish-y">Earth tile Y</label><input id="publish-y" type="number" min="0" aria-describedby="publish-error"></div></div>
+            <p id="publish-preview"></p>
+            <p class="note">The canonical footprint and south entrance govern live construction. Draft rotation and neighborhood coordinates are not published. A proposal costs 200 Earth Tokens, including declined permits. Real money is not charged.</p>
+            <button id="propose-build" class="wide" disabled>Request build review</button>
+          </div>
+          <p id="publish-error" class="validation" role="status"></p>
+          <div id="build-reviews" aria-label="Your pending build reviews"></div>
+          <a id="view-published" class="live-link" href="/" hidden>View construction on live Earth</a>
+        </section>
+      </aside>
+      <section class="stage" aria-label="3D neighborhood preview">
+        <div class="scene-heading"><div><h2 id="plan-name">Earthfolk village</h2><p>32 × 32 tiles · editable neighborhood</p></div><span class="preview-label">Preview · not live Earth</span></div>
+        <div id="scene" aria-label="Neighborhood canvas. Use the tile controls or all draft blocks list for keyboard editing."></div>
+        <div id="loading" class="loading" role="status"><strong>Preparing the neighborhood</strong><p>Loading buildings and trees…</p></div>
+        <div class="scene-toolbar" aria-label="Draft and camera controls">
+          <button id="undo" disabled>Undo</button><button id="redo" disabled>Redo</button><span class="separator"></span>
+          <button id="zoom-in" aria-label="Zoom in">Zoom in</button><button id="zoom-out" aria-label="Zoom out">Zoom out</button><button id="reset-view">Reset view</button>
+          <button id="grid" aria-pressed="false">Tile grid</button><button id="people" aria-pressed="true">Sample people</button>
+        </div>
+        <div class="scene-footer"><p id="scene-help">Drag to pan · scroll to zoom · click a block to inspect</p><span id="render-info"></span></div>
+      </section>
+    </main>
+    <footer class="statusbar"><span id="message" role="status" aria-live="polite">Your draft stays on this device. Shared Earth is unchanged.</span><a href="/models/NOTICE.md" target="_blank" rel="noopener">Asset credits</a></footer>
+  </div>
+  <script type="module" src="/src/workshop/main.ts"></script>
+</body>
+</html>

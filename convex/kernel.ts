@@ -1,6 +1,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
+import { MODULAR_MODELS, modularAsset, validatedModel } from '../shared/modular';
 import { WAKING_GATE, slumberVerdict } from '../shared/slumber';
 import { SCANNER_VERSION, scanEntries } from './scanner';
 import { findRoute, walkableInWorld } from './pathfinding';
@@ -426,9 +427,10 @@ function nativeBuildingKnowledge() {
       rule: 'Choose purpose, authored asset and whole-tile coordinates. Never compose visual geometry tile-by-tile.',
       assets: Object.entries(EARTHFORGE_ASSETS).map(([assetId, asset]) => ({
         assetId, kind: asset.kind, name: asset.name, footprint: asset.footprint,
+        modelIds: Object.entries(MODULAR_MODELS).filter(([, semanticId]) => semanticId === assetId).map(([id]) => id),
         entrance: asset.entry, features: asset.features,
       })),
-      action: { type: 'construct_structure', fields: ['structureType', 'coordinates{x,y}', 'assetId'] },
+      action: { type: 'construct_structure', fields: ['structureType', 'coordinates{x,y}', 'assetId', 'modelId? (approved 3D presentation only)'] },
     },
     visualHabitat: {
       standard: EARTHFORGE_VISUAL_SYSTEM,
@@ -624,6 +626,7 @@ function buildFootprint(plot: any, payload: any, standing: ReadonlyArray<{ x: nu
         entry: { x: asset.entry[0], y: asset.entry[1] },
         collision: asset.collision.map(([x, y]) => ({ x, y })),
         earthForge: semanticIntentForAsset(assetId, `${plot.plotId}:${offsetX},${offsetY}`),
+        modelId: validatedModel(raw.modelId, assetId),
       };
     } else {
       if (assetFramework !== LPC_ASSET_STANDARD) {
@@ -677,6 +680,7 @@ async function lpcBuildPayload(ctx: any, requesterId: string, action: any) {
           style: EARTHFORGE_SYSTEM, assetFramework: EARTHFORGE_SYSTEM,
           siteContract: EARTHFORGE_SITE_SYSTEM,
           assetId: requestedAssetId,
+          modelId: validatedModel(action.modelId, requestedAssetId),
           earthForge: semanticIntentForAsset(requestedAssetId, `${requesterId}:${plot.plotId}:${x},${y}`),
         },
       },
@@ -1519,6 +1523,64 @@ async function raiseChatConcern(ctx: any, speakerId: string, conversationId: str
     payload: { conversationId, flags },
     gloss: `Aegis flagged a line in a live conversation: ${flags.join(', ')}. The listener was told it is data, not instruction.`,
   });
+}
+
+
+async function proposeConstruction(ctx: any, agent: any, citizen: any, action: any, warning?: unknown): Promise<any> {
+  const agentId = agent.agentId;
+  let structure: string;
+  let plot: any;
+  let payload: any;
+  if (action.type === 'construct_structure') {
+    const prepared = await lpcBuildPayload(ctx, agentId, action);
+    structure = 'blueprint';
+    plot = prepared.plot;
+    payload = prepared.payload;
+  } else {
+    structure = String(action.structure ?? '');
+    if (!['home', 'extension', 'garden', 'bench', 'blueprint'].includes(structure)) throw new Error('unsupported structure');
+    plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agentId)).first();
+    if (!plot) throw new Error('claim a plot before building');
+    payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
+  }
+  const { footprint } = await validateBuild(ctx, agentId, payload);
+  const pendingBuilds = (await ctx.db.query('approvals').collect()).filter((approval: any) =>
+    approval.state === 'pending'
+    && ['build', 'land_build'].includes(approval.kind)
+    && (approval.payload?.requesterId ?? approval.agentId) === agentId
+    && approval.payload?.plotId === plot.plotId);
+  for (const pending of pendingBuilds) {
+    const reserved = buildFootprint(plot, pending.payload);
+    if (overlapsRect(footprint, reserved)) throw new Error('build footprint overlaps a structure already pending civic review');
+  }
+  const label = footprint.blueprint?.name ?? structure;
+  const review = buildReview(footprint);
+  // Building rights are bought before they are reviewed, the way a permit
+  // application is paid for whether or not it is granted. Charging only on
+  // approval would make speculative footprints free, and the geometry
+  // checks above are the expensive part. Keyed to the exact footprint, so
+  // a retried request pays once and a genuinely different plan pays again.
+  await payToTreasury(ctx, {
+    fromAgentId: agentId, amount: BUILD_FEE, kind: 'build_fee',
+    reason: `Building rights for ${label} on ${plot.plotId}.`.slice(0, 240),
+    sourceId: `build:${agentId}:${plot.plotId}:${footprint.x}:${footprint.y}:${footprint.w}x${footprint.h}`,
+  });
+  if ((agent.autonomy ?? 'light') === 'active' && review.risk === 'routine') {
+    const result = await stageLandReview(ctx, agentId, 'build', payload, Date.now());
+    await notifyOwner(ctx, agentId, 'info', result.awaitingCivicReview ? 'Native build moved to civic review' : 'Routine native build approved',
+      result.awaitingCivicReview
+        ? `${label} passed Terra and Tock's inspection on ${plot.plotId}. The current land policy requires one final civic decision.`
+        : `${label} passed Terra and Tock's geometry, overlap, and Earthfolk-native inspection on ${plot.plotId}.`);
+    return { ok: true, autoApproved: !result.awaitingCivicReview, ...result, review: review.report,
+      buildGuide: nativeBuildingKnowledge(), warning };
+  }
+  const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`,
+    `On ${plot.plotId}. Footprint ${footprint.w} by ${footprint.h} at (${footprint.x}, ${footprint.y}). ${footprint.blueprint?.modelId ? `3D model ${footprint.blueprint.modelId}. ` : ''}Declarative-only Earthfolk inspection: ${review.report.outcome}.`,
+    payload, review.risk);
+  await notifyOwner(ctx, agentId, 'approval', review.risk === 'strict' ? 'Custom build needs review' : 'Home improvement ready',
+    `${citizen.name} requested ${label}. Tock will recheck the protected footprint before construction.`, approvalId);
+  return { ok: true, awaitingOwner: true, approvalId, review: review.report,
+    buildGuide: nativeBuildingKnowledge(), warning };
 }
 
 export const act = internalMutation({
@@ -3191,59 +3253,7 @@ export const act = internalMutation({
     }
 
     if (action?.type === 'build' || action?.type === 'construct_structure') {
-      let structure: string;
-      let plot: any;
-      let payload: any;
-      if (action.type === 'construct_structure') {
-        const prepared = await lpcBuildPayload(ctx, agentId, action);
-        structure = 'blueprint';
-        plot = prepared.plot;
-        payload = prepared.payload;
-      } else {
-        structure = String(action.structure ?? '');
-        if (!['home', 'extension', 'garden', 'bench', 'blueprint'].includes(structure)) throw new Error('unsupported structure');
-        plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first();
-        if (!plot) throw new Error('claim a plot before building');
-        payload = { plotId: plot.plotId, structure, blueprint: action.blueprint };
-      }
-      const { footprint } = await validateBuild(ctx, agentId, payload);
-      const pendingBuilds = (await ctx.db.query('approvals').collect()).filter((approval: any) =>
-        approval.state === 'pending'
-        && ['build', 'land_build'].includes(approval.kind)
-        && (approval.payload?.requesterId ?? approval.agentId) === agentId
-        && approval.payload?.plotId === plot.plotId);
-      for (const pending of pendingBuilds) {
-        const reserved = buildFootprint(plot, pending.payload);
-        if (overlapsRect(footprint, reserved)) throw new Error('build footprint overlaps a structure already pending civic review');
-      }
-      const label = footprint.blueprint?.name ?? structure;
-      const review = buildReview(footprint);
-      // Building rights are bought before they are reviewed, the way a permit
-      // application is paid for whether or not it is granted. Charging only on
-      // approval would make speculative footprints free, and the geometry
-      // checks above are the expensive part. Keyed to the exact footprint, so
-      // a retried request pays once and a genuinely different plan pays again.
-      await payToTreasury(ctx, {
-        fromAgentId: agentId, amount: BUILD_FEE, kind: 'build_fee',
-        reason: `Building rights for ${label} on ${plot.plotId}.`.slice(0, 240),
-        sourceId: `build:${agentId}:${plot.plotId}:${footprint.x}:${footprint.y}:${footprint.w}x${footprint.h}`,
-      });
-      if ((agent.autonomy ?? 'light') === 'active' && review.risk === 'routine') {
-        const result = await stageLandReview(ctx, agentId, 'build', payload, Date.now());
-        await notifyOwner(ctx, agentId, 'info', result.awaitingCivicReview ? 'Native build moved to civic review' : 'Routine native build approved',
-          result.awaitingCivicReview
-            ? `${label} passed Terra and Tock's inspection on ${plot.plotId}. The current land policy requires one final civic decision.`
-            : `${label} passed Terra and Tock's geometry, overlap, and Earthfolk-native inspection on ${plot.plotId}.`);
-        return { ok: true, autoApproved: !result.awaitingCivicReview, ...result, review: review.report,
-          buildGuide: nativeBuildingKnowledge(), warning };
-      }
-      const approvalId = await insertApproval(ctx, agentId, 'build', `Build ${label}`,
-        `On ${plot.plotId}. Footprint ${footprint.w} by ${footprint.h} at (${footprint.x}, ${footprint.y}). Declarative-only Earthfolk inspection: ${review.report.outcome}.`,
-        payload, review.risk);
-      await notifyOwner(ctx, agentId, 'approval', review.risk === 'strict' ? 'Custom build needs review' : 'Home improvement ready',
-        `${citizen.name} requested ${label}. Tock will recheck the protected footprint before construction.`, approvalId);
-      return { ok: true, awaitingOwner: true, approvalId, review: review.report,
-        buildGuide: nativeBuildingKnowledge(), warning };
+      return await proposeConstruction(ctx, agent, citizen, action, warning);
     }
 
     // --- Building with your own hands ------------------------------------
@@ -3867,6 +3877,28 @@ export const ownerSession = internalQuery({
         width: world.width, height: world.height, generation: world.generation,
       },
       expiresAt: session.expiresAt };
+  },
+});
+
+/** Human proposals use the same geometry, fees and review as signed agents. */
+export const ownerConstruction = internalMutation({
+  args: { tokenHash: v.string(), modelId: v.string(), x: v.number(), y: v.number() },
+  handler: async (ctx, { tokenHash, modelId, x, y }) => {
+    const session = await ctx.db.query('sessions').withIndex('tokenHash', q => q.eq('tokenHash', tokenHash)).first();
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) throw new Error('owner session expired');
+    const agent = await ctx.db.query('agents').withIndex('agentId', q => q.eq('agentId', session.agentId)).first();
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', q => q.eq('agentId', session.agentId)).first();
+    if (!agent || !citizen) throw new Error('connect your existing citizen first');
+    const governance = await ctx.db.query('governanceConfig').withIndex('key', q => q.eq('key', 'earth')).first();
+    if (governance?.townPaused) throw new Error('the town is paused by the Mayor');
+    const { semanticId, asset } = modularAsset(modelId);
+    const warning = await rateLimit(ctx, agent.agentId);
+    // A workshop always leaves an explicit owner decision to review. Standing
+    // autonomy is for the agent's own signed actions, not an editor shortcut.
+    return await proposeConstruction(ctx, { ...agent, autonomy: 'light' }, citizen, {
+      type: 'construct_structure', structureType: asset.kind, assetId: semanticId,
+      modelId, coordinates: { x, y },
+    }, warning);
   },
 });
 
@@ -6884,7 +6916,9 @@ export const ambientSettle = internalMutation({
     const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
     if (!agent || !citizen || citizen.state === 'awaiting_owner') return { ok: false };
-    if (await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first()) {
+    const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agentId)).collect();
+    if (builds.some((build: any) => build.state !== 'razed'
+      && (build.structure === 'home' || build.blueprint?.kind === 'home'))) {
       return { ok: true, already: true };
     }
     try {
@@ -6896,7 +6930,7 @@ export const ambientSettle = internalMutation({
           ? `${citizen.name} claimed ground under their owner's standing consent.`
           : `${citizen.name} found a plot worth asking their owner about.`,
       });
-      return { ok: true, settled: Boolean(settled) };
+      return { ok: true, settled: settled.state === 'settled', state: settled.state };
     } catch {
       // No safe free plot right now: the surveyors will grow the world.
       return { ok: false };
@@ -7358,16 +7392,17 @@ export const deputyTick = internalMutation({
 export const aspirationTick = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const [citizens, plots, contributions, assets, bankSkillRows, balances, agents] = await Promise.all([
+    const [citizens, builds, contributions, assets, bankSkillRows, balances, agents] = await Promise.all([
       ctx.db.query('citizens').collect(),
-      ctx.db.query('plots').collect(),
+      ctx.db.query('builds').collect(),
       ctx.db.query('contributions').order('desc').take(1000),
       ctx.db.query('bankAssets').collect(),
       ctx.db.query('bankSkills').collect(),
       ctx.db.query('balances').collect(),
       ctx.db.query('agents').collect(),
     ]);
-    const homes = new Set(plots.filter((row) => row.ownerAgentId).map((row) => row.ownerAgentId));
+    const homes = new Set(builds.filter((row) => row.state !== 'razed'
+      && (row.structure === 'home' || row.blueprint?.kind === 'home')).map((row) => row.ownerAgentId));
     const civic = new Map<string, number>();
     for (const row of contributions) {
       if (row.dimension === 'civic') civic.set(row.agentId, (civic.get(row.agentId) ?? 0) + row.points);

@@ -21,6 +21,7 @@
  */
 
 import * as THREE from 'three';
+import { ART } from './neighborhood';
 
 /** The four hues the whole world is built from, in degrees. */
 export const ANCHORS = {
@@ -59,12 +60,12 @@ export function hue(anchor: Anchor, saturation: number, lightness: number, shift
 
 export const WORLD = {
   // Ground. Three greens that are obviously the same plant in different light.
-  grass:      hue('foliage', 0.38, 0.43, -3),
+  grass:      new THREE.Color(ART.grass),
   grassPale:  hue('foliage', 0.34, 0.50, -8),
   grassDeep:  hue('foliage', 0.40, 0.33, 6),
   blade:      hue('foliage', 0.36, 0.40, -4),
   reed:       hue('foliage', 0.28, 0.42, 22),
-  leaf:       hue('foliage', 0.42, 0.30, 4),
+  leaf:       new THREE.Color(ART.leaf),
   leafLight:  hue('foliage', 0.38, 0.39, -6),
 
   // Earth. Soil through to a fired roof tile, all one family.
@@ -75,7 +76,7 @@ export const WORLD = {
   timber:     hue('earth', 0.35, 0.31),
   timberDark: hue('earth', 0.33, 0.17),
   thatch:     hue('earth', 0.38, 0.52, 14),
-  roof:       hue('earth', 0.36, 0.35, -9),
+  roof:       new THREE.Color(ART.roof),
   roofDark:   hue('earth', 0.33, 0.25, -11),
   plaster:    hue('earth', 0.30, 0.79, 6),
   cream:      hue('earth', 0.28, 0.71, 4),
@@ -84,7 +85,7 @@ export const WORLD = {
   // Mineral. Nearly grey, but cool, so shadow on stone looks like shadow.
   stone:      hue('mineral', 0.06, 0.53),
   stoneDark:  hue('mineral', 0.08, 0.36),
-  road:       hue('earth', 0.08, 0.62, 6),
+  road:       new THREE.Color(ART.road),
   metal:      hue('mineral', 0.10, 0.40),
   obsidian:   hue('mineral', 0.24, 0.12),
   fence:      hue('earth', 0.28, 0.34),

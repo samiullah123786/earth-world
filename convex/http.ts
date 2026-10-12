@@ -439,6 +439,7 @@ const worldStateHttp = httpAction(async (ctx) => {
     gate: WAKING_GATE,
     citizens: citizens.map((row: any) => ({
       agentId: row.agentId, name: row.name, family: row.family,
+      avatarSpec: row.avatarSpec ?? null,
       online: row.online, serviceRole: row.serviceRole ?? null,
       asleep: typeof row.asleepSince === 'number' && !row.serviceRole,
       fx: row.fx, fy: row.fy, tx: row.tx, ty: row.ty, t0: row.t0, t1: row.t1,
@@ -465,7 +466,7 @@ const worldStateHttp = httpAction(async (ctx) => {
     builds: (objects.builds ?? [])
       .filter((build: any) => ['built', 'building'].includes(build.state) && typeof build.x === 'number')
       .map((build: any) => ({
-        buildId: build.buildId,
+        buildId: build.buildId, plotId: build.plotId, ownerAgentId: build.ownerAgentId,
         x: build.x, y: build.y, w: build.w ?? 3, h: build.h ?? 3,
         structure: build.structure, state: build.state,
         endsAt: build.constructionEndsAt ?? null,
@@ -473,6 +474,7 @@ const worldStateHttp = httpAction(async (ctx) => {
         // These fields are Kernel-validated public intent; masks, placements,
         // palettes and executable data remain outside the projection.
         visual: {
+          modelId: build.blueprint?.modelId ?? null,
           assetId: build.blueprint?.earthForge?.assetId ?? build.blueprint?.assetId ?? null,
           name: build.blueprint?.name ?? build.structure,
           kind: build.blueprint?.kind ?? build.structure,
@@ -515,6 +517,7 @@ const worldStateHttp = httpAction(async (ctx) => {
     // Who owns which ground, so a viewer can fence a homestead rather than
     // scattering houses on anonymous grass.
     plots: (objects.plots ?? []).map((plot: any) => ({
+      plotId: plot.plotId, ownerAgentId: plot.ownerAgentId ?? null,
       x: plot.x, y: plot.y, w: plot.w, h: plot.h,
       district: plot.district, owned: Boolean(plot.ownerAgentId),
     })),
@@ -1167,6 +1170,14 @@ http.route({ path: '/v1/leave', method: 'POST', handler: leave });
 http.route({ path: '/v1/owner/claim', method: 'POST', handler: ownerClaim });
 http.route({ path: '/v1/owner/session', method: 'GET', handler: ownerSession });
 http.route({ path: '/v1/owner/approvals', method: 'GET', handler: ownerApprovals });
+http.route({ path: '/v1/owner/construction', method: 'POST', handler: httpAction(async (ctx, request) => {
+  try {
+    const { value } = await body(request);
+    return json(await ctx.runMutation(internal.kernel.ownerConstruction, {
+      tokenHash: await sha256Hex(bearerToken(request)), modelId: value.modelId, x: value.x, y: value.y,
+    }));
+  } catch (error) { return json({ ok: false, why: message(error) }, 400); }
+}) });
 http.route({ path: '/v1/owner/skills', method: 'GET', handler: ownerSkills });
 http.route({ path: '/v1/owner/listings', method: 'GET', handler: ownerListings });
 http.route({ path: '/v1/owner/withdraw', method: 'POST', handler: ownerWithdraw });

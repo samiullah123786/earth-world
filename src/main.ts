@@ -8,13 +8,14 @@ import { conversationSubtitle, conversationTitle, groupConversations } from './w
 import { lookFor, makeFace, makeHair } from './world3d/citizenKit';
 import { furnishHome, inside, interiorPalette, wallTiles } from './world3d/interior';
 import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/blocks';
-import { assetsFor, facingOf, manifest, pick, rollOf } from '../shared/catalogue';
+import { assetsFor, facingOf, manifest, pick, rollOf, CATALOGUE } from '../shared/catalogue';
 import { BlockBatch, absorb, shadedBox } from './world3d/batch';
 import { AmbientLife, Clouds, makeSkyDome } from './world3d/sky';
 import { CitizenBatch, harvest, rigFromModel, skinAtlasMaterial, type Pose, type Rig } from './world3d/rig';
 import { ModelInstances, fitToPlot, loadModels, type Model } from './world3d/assets';
 import { heightAt, setWorldBounds, siteHeight } from '../shared/elevation';
 import { skyAt, worldMaterials } from './world3d/palette';
+import { ART, neighborhoodModel, WORLD_SCALE } from './world3d/neighborhood';
 import { PROFILES, loadSettings, phaseFor, saveSettings, suggestQuality, type Settings } from './world3d/settings';
 
 const KERNEL = import.meta.env.VITE_CONVEX_SITE_URL || 'https://kernel.agentsearth.com';
@@ -41,6 +42,7 @@ type Citizen = {
   specialties?: string[]; skillCount?: number; experienceTier?: string;
 };
 type BuildVisual = {
+  modelId?: string | null;
   assetId?: string | null; name?: string | null; kind?: string | null;
   architecture?: string | null; features?: string[];
 };
@@ -117,11 +119,12 @@ const reticle = required<HTMLDivElement>('reticle');
 if (EMBED) document.body.classList.add('embed');
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9cc9e7);
-scene.fog = new THREE.Fog(0x9cc9e7, 55, 145);
+const neighborhoodBackground = new THREE.Color(ART.background);
+scene.background = neighborhoodBackground;
+scene.fog = new THREE.Fog(ART.background, 75, 180);
 
-const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.08, 240);
-camera.position.set(44, 18, 52);
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.08, 240);
+camera.position.set(68, 42, 64);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -130,11 +133,13 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.25;
 game.append(renderer.domElement);
 
 const orbit = new OrbitControls(camera, renderer.domElement);
-orbit.enableDamping = true;
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+orbit.enableDamping = !reducedMotion.matches;
+reducedMotion.addEventListener('change', () => { orbit.enableDamping = !reducedMotion.matches; });
 orbit.dampingFactor = 0.075;
 orbit.minDistance = 6;
 orbit.maxDistance = 115;
@@ -152,7 +157,7 @@ orbit.keyPanSpeed = 22;
 orbit.listenToKeyEvents(window);
 
 type DragStyle = 'orbit' | 'grab';
-let dragStyle: DragStyle = (localStorage.getItem('earth.drag') as DragStyle) || 'orbit';
+let dragStyle: DragStyle = localStorage.getItem('earth.drag') === 'orbit' ? 'orbit' : 'grab';
 function applyDragStyle() {
   orbit.mouseButtons = dragStyle === 'grab'
     ? { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
@@ -161,7 +166,7 @@ function applyDragStyle() {
   renderer.domElement.classList.toggle('grabbing', dragStyle === 'grab');
   const grabButton = document.getElementById('grab-toggle');
   if (grabButton) {
-    grabButton.textContent = dragStyle === 'grab' ? '✋ GRAB' : '⟳ ORBIT';
+    grabButton.textContent = dragStyle === 'grab' ? 'Grab' : 'Orbit';
     grabButton.setAttribute('aria-pressed', String(dragStyle === 'grab'));
     grabButton.setAttribute('aria-label', dragStyle === 'grab'
       ? 'Left-drag grabs the ground. Switch to orbit.'
@@ -803,11 +808,11 @@ async function loadKit() {
     loadModels(GARDEN_MODELS),
     new THREE.TextureLoader().loadAsync(SKIN_ATLAS).catch(() => null),
   ]);
-  homeKit = homes;
-  civicKit = civics;
+  homeKit = homes.map(model => neighborhoodModel(model, 'home'));
+  civicKit = civics.map(model => neighborhoodModel(model, 'civic'));
   citizenBody = people[0] ?? null;
   skinMaterial = atlas ? skinAtlasMaterial(atlas, SKIN_GRID) : null;
-  treeKit = trees;
+  treeKit = trees.map(model => neighborhoodModel(model, 'tree'));
   floraKit = flora;
   gardenKit = garden;
   kitReady = homes.length > 0;
@@ -829,6 +834,9 @@ async function loadKit() {
  */
 function modelFor(build: Build, kit: Model[]): Model | null {
   if (!kit.length) return null;
+  const chosen = CATALOGUE.find(asset => asset.id === build.visual?.modelId);
+  const approved = chosen && kit.find(model => model.url === chosen.url);
+  if (approved) return approved;
   // The catalogue decides WHICH, weighted so a street is mostly ordinary houses
   // with the occasional tall one; the kit is only what actually downloaded.
   const kind = kit === civicKit ? 'civic' : 'home';
@@ -883,7 +891,7 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
     // A garden or a park is a fountain with planting round it, not the grey
     // stone slab the box renderer drew. These were the last things in the world
     // still reading as untextured blocks.
-    if (gardenKit.length && build.state === 'built'
+    if (!build.visual?.modelId && gardenKit.length && build.state === 'built'
       && /garden|park|fountain|bench|laptop|training|greenhouse|orchard/.test(text)) {
       const spots: Array<[number, number, number]> = [
         [build.w / 2, build.h / 2, 0], [0.6, 0.6, 1], [build.w - 0.6, 0.7, 2],
@@ -913,9 +921,10 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
       continue;
     }
 
-    const civic = /bank|civic|hall|library|pavilion|rotunda|data.center|server|workshop|industry/.test(text);
+    const selectedKind = CATALOGUE.find(asset => asset.id === build.visual?.modelId)?.kind;
+    const civic = selectedKind ? selectedKind === 'civic' : /bank|civic|hall|library|pavilion|rotunda|data.center|server|workshop|industry/.test(text);
     const kit = civic ? civicKit : homeKit;
-    const model = build.state === 'built' && !/garden|park|fountain|bench|laptop|training|greenhouse|orchard/.test(text)
+    const model = build.state === 'built' && (selectedKind || !/garden|park|fountain|bench|laptop|training|greenhouse|orchard/.test(text))
       ? modelFor(build, kit) : null;
     if (model) {
       let set = byModel.get(model);
@@ -926,8 +935,8 @@ function buildStructures(builds: Build[], venues: Venue[], gate: { x: number; y:
       }
       // A quarter turn per building, chosen from the id, so a row of the same
       // model does not read as a row of the same model.
-      const facing = facingOf(buildIdOf(build));
-      set.add(fitToPlot(model, build, siteHeight(build), facing), build.buildId ?? '');
+      const facing = selectedKind ? 0 : facingOf(buildIdOf(build));
+      set.add(fitToPlot(model, build, siteHeight(build), facing, civic ? WORLD_SCALE.civicMinimumHeight : WORLD_SCALE.homeMinimumHeight), build.buildId ?? '');
       for (const tile of wallTiles(build)) structureSolid.add(solidKey(tile.x, tile.y));
       chimneys.push({ x: build.x + build.w - 0.4, y: siteHeight(build) + 3.4, z: build.y + 0.5 });
       structureRoot.add(group);
@@ -1107,7 +1116,7 @@ function makeCitizen(row: Citizen): CitizenModel {
     // is sized against the tile grid instead, and a person is a bit over one
     // tile - which is what puts them at roughly two thirds the height of a
     // single-storey house, where a person belongs.
-    const CITIZEN_HEIGHT = 1.2;
+    const CITIZEN_HEIGHT = WORLD_SCALE.citizenHeight;
     return {
       rig: rigFromModel(model.scene, row.agentId,
         (CITIZEN_HEIGHT / Math.max(model.size.y, 0.001)) * look.height,
@@ -1411,7 +1420,7 @@ function focusAt(x: number, z: number, distance = 12) {
   if (exploreMode) firstPerson.unlock();
   const ground = heightAt(x, z);
   orbit.target.set(x, ground + .9, z);
-  camera.position.set(x + distance * .62, ground + Math.max(3.4, distance * .52), z + distance * .82);
+  camera.position.set(x + distance * .78, ground + Math.max(3.4, distance * .85), z + distance * .9);
   orbit.update();
 }
 
@@ -1641,7 +1650,7 @@ async function refreshState() {
   updateHud();
   (window as unknown as Record<string, unknown>).__voxelWorld = {
     ready: true, citizens: next.citizens.length, awake: citizenModels.size,
-    builds: next.builds.length, terrain: Boolean(terrain), renderer: 'three-webgl-voxel-v1',
+    builds: next.builds.length, terrain: Boolean(terrain), renderer: 'three-webgl-voxel-v1', appearance: 'earth-neighborhood-v1',
     farms: (next.farms ?? []).length, fencedPlots: (next.plots ?? []).filter((plot) => plot.owned).length,
     tools: next.citizens.filter((row) => row.carriedTool || row.activeTool).length,
     // What is actually IN the scene, not merely in the payload. Counting the
@@ -1657,6 +1666,7 @@ async function refreshState() {
     },
   };
   document.documentElement.dataset.worldRenderer = 'three-webgl-voxel-v1';
+  document.documentElement.dataset.worldAppearance = 'earth-neighborhood-v1';
   document.documentElement.dataset.worldReady = 'true';
   document.documentElement.dataset.worldCitizens = String(next.citizens.length);
   document.documentElement.dataset.worldBuilds = String(next.builds.length);
@@ -1694,7 +1704,7 @@ async function boot() {
     await Promise.all([refreshTerrain(), refreshState(), refreshFeed(), refreshWallet()]);
     loading.classList.add('done');
     if (terrain) {
-      // Open on the town, low and close.
+      // Open on the inhabited neighborhood from the workshop angle.
       //
       // The old default looked down from a height that rendered the citizens -
       // the entire subject of this world - as three-pixel specks. That is a
@@ -1928,7 +1938,10 @@ window.addEventListener('message', (event) => {
 if (matchMedia('(max-width: 768px)').matches) {
   directory.classList.add('min');
   const button = directory.querySelector<HTMLButtonElement>('.panel-min');
-  if (button) { button.textContent = '+'; button.setAttribute('aria-expanded', 'false'); }
+  if (button) { button.textContent = '+'; button.setAttribute('aria-expanded', 'false'); button.setAttribute('aria-label', 'Expand community directory'); }
+  conversation.classList.add('minimized');
+  const chatButton = required<HTMLButtonElement>('chat-toggle');
+  chatButton.textContent = '+'; chatButton.setAttribute('aria-expanded', 'false'); chatButton.setAttribute('aria-label', 'Expand live chat');
 }
 
 addEventListener('resize', () => {
@@ -2300,11 +2313,12 @@ function tendSky(now: number) {
   skyDome.setColors(state);
   sun.color.copy(state.sun);
   sun.intensity = state.sunIntensity;
-  hemi.intensity = state.ambientIntensity;
-  hemi.color.copy(state.zenith);
-  hemi.groundColor.copy(state.ground);
-  scene.fog!.color.copy(state.fog);
-  scene.background = null;   // the dome is the background now
+  hemi.intensity = Math.max(1.65, state.ambientIntensity);
+  hemi.color.set(ART.sky);
+  hemi.groundColor.set(ART.shadow);
+  skyDome.mesh.visible = exploreMode;
+  scene.fog!.color.copy(exploreMode ? state.fog : neighborhoodBackground);
+  scene.background = exploreMode ? null : neighborhoodBackground;
 
   // Same clock as the colour above, or the light comes from a direction the
   // sky disagrees with.
@@ -2477,9 +2491,11 @@ function animate() {
   animateCitizens(elapsedSeconds, delta);
   const sky = tendSky(Date.now());
   tendLights();
-  clouds?.update(elapsedSeconds, sky);
-  wildlife?.update(elapsedSeconds, sky);
-  tendWater(elapsedSeconds, sky);
+  if (!reducedMotion.matches) {
+    clouds?.update(elapsedSeconds, sky);
+    wildlife?.update(elapsedSeconds, sky);
+  }
+  tendWater(reducedMotion.matches ? 0 : elapsedSeconds, sky);
   renderer.render(scene, camera);
   tendStats(now);
 }

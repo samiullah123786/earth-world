@@ -1,0 +1,548 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-11T16:23:28.723Z",
+  "title": "Design System: AgentsEarth Neighborhood Workshop",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "displayName": "background",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.01276 86.83)",
+          "oklch(26.43% 0.01276 86.83)",
+          "oklch(37.86% 0.01276 86.83)",
+          "oklch(49.29% 0.01276 86.83)",
+          "oklch(60.71% 0.01276 86.83)",
+          "oklch(72.14% 0.01276 86.83)",
+          "oklch(83.57% 0.01276 86.83)",
+          "oklch(95.00% 0.01276 86.83)"
+        ]
+      },
+      "surface": {
+        "displayName": "surface",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.00821 91.48)",
+          "oklch(26.43% 0.00821 91.48)",
+          "oklch(37.86% 0.00821 91.48)",
+          "oklch(49.29% 0.00821 91.48)",
+          "oklch(60.71% 0.00821 91.48)",
+          "oklch(72.14% 0.00821 91.48)",
+          "oklch(83.57% 0.00821 91.48)",
+          "oklch(95.00% 0.00821 91.48)"
+        ]
+      },
+      "surface-raised": {
+        "displayName": "surface raised",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.00818 91.48)",
+          "oklch(26.43% 0.00818 91.48)",
+          "oklch(37.86% 0.00818 91.48)",
+          "oklch(49.29% 0.00818 91.48)",
+          "oklch(60.71% 0.00818 91.48)",
+          "oklch(72.14% 0.00818 91.48)",
+          "oklch(83.57% 0.00818 91.48)",
+          "oklch(95.00% 0.00818 91.48)"
+        ]
+      },
+      "foreground": {
+        "displayName": "foreground",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.02455 156.52)",
+          "oklch(26.43% 0.02455 156.52)",
+          "oklch(37.86% 0.02455 156.52)",
+          "oklch(49.29% 0.02455 156.52)",
+          "oklch(60.71% 0.02455 156.52)",
+          "oklch(72.14% 0.02455 156.52)",
+          "oklch(83.57% 0.02455 156.52)",
+          "oklch(95.00% 0.02455 156.52)"
+        ]
+      },
+      "muted-foreground": {
+        "displayName": "muted foreground",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.02456 140.84)",
+          "oklch(26.43% 0.02456 140.84)",
+          "oklch(37.86% 0.02456 140.84)",
+          "oklch(49.29% 0.02456 140.84)",
+          "oklch(60.71% 0.02456 140.84)",
+          "oklch(72.14% 0.02456 140.84)",
+          "oklch(83.57% 0.02456 140.84)",
+          "oklch(95.00% 0.02456 140.84)"
+        ]
+      },
+      "muted": {
+        "displayName": "muted",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.01630 118.14)",
+          "oklch(26.43% 0.01630 118.14)",
+          "oklch(37.86% 0.01630 118.14)",
+          "oklch(49.29% 0.01630 118.14)",
+          "oklch(60.71% 0.01630 118.14)",
+          "oklch(72.14% 0.01630 118.14)",
+          "oklch(83.57% 0.01630 118.14)",
+          "oklch(95.00% 0.01630 118.14)"
+        ]
+      },
+      "border": {
+        "displayName": "border",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.02566 137.29)",
+          "oklch(26.43% 0.02566 137.29)",
+          "oklch(37.86% 0.02566 137.29)",
+          "oklch(49.29% 0.02566 137.29)",
+          "oklch(60.71% 0.02566 137.29)",
+          "oklch(72.14% 0.02566 137.29)",
+          "oklch(83.57% 0.02566 137.29)",
+          "oklch(95.00% 0.02566 137.29)"
+        ]
+      },
+      "primary": {
+        "displayName": "primary",
+        "role": "primary",
+        "tonalRamp": [
+          "oklch(15.00% 0.06767 149.48)",
+          "oklch(26.43% 0.06767 149.48)",
+          "oklch(37.86% 0.06767 149.48)",
+          "oklch(49.29% 0.06767 149.48)",
+          "oklch(60.71% 0.06767 149.48)",
+          "oklch(72.14% 0.06767 149.48)",
+          "oklch(83.57% 0.06767 149.48)",
+          "oklch(95.00% 0.06767 149.48)"
+        ]
+      },
+      "primary-hover": {
+        "displayName": "primary hover",
+        "role": "primary",
+        "tonalRamp": [
+          "oklch(15.00% 0.05981 150.26)",
+          "oklch(26.43% 0.05981 150.26)",
+          "oklch(37.86% 0.05981 150.26)",
+          "oklch(49.29% 0.05981 150.26)",
+          "oklch(60.71% 0.05981 150.26)",
+          "oklch(72.14% 0.05981 150.26)",
+          "oklch(83.57% 0.05981 150.26)",
+          "oklch(95.00% 0.05981 150.26)"
+        ]
+      },
+      "primary-foreground": {
+        "displayName": "primary foreground",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 89.88)",
+          "oklch(26.43% 0.00000 89.88)",
+          "oklch(37.86% 0.00000 89.88)",
+          "oklch(49.29% 0.00000 89.88)",
+          "oklch(60.71% 0.00000 89.88)",
+          "oklch(72.14% 0.00000 89.88)",
+          "oklch(83.57% 0.00000 89.88)",
+          "oklch(95.00% 0.00000 89.88)"
+        ]
+      },
+      "ring": {
+        "displayName": "ring",
+        "role": "primary",
+        "tonalRamp": [
+          "oklch(15.00% 0.07669 147.47)",
+          "oklch(26.43% 0.07669 147.47)",
+          "oklch(37.86% 0.07669 147.47)",
+          "oklch(49.29% 0.07669 147.47)",
+          "oklch(60.71% 0.07669 147.47)",
+          "oklch(72.14% 0.07669 147.47)",
+          "oklch(83.57% 0.07669 147.47)",
+          "oklch(95.00% 0.07669 147.47)"
+        ]
+      },
+      "destructive": {
+        "displayName": "destructive",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.13793 28.40)",
+          "oklch(26.43% 0.13793 28.40)",
+          "oklch(37.86% 0.13793 28.40)",
+          "oklch(49.29% 0.13793 28.40)",
+          "oklch(60.71% 0.13793 28.40)",
+          "oklch(72.14% 0.13793 28.40)",
+          "oklch(83.57% 0.13793 28.40)",
+          "oklch(95.00% 0.13793 28.40)"
+        ]
+      },
+      "input": {
+        "displayName": "input",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.00818 91.48)",
+          "oklch(26.43% 0.00818 91.48)",
+          "oklch(37.86% 0.00818 91.48)",
+          "oklch(49.29% 0.00818 91.48)",
+          "oklch(60.71% 0.00818 91.48)",
+          "oklch(72.14% 0.00818 91.48)",
+          "oklch(83.57% 0.00818 91.48)",
+          "oklch(95.00% 0.00818 91.48)"
+        ]
+      },
+      "art-background": {
+        "displayName": "art background",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.01630 118.14)",
+          "oklch(26.43% 0.01630 118.14)",
+          "oklch(37.86% 0.01630 118.14)",
+          "oklch(49.29% 0.01630 118.14)",
+          "oklch(60.71% 0.01630 118.14)",
+          "oklch(72.14% 0.01630 118.14)",
+          "oklch(83.57% 0.01630 118.14)",
+          "oklch(95.00% 0.01630 118.14)"
+        ]
+      },
+      "art-grass": {
+        "displayName": "art grass",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.07572 120.90)",
+          "oklch(26.43% 0.07572 120.90)",
+          "oklch(37.86% 0.07572 120.90)",
+          "oklch(49.29% 0.07572 120.90)",
+          "oklch(60.71% 0.07572 120.90)",
+          "oklch(72.14% 0.07572 120.90)",
+          "oklch(83.57% 0.07572 120.90)",
+          "oklch(95.00% 0.07572 120.90)"
+        ]
+      },
+      "art-soil": {
+        "displayName": "art soil",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.04755 77.89)",
+          "oklch(26.43% 0.04755 77.89)",
+          "oklch(37.86% 0.04755 77.89)",
+          "oklch(49.29% 0.04755 77.89)",
+          "oklch(60.71% 0.04755 77.89)",
+          "oklch(72.14% 0.04755 77.89)",
+          "oklch(83.57% 0.04755 77.89)",
+          "oklch(95.00% 0.04755 77.89)"
+        ]
+      },
+      "art-road": {
+        "displayName": "art road",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.03578 94.59)",
+          "oklch(26.43% 0.03578 94.59)",
+          "oklch(37.86% 0.03578 94.59)",
+          "oklch(49.29% 0.03578 94.59)",
+          "oklch(60.71% 0.03578 94.59)",
+          "oklch(72.14% 0.03578 94.59)",
+          "oklch(83.57% 0.03578 94.59)",
+          "oklch(95.00% 0.03578 94.59)"
+        ]
+      },
+      "art-curb": {
+        "displayName": "art curb",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.02634 90.10)",
+          "oklch(26.43% 0.02634 90.10)",
+          "oklch(37.86% 0.02634 90.10)",
+          "oklch(49.29% 0.02634 90.10)",
+          "oklch(60.71% 0.02634 90.10)",
+          "oklch(72.14% 0.02634 90.10)",
+          "oklch(83.57% 0.02634 90.10)",
+          "oklch(95.00% 0.02634 90.10)"
+        ]
+      },
+      "art-grid": {
+        "displayName": "art grid",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.05625 129.20)",
+          "oklch(26.43% 0.05625 129.20)",
+          "oklch(37.86% 0.05625 129.20)",
+          "oklch(49.29% 0.05625 129.20)",
+          "oklch(60.71% 0.05625 129.20)",
+          "oklch(72.14% 0.05625 129.20)",
+          "oklch(83.57% 0.05625 129.20)",
+          "oklch(95.00% 0.05625 129.20)"
+        ]
+      },
+      "art-sun": {
+        "displayName": "art sun",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.04242 84.58)",
+          "oklch(26.43% 0.04242 84.58)",
+          "oklch(37.86% 0.04242 84.58)",
+          "oklch(49.29% 0.04242 84.58)",
+          "oklch(60.71% 0.04242 84.58)",
+          "oklch(72.14% 0.04242 84.58)",
+          "oklch(83.57% 0.04242 84.58)",
+          "oklch(95.00% 0.04242 84.58)"
+        ]
+      },
+      "art-sky": {
+        "displayName": "art sky",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.01459 98.28)",
+          "oklch(26.43% 0.01459 98.28)",
+          "oklch(37.86% 0.01459 98.28)",
+          "oklch(49.29% 0.01459 98.28)",
+          "oklch(60.71% 0.01459 98.28)",
+          "oklch(72.14% 0.01459 98.28)",
+          "oklch(83.57% 0.01459 98.28)",
+          "oklch(95.00% 0.01459 98.28)"
+        ]
+      },
+      "art-shadow": {
+        "displayName": "art shadow",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.02843 165.09)",
+          "oklch(26.43% 0.02843 165.09)",
+          "oklch(37.86% 0.02843 165.09)",
+          "oklch(49.29% 0.02843 165.09)",
+          "oklch(60.71% 0.02843 165.09)",
+          "oklch(72.14% 0.02843 165.09)",
+          "oklch(83.57% 0.02843 165.09)",
+          "oklch(95.00% 0.02843 165.09)"
+        ]
+      },
+      "art-selection": {
+        "displayName": "art selection",
+        "role": "primary",
+        "tonalRamp": [
+          "oklch(15.00% 0.06767 149.48)",
+          "oklch(26.43% 0.06767 149.48)",
+          "oklch(37.86% 0.06767 149.48)",
+          "oklch(49.29% 0.06767 149.48)",
+          "oklch(60.71% 0.06767 149.48)",
+          "oklch(72.14% 0.06767 149.48)",
+          "oklch(83.57% 0.06767 149.48)",
+          "oklch(95.00% 0.06767 149.48)"
+        ]
+      },
+      "art-invalid": {
+        "displayName": "art invalid",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.13793 28.40)",
+          "oklch(26.43% 0.13793 28.40)",
+          "oklch(37.86% 0.13793 28.40)",
+          "oklch(49.29% 0.13793 28.40)",
+          "oklch(60.71% 0.13793 28.40)",
+          "oklch(72.14% 0.13793 28.40)",
+          "oklch(83.57% 0.13793 28.40)",
+          "oklch(95.00% 0.13793 28.40)"
+        ]
+      },
+      "art-ghost": {
+        "displayName": "art ghost",
+        "role": "primary",
+        "tonalRamp": [
+          "oklch(15.00% 0.09520 137.35)",
+          "oklch(26.43% 0.09520 137.35)",
+          "oklch(37.86% 0.09520 137.35)",
+          "oklch(49.29% 0.09520 137.35)",
+          "oklch(60.71% 0.09520 137.35)",
+          "oklch(72.14% 0.09520 137.35)",
+          "oklch(83.57% 0.09520 137.35)",
+          "oklch(95.00% 0.09520 137.35)"
+        ]
+      },
+      "art-leaf": {
+        "displayName": "art leaf",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.08448 130.46)",
+          "oklch(26.43% 0.08448 130.46)",
+          "oklch(37.86% 0.08448 130.46)",
+          "oklch(49.29% 0.08448 130.46)",
+          "oklch(60.71% 0.08448 130.46)",
+          "oklch(72.14% 0.08448 130.46)",
+          "oklch(83.57% 0.08448 130.46)",
+          "oklch(95.00% 0.08448 130.46)"
+        ]
+      },
+      "art-bark": {
+        "displayName": "art bark",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.05834 65.27)",
+          "oklch(26.43% 0.05834 65.27)",
+          "oklch(37.86% 0.05834 65.27)",
+          "oklch(49.29% 0.05834 65.27)",
+          "oklch(60.71% 0.05834 65.27)",
+          "oklch(72.14% 0.05834 65.27)",
+          "oklch(83.57% 0.05834 65.27)",
+          "oklch(95.00% 0.05834 65.27)"
+        ]
+      },
+      "art-roof": {
+        "displayName": "art roof",
+        "role": "neutral",
+        "tonalRamp": [
+          "oklch(15.00% 0.08705 49.35)",
+          "oklch(26.43% 0.08705 49.35)",
+          "oklch(37.86% 0.08705 49.35)",
+          "oklch(49.29% 0.08705 49.35)",
+          "oklch(60.71% 0.08705 49.35)",
+          "oklch(72.14% 0.08705 49.35)",
+          "oklch(83.57% 0.08705 49.35)",
+          "oklch(95.00% 0.08705 49.35)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Panel headline",
+        "purpose": "Introduce the active tool panel."
+      },
+      "title": {
+        "displayName": "Scene title",
+        "purpose": "Name the neighborhood."
+      },
+      "section": {
+        "displayName": "Section title",
+        "purpose": "Group placement and inspection controls."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Instructions, labels, and native fields."
+      },
+      "label": {
+        "displayName": "Compact label",
+        "purpose": "Metadata, validation, catalogue captions, and scene controls."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-raised",
+        "value": "0 4px 16px rgb(40 54 45 / 12%)",
+        "purpose": "Floating scene toolbar only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "duration-fast",
+        "value": "120ms",
+        "purpose": "Background feedback on buttons; removed for reduced motion."
+      },
+      {
+        "name": "button-easing",
+        "value": "ease-out",
+        "purpose": "Button background transition easing."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "workspace-horizontal",
+        "value": "768px"
+      },
+      {
+        "name": "wide-workshop",
+        "value": "1100px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Dark green action for saving or confirming a local draft.",
+      "html": "<button class=\"ds-primary\">Save draft</button>",
+      "css": ".ds-primary{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);min-height:44px;padding:8px 12px;border:1px solid var(--color-border,#7d8879);border-radius:var(--radius-sm,4px);background:var(--color-input,#fffdf7);cursor:pointer;transition:background var(--duration-fast,120ms) ease-out;background:var(--color-primary,#355c3d);color:var(--color-primary-foreground,#ffffff);border-color:var(--color-primary,#355c3d);font-weight:600}.ds-primary:active{background:var(--color-primary-hover,#284a30)}.ds-primary:focus-visible{outline:2px solid var(--color-ring,#38633e);outline-offset:2px;}.ds-primary:disabled{opacity:.5;cursor:not-allowed}@media(hover:hover){.ds-primary:not(:disabled):hover{background:var(--color-primary-hover,#284a30)}}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Bordered action for moving, canceling, or exporting.",
+      "html": "<button class=\"ds-secondary\">Move block</button>",
+      "css": ".ds-secondary{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);min-height:44px;padding:8px 12px;border:1px solid var(--color-border,#7d8879);border-radius:var(--radius-sm,4px);background:var(--color-input,#fffdf7);cursor:pointer;transition:background var(--duration-fast,120ms) ease-out;}.ds-secondary:active{background:var(--color-muted,#e6e9dd)}.ds-secondary:focus-visible{outline:2px solid var(--color-ring,#38633e);outline-offset:2px;}.ds-secondary:disabled{opacity:.5;cursor:not-allowed}@media(hover:hover){.ds-secondary:not(:disabled):hover{background:var(--color-muted,#e6e9dd)}}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none}}"
+    },
+    {
+      "name": "Tile coordinate field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labeled native field with its placement validation message association.",
+      "html": "<label class=\"ds-label\" for=\"ds-tile-x\">Tile X</label><input class=\"ds-field\" id=\"ds-tile-x\" type=\"number\" min=\"0\" max=\"31\" value=\"3\" aria-describedby=\"ds-placement-error\" aria-invalid=\"false\"><p class=\"ds-validation\" id=\"ds-placement-error\" aria-live=\"polite\"></p>",
+      "css": ".ds-label{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);display:block;margin:16px 0 4px;font-weight:600}.ds-field{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);min-height:44px;width:100%;padding:8px;border:1px solid var(--color-border,#7d8879);border-radius:var(--radius-sm,4px);background:var(--color-input,#fffdf7);caret-color:var(--color-primary,#355c3d)}.ds-field:focus-visible{outline:2px solid var(--color-ring,#38633e);outline-offset:2px;}.ds-validation{font:12px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-destructive,#9b352c);margin:8px 0 0;min-height:20px}"
+    },
+    {
+      "name": "Workshop panel navigation",
+      "kind": "nav",
+      "refersTo": "panel-navigation",
+      "description": "Pressed-state native buttons distinguish the active workshop panel.",
+      "html": "<nav class=\"ds-tabs\" aria-label=\"Workshop panels\"><button aria-pressed=\"true\">Build</button><button aria-pressed=\"false\">Generate</button><button aria-pressed=\"false\">Agent plans</button></nav>",
+      "css": ".ds-tabs{display:flex;padding:8px 16px;background:var(--color-surface,#faf8f2);border-bottom:1px solid var(--color-border,#7d8879)}.ds-tabs button{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);flex:1;min-height:44px;padding:8px 4px;border:0;border-radius:0;background:transparent;cursor:pointer;white-space:nowrap;transition:background var(--duration-fast,120ms) ease-out}.ds-tabs button[aria-pressed=true]{color:var(--color-primary,#355c3d);font-weight:700;box-shadow:inset 0 -2px var(--color-primary,#355c3d)}.ds-tabs button:active{background:var(--color-muted,#e6e9dd)}.ds-tabs button:focus-visible{outline:2px solid var(--color-ring,#38633e);outline-offset:2px;}@media(hover:hover){.ds-tabs button:hover{background:var(--color-muted,#e6e9dd)}}@media(prefers-reduced-motion:reduce){.ds-tabs button{transition:none}}"
+    },
+    {
+      "name": "Catalogue block fallback",
+      "kind": "card",
+      "refersTo": "catalogue-block",
+      "description": "Actual catalogue loading/failure pattern; thumbnails in the workshop are runtime model renders.",
+      "html": "<button class=\"ds-block\" aria-pressed=\"false\"><span class=\"ds-image-slot\" aria-hidden=\"true\">Preview unavailable</span><span class=\"ds-caption\">Courtyard house</span></button>",
+      "css": ".ds-block{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);min-height:44px;padding:8px 12px;border:1px solid var(--color-border,#7d8879);border-radius:var(--radius-sm,4px);background:var(--color-input,#fffdf7);cursor:pointer;transition:background var(--duration-fast,120ms) ease-out;width:88px;min-width:0;text-align:left;padding:4px;background:var(--color-surface-raised,#fffdf7)}.ds-image-slot{display:block;height:72px;background:var(--color-muted,#e6e9dd)}.ds-caption{display:block;font-size:12px;line-height:1.3;padding:4px;min-height:40px}.ds-block[aria-pressed=true]{outline:2px solid var(--color-primary,#355c3d);outline-offset:0;background:var(--color-muted,#e6e9dd)}.ds-block:active{background:var(--color-muted,#e6e9dd)}.ds-block:focus-visible{outline:2px solid var(--color-ring,#38633e);outline-offset:2px;}@media(hover:hover){.ds-block:hover{background:var(--color-muted,#e6e9dd)}}@media(prefers-reduced-motion:reduce){.ds-block{transition:none}}"
+    },
+    {
+      "name": "Preview label",
+      "kind": "chip",
+      "refersTo": "preview-label",
+      "description": "Informational label distinguishes the local preview from live Earth; it is not a toggle.",
+      "html": "<span class=\"ds-preview\">Preview · not live Earth</span>",
+      "css": ".ds-preview{font:12px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);background:var(--color-surface,#faf8f2);padding:4px 8px;border-radius:var(--radius-sm,4px)}"
+    },
+    {
+      "name": "Scene toolbar",
+      "kind": "custom",
+      "refersTo": "scene-toolbar",
+      "description": "Wrapped camera/history actions; disabled history and pressed sample toggle remain explicit.",
+      "html": "<div class=\"ds-toolbar\" aria-label=\"Draft and camera controls\"><button disabled>Undo</button><button disabled>Redo</button><span class=\"ds-separator\"></span><button>Zoom in</button><button>Zoom out</button><button>Reset view</button><button aria-pressed=\"false\">Tile grid</button><button aria-pressed=\"true\">Sample people</button></div>",
+      "css": ".ds-toolbar{display:flex;flex-wrap:wrap;gap:4px;padding:4px;width:fit-content;max-width:100%;background:var(--color-surface,#faf8f2);border-radius:var(--radius-md,8px);box-shadow:var(--shadow-raised,0 4px 16px rgb(40 54 45 / 12%))}.ds-toolbar button{font:14px/1.5 var(--font-body,'Segoe UI',sans-serif);color:var(--color-foreground,#28362d);min-height:44px;padding:8px 12px;border:1px solid var(--color-border,#7d8879);border-radius:var(--radius-sm,4px);background:var(--color-input,#fffdf7);cursor:pointer;transition:background var(--duration-fast,120ms) ease-out;font-size:12px;border:0;background:transparent}.ds-toolbar button[aria-pressed=true],.ds-toolbar button:active{background:var(--color-muted,#e6e9dd)}.ds-toolbar button:focus-visible{outline:2px solid var(--color-ring,#38633e);outline-offset:2px;}.ds-toolbar button:disabled{opacity:.5;cursor:not-allowed}.ds-separator{width:1px;margin:8px 4px;background:var(--color-border,#7d8879)}@media(hover:hover){.ds-toolbar button:not(:disabled):hover{background:var(--color-muted,#e6e9dd)}}@media(prefers-reduced-motion:reduce){.ds-toolbar button{transition:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A neighborhood made from inspectable, reusable blocks",
+    "overview": "This system records the neighborhood workshop at `/workshop.html` and `src/workshop/`, plus the shared 3D neighborhood appearance approved for live Earth on 11 October 2026. Scene art is shared through `src/world3d/neighborhood.ts`; the workshop interface tokens, typography, and component examples apply to the workshop only. The incumbent live HUD retains the authority of its existing `src/style.css` and components.\n\nEarthfolk materials give both neighborhoods their identity: cream buildings, timber, warm roofs, sage terrain, paths, and gardens. The workshop interface supports that world with quiet cream surfaces, dark green controls, compact native fields, and a generous angled 3D work surface. Segoe UI is the approved Operate workhorse face for this editor. Live Earth opens from a higher angled perspective, with softer ambient light and the shared sage background in overhead mode; its Orbit and Explore controls remain available.\n\nThe workshop world is a local planning document. Labels keep the draft distinct from live Earth, and sample people are explicitly presented as samples. Kernel identity, permissions, and publication authority remain outside this editor; its external-agent instructions do not invoke a central LLM or grant live authority. Shared appearance changes clone model materials while retaining source geometry, canonical footprints, and citizen identities.",
+    "keyCharacteristics": [
+      "A model-led neighborhood rather than decorative imagery.",
+      "Cream interface surfaces and restrained dark green actions.",
+      "Native controls, readable labels, and visible selection.",
+      "A fixed angled workshop camera; a higher angled live default with Orbit and Explore retained.",
+      "Explicit local-draft and sample-data language."
+    ],
+    "rules": [
+      {
+        "name": "The Material Scope Rule",
+        "body": "Shared ART colors and material treatment apply to workshop and live neighborhood scenes; workshop controls retain their dark green palette, and live HUD styling retains its existing authority.",
+        "section": "colors"
+      },
+      {
+        "name": "The Quiet Controls Rule",
+        "body": "Reserve raised interface depth for the scene toolbar; use borders, spacing, and selected-state marks for ordinary controls and groups.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep model identity, canonical footprints, and actual neighborhood geometry central to both scenes.",
+      "Do use workshop CSS tokens for workshop controls and shared ART tokens for approved neighborhood scene materials.",
+      "Do keep selected and invalid states legible through both text or semantics and color.",
+      "Do label local drafts, sample people, and external-agent instructions accurately.",
+      "Do keep keyboard fields and the draft-object list available alongside canvas interaction.",
+      "Do preserve source provenance: Kenney CC0 licenses are recorded in `assets/kenney/LICENSE.md` and `public/models/NOTICE.md`; thumbnails are runtime renders of those existing assets."
+    ],
+    "donts": [
+      "Don't apply workshop HUD colors, typography, or component styling to live Earth without a separate approved interface change; the approved integration covers shared 3D appearance and touched accessibility controls.",
+      "Don't imply local saving, plan import, or procedural generation publishes to shared Earth or grants Kernel permissions.",
+      "Don't present sample people as live citizens or invoke a central LLM through workshop copy.",
+      "Don't add a dark theme or shipping raster identity to a surface that currently has neither.",
+      "Don't promise undo history survives reload; only the current draft is persisted."
+    ]
+  }
+}

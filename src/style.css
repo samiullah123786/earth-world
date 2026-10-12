@@ -395,3 +395,25 @@ body.embed .buildtray { display: none !important; }
 }
 body.embed .view-toggle, body.embed .viewpanel { display: none !important; }
 @media (max-width: 620px) { .viewpanel { width: min(232px, calc(100vw - 24px)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+:root { --touch-target: 44px; --compact-panel-height: 64px; }
+@media (max-width: 768px) {
+  #chat-toggle, #directory .panel-min {
+    min-width: var(--touch-target);
+    height: var(--touch-target);
+  }
+  #grab-toggle { min-height: var(--touch-target); }
+  .directory.min {
+    min-height: var(--compact-panel-height);
+    max-height: var(--compact-panel-height);
+    flex-basis: var(--compact-panel-height);
+  }
+  #chat-toggle:focus-visible, #directory .panel-min:focus-visible {
+    outline: 2px solid var(--cream);
+    outline-offset: 2px;
+  }
+}

@@ -187,7 +187,7 @@ export class ModelInstances {
  */
 export function fitToPlot(
   model: Model, plot: { x: number; y: number; w: number; h: number }, ground: number,
-  facing = 0,
+  facing = 0, minimumHeight = 0,
 ): THREE.Matrix4 {
   const footprint = Math.max(model.size.x, model.size.z) || 1;
   // Nearly the whole parcel. The earlier 0.82 left a polite margin and made
@@ -198,6 +198,8 @@ export function fitToPlot(
   return new THREE.Matrix4().compose(
     new THREE.Vector3(plot.x + plot.w / 2, ground, plot.y + plot.h / 2),
     new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), facing),
-    new THREE.Vector3(scale, scale, scale),
+    // Compact legacy parcels still need walls taller than a citizen.
+    // Only vertical presentation changes; X/Z remain inside the stored site.
+    new THREE.Vector3(scale, Math.max(scale, minimumHeight / Math.max(model.size.y, 0.001)), scale),
   );
 }
