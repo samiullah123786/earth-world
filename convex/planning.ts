@@ -275,7 +275,7 @@ export async function expandWorld(ctx: any, reason: string, force = false, maint
  * Plan a ring without building it. Returns the chunk coordinates the ring
  * needs; the caller stores them and lays one per scheduled step.
  */
-export async function planExpansion(ctx: any, reason: string, force = false) {
+export async function planExpansion(ctx: any, reason: string, force = false, maintainHabitatReserve = true) {
   const state = await ensureWorldState(ctx);
   if (state.pendingExpansion) return { planned: false, alreadyRunning: true, state };
   const plots = await ctx.db.query('plots').collect();
@@ -283,7 +283,7 @@ export async function planExpansion(ctx: any, reason: string, force = false) {
   const occupied = plots.filter((plot: any) => plot.ownerAgentId).length;
   const needsRoom = citizens.length >= state.capacity - EARTH_SETTLEMENT_POLICY.reserveHomeSites
     || occupied >= Math.floor(plots.length * EARTH_SETTLEMENT_POLICY.claimedExpansionRatio)
-    || needsHabitatExpansion(plots);
+    || (maintainHabitatReserve && needsHabitatExpansion(plots));
   if (!force && !needsRoom) return { planned: false, state };
 
   const width = state.width + RING, height = state.height + RING;
@@ -501,6 +501,10 @@ export async function saveExpansionChunk(ctx: any, chunk: any) {
   const state = await ensureWorldState(ctx);
   const pending = state.pendingExpansion;
   if (!pending) return { stored: false };
+  // A retried or concurrent worker must not rewrite committed terrain, nor
+  // deliver a stale chunk into a newer ring.
+  if (chunk.generation !== pending.generation || !pending.remaining.some((item: any) =>
+    item.chunkX === chunk.chunkX && item.chunkY === chunk.chunkY)) return { stored: false };
   const already = await ctx.db.query('worldChunks')
     .withIndex('coordinates', (q: any) => q.eq('chunkX', chunk.chunkX).eq('chunkY', chunk.chunkY)).first();
   const canonical = { ...chunk, tiled: tiledChunkForWfc(chunk.tiles, chunk.size) };
@@ -520,6 +524,7 @@ export async function saveExpansionChunk(ctx: any, chunk: any) {
 export async function finishExpansion(ctx: any) {
   const state = await ensureWorldState(ctx);
   if (!state.pendingExpansion) return { done: true, committed: false };
+  if (state.pendingExpansion.remaining.length) return { done: false, committed: false };
   return await commitExpansion(ctx, state, state.pendingExpansion);
 }
 

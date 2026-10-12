@@ -9,8 +9,8 @@ import { v } from 'convex/values';
 import { MODULAR_MODELS, modularAsset, validatedModel } from '../shared/modular';
 import { WAKING_GATE, slumberVerdict } from '../shared/slumber';
 import { SCANNER_VERSION, scanEntries } from './scanner';
-import { findRoute, walkableInWorld } from './pathfinding';
-import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, expandWorld, finishExpansion, nextExpansionWork, planExpansion, relayCoordinates, relayWorkFor, saveExpansionChunk, storeRelaidChunk } from './planning';
+import { findRoute } from './pathfinding';
+import { WORLD_KEY, assertRegistryGeometry, ensureWorldState, finishExpansion, nextExpansionWork, planExpansion, relayCoordinates, relayWorkFor, saveExpansionChunk, storeRelaidChunk } from './planning';
 import { CIVIC_ROLES, normalizeGithubRepository, rankSnapshot, type ContributionDimension } from './community';
 import {
   BUILD_FEE, DAILY_STIPEND, GENESIS_GRANT, GIFT_REWARD, INSTALL_REWARD, LIKE_TIP, MINING_REWARD, VENUE_FEE,
@@ -911,6 +911,7 @@ async function planPlotExpansion(ctx: any, requesterId: string, requestedWidth: 
   const [plots, venues, approvals] = await Promise.all([
     ctx.db.query('plots').collect(), ctx.db.query('venues').collect(), ctx.db.query('approvals').collect(),
   ]);
+  const walkable = await loadWorldWalkability(ctx, world);
   const reserved = approvals.filter((approval: any) => approval.state === 'pending' && approval.kind === 'plot_expansion'
     && approval.payload?.stage === 'civic' && approval.payload?.plotId !== plot.plotId && approval.payload?.plan);
   const origins: Array<{ x: number; y: number }> = [];
@@ -932,7 +933,7 @@ async function planPlotExpansion(ctx: any, requesterId: string, requestedWidth: 
     for (let x = candidate.x; x < candidate.x + candidate.w && terrainSafe; x++) {
       for (let y = candidate.y; y < candidate.y + candidate.h; y++) {
         const alreadyOwned = x >= plot.x && x < plot.x + plot.w && y >= plot.y && y < plot.y + plot.h;
-        if (!alreadyOwned && !walkableInWorld(x, y, { width: world.width, height: world.height })) { terrainSafe = false; break; }
+        if (!alreadyOwned && !walkable(x, y)) { terrainSafe = false; break; }
       }
     }
     if (terrainSafe) return { plot, plan: { x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h } };
@@ -1052,11 +1053,12 @@ async function directorySnapshot(ctx: any, viewerId: string) {
   const now = Date.now();
   const world = await ensureWorldState(ctx);
   const bounds = { width: world.width, height: world.height };
-  const [citizens, plots, services, contributions] = await Promise.all([
+  const [citizens, plots, services, contributions, creations] = await Promise.all([
     ctx.db.query('citizens').collect(),
     ctx.db.query('plots').collect(),
     ctx.db.query('services').collect(),
     ctx.db.query('contributions').collect(),
+    ctx.db.query('creations').collect(),
   ]);
   const isWalkable = await loadWorldWalkability(ctx, bounds);
   const positions = new Map(citizens.map((citizen: any) => [citizen.agentId, currentPosition(citizen, now)]));
@@ -1067,6 +1069,8 @@ async function directorySnapshot(ctx: any, viewerId: string) {
   const entries = citizens.map((citizen: any) => {
     const position: any = positions.get(citizen.agentId) ?? { x: citizen.tx, y: citizen.ty };
     const home: any = homes.get(citizen.agentId);
+    const assemblyHome: any = creations.find((row: any) => row.ownerAgentId === citizen.agentId && row.kind === 'home');
+    const extent = assemblyHome ? creationExtent(assemblyHome.plan) : null;
     const service: any = roles.get(citizen.agentId);
     const rank = rankSnapshot(contributions.filter((row: any) => row.agentId === citizen.agentId));
     const path = viewerPosition
@@ -1083,7 +1087,11 @@ async function directorySnapshot(ctx: any, viewerId: string) {
       role: service ? { name: service.role, description: service.description, permissions: service.permissions } : null,
       home: home ? {
         plotId: home.plotId, district: home.district, x: home.x, y: home.y, w: home.w, h: home.h,
-        entrance: { x: home.x + Math.floor(home.w / 2), y: home.y + home.h },
+        entrance: assemblyHome && extent
+          ? { x: assemblyHome.plan.x + Math.floor(extent.w / 2), y: assemblyHome.plan.y + extent.h }
+          : { x: home.x + Math.floor(home.w / 2), y: home.y + home.h },
+        ...(assemblyHome ? { creationId: assemblyHome.creationId, state: assemblyHome.state,
+          components: assemblyHome.plan.bindings.map((binding: any) => ({ partId: binding.partId, behavior: binding.behavior, active: assemblyHome.signals[binding.signalId] === true })) } : {}),
       } : null,
       fromYou: viewerPosition ? {
         distanceTiles: Math.round(Math.hypot(position.x - (viewerPosition as any).x, position.y - (viewerPosition as any).y) * 10) / 10,
@@ -1103,15 +1111,14 @@ async function directorySnapshot(ctx: any, viewerId: string) {
 }
 
 async function findRecommendedPlot(ctx: any, primaryCategory: string, allowExpansion = true) {
-  let plots = await ctx.db.query('plots').collect();
+  const plots = await ctx.db.query('plots').collect();
   const district = districtForCategory(primaryCategory);
   if (allowExpansion && !rankHomePlots(plots, district).length) {
-    // Deliberately synchronous, unlike the other growth sites: Terra must
-    // recommend a plot in THIS mutation, so the ground has to exist before
-    // the next line runs. A deferred expansion here answered every
-    // active-autonomy settler with "no safe free plot" and settled nobody.
-    await expandWorld(ctx, 'new resident needs a home district', true);
-    plots = await ctx.db.query('plots').collect();
+    // The request persists before terrain work begins. WFC belongs in an
+    // action, not this one-second transaction; the settler retries after the
+    // ring commits rather than pretending a parcel already exists.
+    const planned: any = await planExpansion(ctx, 'new resident needs a home district', true);
+    if (planned.planned || planned.alreadyRunning) await ctx.scheduler.runAfter(0, internal.expansion.layRing, {});
   }
   return rankHomePlots(plots, district)[0] ?? null;
 }
@@ -1123,7 +1130,11 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
     const world = await ensureWorldState(ctx);
     if (agent.homeStyle === 'assembly' && world.landPolicy === 'founder_review') throw new Error('Claim a plot through civic review before requesting your assembled home.');
     const recommended = await findRecommendedPlot(ctx, agent.primaryCategory ?? agent.family, agent.homeStyle !== 'assembly' || autonomy === 'active');
-    if (!recommended) throw new Error('Terra could not find a safe free plot');
+    if (!recommended) {
+      const pending = (await ensureWorldState(ctx)).pendingExpansion;
+      if (pending) return { state: 'awaiting_land', autonomy, expansion: { scheduled: true, generation: pending.generation }, retry: 'Retry settlement after Atlas commits the new ring.' };
+      throw new Error('Terra could not find a safe free plot');
+    }
     if (autonomy === 'active') {
       await commitClaim(ctx, agent.agentId, recommended.plotId, now);
       plot = { ...recommended, ownerAgentId: agent.agentId, claimedAt: now };
@@ -5426,9 +5437,9 @@ export const authorityCommit = internalMutation({
       await ctx.db.patch(config._id, { dayStamp: today, ringsToday: ringsToday + 1 });
       await ctx.db.insert('events', {
         kind: 'world_expanded', actorId: agentId, payload: { choice, model },
-        gloss: `${citizen.name} surveyed the edge and the world grew: ${clean}`,
+        gloss: `${citizen.name} surveyed the edge and requested a boundary check: ${clean} Atlas will publish completed growth separately.`,
       });
-      return { ok: true, choice, expanded: true };
+      return { ok: true, choice, scheduled: true };
     }
     // 'observe' costs nothing and still teaches the office something.
     return { ok: true, choice: 'observe' };
@@ -6721,7 +6732,11 @@ export const grantFounder = internalMutation({
 
 export const expandNow = internalMutation({
   args: { reason: v.optional(v.string()) },
-  handler: async (ctx, { reason }) => expandWorld(ctx, reason ?? 'operator survey', true),
+  handler: async (ctx, { reason }) => {
+    const planned: any = await planExpansion(ctx, reason ?? 'operator survey', true);
+    await ctx.scheduler.runAfter(0, internal.expansion.layRing, {});
+    return { ok: true, started: true, alreadyRunning: Boolean(planned.alreadyRunning) };
+  },
 });
 
 export const cleanup = internalMutation({
@@ -6996,6 +7011,7 @@ export const ambientSettle = internalMutation({
     }
     try {
       const settled = await settleCitizen(ctx, agent, citizen, Date.now());
+      if (settled.state === 'awaiting_land') return { ok: true, settled: false, ...settled };
       await ctx.db.insert('events', {
         kind: 'settlement', actorId: agentId,
         payload: { autonomy: agent.autonomy ?? 'light' },
@@ -7123,8 +7139,9 @@ export const pruneEvents = internalMutation({
 export const expandWorldDeferred = internalMutation({
   args: { reason: v.string(), force: v.optional(v.boolean()), maintainHabitatReserve: v.optional(v.boolean()) },
   handler: async (ctx, { reason, force, maintainHabitatReserve }) => {
-    await expandWorld(ctx, reason, force ?? false, maintainHabitatReserve ?? false);
-    return { ok: true };
+    const planned: any = await planExpansion(ctx, reason, force ?? false, maintainHabitatReserve ?? false);
+    if (planned.planned || planned.alreadyRunning) await ctx.scheduler.runAfter(0, internal.expansion.layRing, {});
+    return { ok: true, scheduled: Boolean(planned.planned || planned.alreadyRunning), ...planned };
   },
 });
 
@@ -7132,9 +7149,10 @@ export const runWorldExpansion = internalMutation({
   args: { reason: v.string() },
   handler: async (ctx, { reason }) => {
     const planned: any = await planExpansion(ctx, reason, true);
-    if (planned.alreadyRunning) return { ok: true, alreadyRunning: true };
+    // A previous action may have stopped between chunks. Retrying the survey
+    // resumes its persisted ring; it never starts a second generation.
     await ctx.scheduler.runAfter(0, internal.expansion.layRing, {});
-    return { ok: true, chunks: planned.chunks ?? 0 };
+    return { ok: true, alreadyRunning: Boolean(planned.alreadyRunning), chunks: planned.chunks ?? 0 };
   },
 });
 
@@ -7159,7 +7177,23 @@ export const expansionStore = internalMutation({
 
 export const expansionCommit = internalMutation({
   args: {},
-  handler: async (ctx) => await finishExpansion(ctx),
+  handler: async (ctx) => {
+    const result = await finishExpansion(ctx);
+    if (!result.committed) return result;
+    // A successful ring answers waiting settlers as well as the map. Resume
+    // bounded owner-consented work; the two-minute aspiration watch catches
+    // any larger backlog. Existing homes/jobs are never duplicated.
+    const [agents, builds, creations] = await Promise.all([
+      ctx.db.query('agents').collect(), ctx.db.query('builds').collect(), ctx.db.query('creations').collect(),
+    ]);
+    const housed = new Set([
+      ...builds.filter(row => row.state !== 'razed' && (row.structure === 'home' || row.blueprint?.kind === 'home')).map(row => row.ownerAgentId),
+      ...creations.filter(row => row.kind === 'home').map(row => row.ownerAgentId),
+    ]);
+    const waiting = agents.filter(agent => agent.status === 'active' && (agent.autonomy === 'active' || agent.autonomy === 'light') && !housed.has(agent.agentId)).slice(0, 16);
+    for (let i = 0; i < waiting.length; i++) await ctx.scheduler.runAfter(i * 2000, internal.kernel.ambientSettle, { agentId: waiting[i].agentId });
+    return { ...result, settlementsScheduled: waiting.length };
+  },
 });
 
 // Re-laying terrain that already exists. Same collapse, same seams, same

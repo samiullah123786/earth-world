@@ -39,6 +39,9 @@ export const layRing = internalAction({
       });
       laid += 1;
     }
+    // Large rings need more than one bounded action. Persisted remaining
+    // coordinates let the next worker continue without regenerating old land.
+    await ctx.scheduler.runAfter(0, internal.expansion.layRing, {});
     return { ok: true, laid };
   },
 });

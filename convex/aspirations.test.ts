@@ -69,6 +69,7 @@ describe('the aspiration ladder', () => {
     vi.useRealTimers();
 
     const first: any = await t.mutation(internal.kernel.ambientSettle, { agentId });
+    expect(first).toMatchObject({ ok: true, state: 'awaiting_land', settled: false });
     vi.useFakeTimers();
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     vi.useRealTimers();

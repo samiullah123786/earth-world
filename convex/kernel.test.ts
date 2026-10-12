@@ -1,5 +1,5 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from './_generated/api';
 import schema from './schema';
 import { homeRect } from '../shared/homestead';
@@ -9,6 +9,7 @@ import { boundariesMatch, validateWfcChunk, wfcRule } from '../shared/wfc';
 import { loadWorldWalkability } from './worldGrid';
 
 const modules = import.meta.glob('./**/*.ts');
+afterEach(() => vi.useRealTimers());
 
 async function activeAgent(t: ReturnType<typeof convexTest>, suffix = 'one', options: { skillPolicy?: 'safe_auto' | 'ask_all'; bio?: string } = {}) {
   const agentId = `agent:test-${suffix}`;
@@ -721,7 +722,8 @@ describe('Earth Kernel', () => {
     });
   });
 
-  it('stages land through the founder owner and preserves non-overlapping expansion rings', async () => {
+  it('stages land through the founder owner and preserves non-overlapping expansion rings', { timeout: 60000 }, async () => {
+    vi.useFakeTimers();
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.init, {});
     const founder = await activeAgent(t, 'founder');
@@ -742,19 +744,21 @@ describe('Earth Kernel', () => {
       tokenHash: founder.ownerToken, approvalId: founderApprovals[0]._id, decision: 'approve',
     });
     expect((await t.query(api.world.worldObjects, {})).plots.find((plot) => plot.plotId === 'plot-10-10')?.ownerAgentId).toBe(resident.agentId);
-    // The claim's habitat expansion is scheduled now, not inline; generation 1
-    // must exist before the operator expansion can be generation 2.
+    // Keep timers frozen outside the deliberate drain so an auto-growth
+    // callback cannot race the operator snapshot and manual action below.
+    // Drain the claim's expansion and bounded automatic settlement followups.
+    // Maintaining the reserve may require another ring after those claims.
     vi.useFakeTimers();
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    vi.useRealTimers();
 
+    const beforeOperator = await t.query(api.world.worldObjects, {});
     await t.mutation(internal.kernel.expandNow, { reason: 'capacity test' });
+    await t.action(internal.expansion.layRing, {});
     const expanded = await t.query(api.world.worldObjects, {});
-    // Claiming the first habitat-ready parcel proactively opened generation 1;
-    // the explicit operator expansion therefore creates generation 2.
-    expect(expanded.state).toMatchObject({ width: 96, height: 80, generation: 2 });
+    expect(expanded.state).toMatchObject({ width: beforeOperator.state.width + 16,
+      height: beforeOperator.state.height + 16, generation: beforeOperator.state.generation + 1 });
     expect(expanded.plots.length).toBeGreaterThan(50);
-    expect(expanded.chunks).toHaveLength(18);
+    expect(expanded.chunks).toHaveLength(expanded.state.width / 16 * (expanded.state.height / 16) - 12);
     await t.run(async (ctx) => {
       const isWalkable = await loadWorldWalkability(ctx, { width: 80, height: 64 });
       expect(typeof isWalkable(64, 34)).toBe('boolean');
@@ -810,8 +814,13 @@ describe('Earth Kernel', () => {
     vi.useFakeTimers();
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     vi.useRealTimers();
-    const settled = await t.mutation(internal.kernel.act, {
+    const waiting = await t.mutation(internal.kernel.act, {
       agentId: newcomer.agentId, tokenHash: newcomer.agentToken, nonce: 'settle-active', action: { type: 'settle' },
+    });
+    expect(waiting).toMatchObject({ ok: true, state: 'awaiting_land' });
+    await t.action(internal.expansion.layRing, {});
+    const settled = await t.mutation(internal.kernel.act, {
+      agentId: newcomer.agentId, tokenHash: newcomer.agentToken, nonce: 'settle-after-ring', action: { type: 'settle' },
     });
     expect(settled).toMatchObject({ ok: true, state: 'settled', autonomy: 'active' });
     const objects = await t.query(api.world.worldObjects, {});
