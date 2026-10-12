@@ -346,6 +346,10 @@ creationsButton.onclick = () => {
   creationsButton.setAttribute('aria-expanded', String(!creationPanel.hidden));
   document.body.classList.add('world-panels-open'); panelsButton.setAttribute('aria-expanded','true');
   renderCreations();
+  if (!creationPanel.hidden) {
+    creationPanel.scrollIntoView({ block: 'nearest' });
+    creationPanel.querySelector<HTMLButtonElement>('.panel-min')?.focus({ preventScroll: true });
+  }
 };
 const actorStatus = document.createElement('div');
 actorStatus.className = 'hud actor-status'; actorStatus.hidden = true;
