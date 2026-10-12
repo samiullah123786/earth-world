@@ -1,4 +1,4 @@
-import { workshopProxy } from '../../shared/ownerProxy';
+import { workshopProxy } from '../../shared/ownerProxy.js';
 
 /** Vercel adapter for the same allowlisted boundary as Cloudflare and Vite. */
 export default async function handler(req: any, res: any) {
