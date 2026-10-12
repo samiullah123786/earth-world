@@ -452,6 +452,12 @@ body.embed .observer-controls { bottom: 12px; }
   .profile-main { max-height: 40dvh; overflow-y: auto; }
 }
 .creation-panel[hidden] { display: none; }
+.creation-content [hidden] { display: none !important; }
+body.world-panels-open #rightstack { overflow-y: auto; max-height: calc(100dvh - 144px); }
+body.world-panels-open #rightstack > * { flex-shrink: 0; }
+@media (max-width: 768px) {
+  body.world-panels-open #rightstack { max-height: calc(100dvh - 444px); }
+}
 .creation-content { padding: var(--observer-pad); overflow-y: auto; max-height: 40dvh; font: 12px/1.5 var(--mono); }
 .creation-content label { display: block; margin-bottom: 4px; }
 .creation-content select, .creation-content button { width: 100%; min-height: var(--observer-control-height); margin-bottom: var(--observer-gap); background: var(--cream); color: var(--ink); border: 2px solid var(--ink); padding: 8px; font: inherit; }
