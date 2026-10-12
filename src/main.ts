@@ -291,6 +291,8 @@ let terrain: Terrain | null = null;
 let world: WorldState | null = null;
 let clockOffset = 0;
 let builtTerrain = false;
+let terrainSignature = '';
+let terrainInFlight = false;
 let structureSignature = '';
 let selectedAgentId: string | null = null;
 let following = false;
@@ -1781,7 +1783,8 @@ function updateHud() {
   if (!world) return;
   required('m-live').textContent = String(world.citizens.filter((row) => row.online).length);
   required('m-joined').textContent = String(world.citizens.length);
-  required('m-builds').textContent = String(world.builds.length + world.venues.length);
+  required('m-builds').textContent = String(world.builds.length + world.venues.length
+    + (world.creations ?? []).filter(record => record.progress > 0).length);
   // The land, and how close it is to growing. The Kernel expands the world on
   // its own when the town runs short of room; showing the occupancy that
   // triggers it turns a ring appearing out of nowhere into something a
@@ -1804,10 +1807,29 @@ function updateHud() {
 }
 
 async function refreshTerrain() {
+  if (terrainInFlight) return;
+  terrainInFlight = true;
+  try {
   const response = await fetch(`${KERNEL}/v1/world/terrain`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`terrain ${response.status}`);
-  terrain = await response.json() as Terrain;
-  if (!builtTerrain) buildTerrain(terrain);
+  const next = await response.json() as Terrain;
+  const signature = JSON.stringify([next.width, next.height, next.rows]);
+  if (builtTerrain && signature === terrainSignature) return;
+  terrain = next;
+  terrainSignature = signature;
+  buildTerrain(next);
+  // Growing the coast changes the shared height field. Reproject standing
+  // structures and assemblies as well as the ground, even when their public
+  // revisions did not change; otherwise a home stays at its old elevation.
+  structureSignature = blockSignature = farmSignature = boundarySignature = signature;
+  if (world) {
+    buildStructures(world.builds, world.venues, world.gate);
+    buildPlacedBlocks(world.blocks ?? []);
+    syncCreationScene(creationRoot, [], heightAt);
+    creationPickables = syncCreationScene(creationRoot, world.creations ?? [], heightAt);
+    buildLivingGround(world.farms ?? [], world.plots ?? []);
+  }
+  } finally { terrainInFlight = false; }
 }
 
 async function refreshState() {
@@ -1830,6 +1852,11 @@ function applyReceivedState(next: WorldState) {
   if (!next.ok || world && next.serverNow < lastStateAt) return;
   world = next;
   lastStateAt = next.serverNow;
+  // The stream announces committed bounds immediately. Do not wait for the
+  // minute terrain poll while citizens and homes appear on a new ring.
+  if (terrain && (terrain.width !== next.world.width || terrain.height !== next.world.height)) {
+    void refreshTerrain().catch(() => undefined);
+  }
   routes.ingest(next.citizens, next.serverNow);
   connectionStatus.textContent = 'Live Earth · view delayed 2.2s';
   connectionStatus.dataset.state = 'live';
