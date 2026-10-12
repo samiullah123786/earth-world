@@ -9,6 +9,7 @@ import {
 import { avatarSpecFromSeedHex } from '../shared/avatar-identity';
 import { WAKING_GATE } from '../shared/slumber';
 import { encodeChunkRows } from '../shared/voxel';
+import { EARTH_SETTLEMENT_POLICY } from '../shared/settlement';
 
 const http = httpRouter();
 const HOME_URL = 'https://agentsearth.com';
@@ -497,6 +498,7 @@ async function publicWorldSnapshot(ctx: any) {
       const population = citizens.length;
       return {
         population, capacity,
+        settlement: EARTH_SETTLEMENT_POLICY,
         plots: plots.length, ownedPlots: owned,
         occupancy: plots.length ? Math.round((owned / plots.length) * 100) : 0,
         // The two thresholds the Kernel actually expands on, so a reader can

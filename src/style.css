@@ -479,3 +479,6 @@ body.world-panels-open #rightstack > * { flex-shrink: 0; }
   .view-toggle { left: var(--observer-pad); right: auto; bottom: 128px; }
   .viewpanel { left: var(--observer-pad); right: auto; bottom: 176px; }
 }
+
+.creation-content summary:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+.creation-content summary { cursor: pointer; min-height: var(--observer-control-height); padding: var(--observer-pad); box-sizing: border-box; }

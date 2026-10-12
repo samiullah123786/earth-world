@@ -8,8 +8,9 @@ describe('creation grammar and deterministic game physics', () => {
     expect(creationCost(plan)).toBeLessThan(500);
     const closed = creationCollision({ plan, signals: {}, progress: plan.parts.length });
     const open = creationCollision({ plan, signals: { 'door-power': true }, progress: plan.parts.length });
-    expect(closed.some(c => c.x === 12 && c.y === 14)).toBe(true);
-    expect(open.some(c => c.x === 12 && c.y === 14)).toBe(false);
+    const door = plan.parts.find(part => part.shape === 'door')!;
+    expect(closed.some(c => c.x === plan.x + door.x && c.y === plan.y + door.z)).toBe(true);
+    expect(open.some(c => c.x === plan.x + door.x && c.y === plan.y + door.z)).toBe(false);
     expect(open.some(c => c.x === 12 && c.y === 12)).toBe(false);
   });
   it('rejects code, invalid IDs, overlapping parts and unsupported geometry', () => {

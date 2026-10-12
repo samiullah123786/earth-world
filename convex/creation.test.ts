@@ -81,7 +81,8 @@ describe('autonomous creation through actual Kernel actions', () => {
     expect(creation.progress).toBe(plan.parts.length);
     expect(creation.signals['door-power']).toBe(true);
     await expect(act(t, { type: 'creation_use', creationId: start.creationId, partId: 'front-door', event: 'close', expectedRevision: start.revision })).rejects.toThrow(/revision changed/);
-    const doorway = { x: plan.x + 2, y: plan.y + 4 };
+    const door = plan.parts.find(part => part.shape === 'door')!;
+    const doorway = { x: plan.x + door.x, y: plan.y + door.z };
     await t.run(async ctx => {
       const c = await ctx.db.query('citizens').withIndex('agentId', q => q.eq('agentId', site.agentId)).first();
       await ctx.db.patch(c!._id, { fx: doorway.x, fy: doorway.y + 1, tx: doorway.x, ty: doorway.y + 1, route: [], t0: Date.now(), t1: Date.now() });

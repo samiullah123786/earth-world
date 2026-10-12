@@ -12,7 +12,9 @@ describe('Earth settlement policy', () => {
   it('allots only road-ready habitat-sized sites with stable district preference', () => {
     expect(isHabitatReadyPlot(plots[0])).toBe(false);
     expect(rankHomePlots(plots, 'ui').map((plot) => plot.plotId)).toEqual(['match', 'far', 'near']);
-    expect(EARTH_SETTLEMENT_POLICY.homeSite).toMatchObject({ width: 6, height: 6, entrySide: 'south' });
+    expect(EARTH_SETTLEMENT_POLICY.homeSite).toMatchObject({ width: 5, height: 5, entrySide: 'south' });
+    expect(isHabitatReadyPlot({ w: 5, h: 5 })).toBe(true);
+    expect(isHabitatReadyPlot({ w: 4, h: 4 })).toBe(false);
   });
 
   it('opens another ring before the reserve of home sites is exhausted', () => {

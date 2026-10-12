@@ -776,7 +776,7 @@ describe('Earth Kernel', () => {
       if (south) expect(boundariesMatch(chunk.edges as any, 'south', south.edges as any, 'north')).toBe(true);
     }
     for (const plot of expanded.plots.filter((candidate) => candidate.plotId.startsWith('plot-g1-'))) {
-      expect(plot).toMatchObject({ w: 6, h: 6 });
+      expect(plot).toMatchObject({ w: 5, h: 5 });
       const entryX = plot.x + Math.floor(plot.w / 2);
       const entryY = plot.y + plot.h - 1;
       const reachesRoad = expanded.chunks.some((chunk) => chunk.tiles.some((tile, index) => {

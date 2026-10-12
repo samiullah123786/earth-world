@@ -6,7 +6,7 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 import './style.css';
 import { RouteBuffer, visualIdentityKey, boundedHeadTurn } from './world3d/observer';
 import type { PublicAvatarSpec } from '../shared/avatar-identity';
-import { creationCollision, partIsActive, type CreationRecord } from '../shared/creation';
+import { creationCollision, creationExtent, isLegacyStarterHome, partIsActive, type CreationRecord } from '../shared/creation';
 import { syncCreationScene, revealCreationInteriors, tendCreationLighting } from './world3d/creationScene';
 import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette, tileRandom } from './world3d/detail';
 import { authorityLook, kitPalette, makeAuthorityDress, makeInsignia, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
@@ -1645,6 +1645,11 @@ function renderCreations() {
   const locate = document.createElement('button'); locate.type = 'button'; locate.id = 'creation-locate'; locate.textContent = 'Locate creation'; content.append(locate);
   const parts = document.createElement('div'); parts.id = 'creation-parts'; content.append(parts);
   const pause = document.createElement('button'); pause.type = 'button'; pause.id = 'creation-pause'; content.append(pause);
+  const compact = document.createElement('details'); compact.id = 'creation-compact';
+  const compactTitle = document.createElement('summary'); compactTitle.textContent = 'Review a smaller home';
+  const compactNote = document.createElement('p'); compactNote.textContent = 'Rebuild this 5×5 starter home as 4×4 using its paid materials. No refund is issued. Your existing plot and yard stay yours. Everyone must clear the home before rebuilding.';
+  const compactButton = document.createElement('button'); compactButton.type = 'button'; compactButton.id = 'creation-compact-submit'; compactButton.textContent = 'Rebuild home as 4×4';
+  compact.append(compactTitle, compactNote, compactButton); content.append(compact);
   const status = document.createElement('p'); status.id = 'creation-status'; status.setAttribute('role','status'); content.append(status);
   creationPanel.append(content);
   }
@@ -1661,9 +1666,10 @@ function renderCreations() {
   required('creation-empty').hidden = Boolean(records.length); picker.hidden = !records.length;
   creationPanel.querySelector<HTMLLabelElement>('label')!.hidden = !records.length;
   const record = records.find(item => item.creationId === selectedCreationId);
-  for (const id of ['creation-facts','creation-permission','creation-offline','creation-locate','creation-parts','creation-pause']) required(id).hidden = !record;
+  for (const id of ['creation-facts','creation-permission','creation-offline','creation-locate','creation-parts','creation-pause','creation-compact']) required(id).hidden = !record;
   if (record) {
-    required('creation-facts').textContent = `${record.state} · ${record.progress}/${record.plan.parts.length} parts · revision ${record.revision}`;
+    const extent = creationExtent(record.plan);
+    required('creation-facts').textContent = `${extent.w}×${extent.h} tiles · ${record.state} · ${record.progress}/${record.plan.parts.length} parts · revision ${record.revision}`;
     required<HTMLButtonElement>('creation-locate').onclick = () => { setFollowing(false); focusAt(record.plan.x+2,record.plan.y+2,9); };
     const owner = ownerAgentId === record.ownerAgentId;
     const unavailable = !lastStateAt || Date.now() + clockOffset - lastStateAt > 8000;
@@ -1684,6 +1690,21 @@ function renderCreations() {
     const pause = required<HTMLButtonElement>('creation-pause'); pause.textContent = record.state === 'paused' ? 'Resume construction' : 'Pause construction';
     pause.disabled = !owner || unavailable || creationBusy || record.state === 'built';
     pause.onclick = () => void creationAction(record,{type:'creation_control',command:record.state === 'paused' ? 'resume' : 'pause'});
+    required('creation-compact').hidden = !owner || record.state !== 'built' || !isLegacyStarterHome(record.plan);
+    const compact = required<HTMLButtonElement>('creation-compact-submit');
+    compact.disabled = unavailable || creationBusy;
+    compact.onclick = () => {
+      const key = `earth-compact:${record.creationId}:${record.revision}`;
+      let requestId: string;
+      try {
+        requestId = localStorage.getItem(key) || `compact_${crypto.randomUUID().replace(/-/g,'')}`;
+        localStorage.setItem(key,requestId);
+      } catch {
+        creationMessage = 'Enable local storage to retain this rebuild request safely, then retry.';
+        renderCreations(); return;
+      }
+      void creationAction(record,{type:'creation_compact',requestId});
+    };
   }
   required('creation-status').textContent = creationMessage;
 }

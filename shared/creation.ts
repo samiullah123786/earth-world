@@ -124,15 +124,27 @@ export function creationCollision(record: Pick<CreationRecord, 'plan' | 'signals
 }
 
 /** An editable home assembled from supported parts, with separately controlled door/light. */
-export function starterHome(x: number, y: number, name = 'Timber Courtyard Home'): CreationPlan {
-  const parts: CreationPart[] = [{ id: 'foundation', shape: 'floor', material: 'stone', x: 0, y: 0, z: 0, w: 5, h: .25, d: 5 }];
-  for (let z = 0; z < 5; z++) for (let x = 0; x < 5; x++) {
-    if (x > 0 && x < 4 && z > 0 && z < 4 || z === 4 && x === 2) continue;
-    parts.push({ id: `wall-${x}-${z}`, shape: 'block', material: (z === 0 && (x === 1 || x === 3)) ? 'glass' : 'plank', x, y: .25, z, w: 1, h: 2, d: 1 });
+function homeRecipe(x: number, y: number, name: string, size: 4 | 5): CreationPlan {
+  const parts: CreationPart[] = [{ id: 'foundation', shape: 'floor', material: 'stone', x: 0, y: 0, z: 0, w: size, h: .25, d: size }];
+  for (let z = 0; z < size; z++) for (let x = 0; x < size; x++) {
+    if (x > 0 && x < size - 1 && z > 0 && z < size - 1 || z === size - 1 && x === 2) continue;
+    parts.push({ id: `wall-${x}-${z}`, shape: 'block', material: (z === 0 && (x === 1 || x === size - 2)) ? 'glass' : 'plank', x, y: .25, z, w: 1, h: 2, d: 1 });
   }
-  parts.push({ id: 'front-door', shape: 'door', material: 'plank', x: 2, y: .25, z: 4, w: 1, h: 2, d: 1 });
-  parts.push({ id: 'roof', shape: 'roof', material: 'plank', x: 0, y: 2.25, z: 0, w: 5, h: .75, d: 5 });
-  parts.push({ id: 'entry-lamp', shape: 'lamp', material: 'lantern', x: 3, y: 1.75, z: 3.75, w: .25, h: .25, d: .25 });
-  parts.push({ id: 'light-switch', shape: 'switch', material: 'plank', x: 3, y: 1, z: 3.75, w: .25, h: .25, d: .25 });
+  parts.push({ id: 'front-door', shape: 'door', material: 'plank', x: 2, y: .25, z: size - 1, w: 1, h: 2, d: 1 });
+  parts.push({ id: 'roof', shape: 'roof', material: 'plank', x: 0, y: 2.25, z: 0, w: size, h: .75, d: size });
+  parts.push({ id: 'entry-lamp', shape: 'lamp', material: 'lantern', x: size - 2, y: 1.75, z: size - 1.25, w: .25, h: .25, d: .25 });
+  parts.push({ id: 'light-switch', shape: 'switch', material: 'plank', x: size - 2, y: 1, z: size - 1.25, w: .25, h: .25, d: .25 });
   return parseCreation({ version: CREATION_VERSION, name, kind: 'home', x, y, parts, circuits: [{ id: 'door-power', type: 'switch', inputs: [] }, { id: 'light-power', type: 'switch', inputs: [] }], bindings: [{ partId: 'front-door', signalId: 'door-power', behavior: 'door' }, { partId: 'entry-lamp', signalId: 'light-power', behavior: 'light' }, { partId: 'light-switch', signalId: 'light-power', behavior: 'switch' }] });
+}
+
+/** Current bounded recipe; dimensions are Kernel-owned, never arbitrary input. */
+export const starterHome = (x: number, y: number, name = 'Timber Courtyard Home') => homeRecipe(x, y, name, 4);
+/** Historical recipe solely for validating an explicit owner-authorized remodel. */
+export const legacyStarterHome = (x: number, y: number, name = 'Timber Courtyard Home') => homeRecipe(x, y, name, 5);
+/** Both owner UI and Kernel identify the same exact historical recipe. */
+export function isLegacyStarterHome(value: unknown): boolean {
+  try {
+    const plan = parseCreation(value);
+    return plan.kind === 'home' && JSON.stringify(plan) === JSON.stringify(legacyStarterHome(plan.x, plan.y, plan.name));
+  } catch { return false; }
 }

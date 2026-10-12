@@ -1,4 +1,4 @@
-import { CREATION_LIMITS, CREATION_VERSION, creationCollision, creationCost, creationExtent, evaluateSignals, parseCreation, partIsActive, starterHome, type CreationPlan } from '../shared/creation';
+import { CREATION_LIMITS, CREATION_VERSION, creationCollision, creationCost, creationExtent, evaluateSignals, parseCreation, partIsActive, starterHome, legacyStarterHome, type CreationPlan } from '../shared/creation';
 import { currentPosition, appendRouteHistory } from '../shared/position';
 import { balanceOf, payToTreasury } from './economy';
 import { ensureWorldState } from './planning';
@@ -20,7 +20,7 @@ const requestIdOf = (value: unknown) => { if (typeof value !== 'string' || !/^[a
 const prefixPreserved = (old: CreationPlan, next: CreationPlan) => old.parts.every((part, index) => ['id', 'shape', 'material', 'x', 'y', 'z', 'w', 'h', 'd'].every(key => (part as any)[key] === (next.parts[index] as any)?.[key]));
 
 /** Whole-site checks are repeated at approval and before committing; preview grants no authority. */
-export async function validateCreation(ctx: any, agent: any, input: unknown, creationId?: string, expectedRevision?: number, allowUnchanged = false) {
+async function validatePlan(ctx: any, agent: any, input: unknown, creationId?: string, expectedRevision?: number, allowUnchanged = false, compact = false) {
   const plan = parseCreation(input), extent = creationExtent(plan);
   if (agent.ownerName?.length >= 3 && plan.name.toLowerCase().includes(agent.ownerName.toLowerCase())) throw new Error('Keep the private owner name out of public creations.');
   const world = await ensureWorldState(ctx);
@@ -32,8 +32,10 @@ export async function validateCreation(ctx: any, agent: any, input: unknown, cre
   const previous = creationId ? creations.find((r: any) => r.creationId === creationId) : null;
   if (creationId && (!previous || previous.ownerAgentId !== agent.agentId)) throw new Error('Only the owner may revise a creation.');
   if (previous && previous.revision !== expectedRevision) throw new Error('Creation revision changed. Inspect it before revising.');
-  if (previous && (!prefixPreserved(previous.plan, plan) || plan.x !== previous.plan.x || plan.y !== previous.plan.y || plan.kind !== previous.kind)) throw new Error('Revisions preserve existing parts and location; extend by appending supported parts.');
-  if (previous && !allowUnchanged && plan.parts.length <= previous.plan.parts.length) throw new Error('Append at least one supported part to extend a creation.');
+  if (compact && (!previous || JSON.stringify(parseCreation(previous.plan)) !== JSON.stringify(legacyStarterHome(plan.x, plan.y, plan.name))
+    || JSON.stringify(plan) !== JSON.stringify(starterHome(plan.x, plan.y, plan.name)))) throw new Error('Only the unchanged legacy starter home can use the compact remodel.');
+  if (!compact && previous && (!prefixPreserved(previous.plan, plan) || plan.x !== previous.plan.x || plan.y !== previous.plan.y || plan.kind !== previous.kind)) throw new Error('Revisions preserve existing parts and location; extend by appending supported parts.');
+  if (!compact && previous && !allowUnchanged && plan.parts.length <= previous.plan.parts.length) throw new Error('Append at least one supported part to extend a creation.');
   if (!previous && creations.filter((r: any) => r.ownerAgentId === agent.agentId).length >= CREATION_LIMITS.creationsPerOwner) throw new Error('This plot already has eight creations. Extend an existing creation.');
   if (plan.kind === 'home' && (builds.some((b: any) => b.ownerAgentId === agent.agentId && b.state !== 'razed' && (b.structure === 'home' || b.blueprint?.kind === 'home')) || creations.some((r: any) => r.ownerAgentId === agent.agentId && r.kind === 'home' && r.creationId !== creationId))) throw new Error('One home per citizen. Extend your existing home instead of creating another.');
   const rect = { x: plan.x, y: plan.y, ...extent };
@@ -45,12 +47,73 @@ export async function validateCreation(ctx: any, agent: any, input: unknown, cre
   const walkable = await loadWorldWalkability(ctx, world);
   // Keep a usable approach tile outside the assembled walls. It may be on the plot's yard.
   const approach = { x: plan.x + Math.floor(extent.w / 2), y: plan.y + extent.h };
-  if (!walkable(approach.x, approach.y)) throw new Error('Leave a walkable south approach outside the creation.');
-  const cost = creationCost(plan) - (previous ? creationCost(previous.plan) : 0);
+  const oldCell = compact && previous && ['g', 'd', 'c', 'u'].includes(letterAt(approach.x, approach.y))
+    && creationCollision(previous).some(cell => cell.x === approach.x && cell.y === approach.y);
+  if (!walkable(approach.x, approach.y) && !oldCell) throw new Error('Leave a walkable south approach outside the creation.');
+  const cost = compact ? 0 : creationCost(plan) - (previous ? creationCost(previous.plan) : 0);
   if (cost < 0) throw new Error('Creation extensions do not refund materials.');
   const balance = await balanceOf(ctx, agent.agentId);
   if (balance < cost) throw new Error(`Materials cost ${cost} Earth Tokens; your wallet holds ${balance}.`);
   return { plan, plot, cost, balance, previous, approach, world };
+}
+
+/** Public validation always retains append-only law. Compact mode is private
+ * and reachable only through the exact owner-only canonical recipe below. */
+export async function validateCreation(ctx: any, agent: any, input: unknown, creationId?: string, expectedRevision?: number, allowUnchanged = false) {
+  return validatePlan(ctx, agent, input, creationId, expectedRevision, allowUnchanged);
+}
+
+export async function compactCreation(ctx: any, agent: any, citizen: any, action: any, ownerControl: boolean) {
+  if (!ownerControl) throw new Error('Only an explicit authenticated owner may compact a home.');
+  const requestId = requestIdOf(action.requestId);
+  if (Object.keys(action).some(key => !['type', 'creationId', 'expectedRevision', 'requestId'].includes(key))) throw new Error('Compact uses the fixed Kernel recipe; custom dimensions and plans are forbidden.');
+  const digest = await sha256Hex(JSON.stringify({ operation: 'compact-home-v1', creationId: action.creationId, expectedRevision: action.expectedRevision }));
+  const replay = await ctx.db.query('creationRequests').withIndex('owner_request', (q: any) => q.eq('ownerAgentId', agent.agentId).eq('requestId', requestId)).first();
+  if (replay) {
+    if (replay.digest !== digest || !replay.creationId) throw new Error('This requestId already identifies another creation operation.');
+    const existing = await byId(ctx, replay.creationId);
+    if (!existing || existing.ownerAgentId !== agent.agentId) throw new Error('The compacted creation is unavailable.');
+    return { ok: true, ...publicCreation(existing), replayed: true };
+  }
+  const previous = await byId(ctx, action.creationId);
+  if (!previous || previous.ownerAgentId !== agent.agentId) throw new Error('Only the owner may compact this home.');
+  if (previous.state !== 'built' || previous.progress !== previous.plan.parts.length || previous.kind !== 'home') throw new Error('Finish the legacy starter home before requesting compact remodeling.');
+  const plan = starterHome(previous.plan.x, previous.plan.y, previous.name);
+  const checked = await validatePlan(ctx, agent, plan, previous.creationId, action.expectedRevision, false, true);
+  const now = Date.now(), people = await ctx.db.query('citizens').collect(), extent = creationExtent(previous.plan);
+  const inOldSite = (x: number, y: number) => x >= previous.plan.x && x < previous.plan.x + extent.w && y >= previous.plan.y && y < previous.plan.y + extent.h;
+  for (const person of people) {
+    const position = currentPosition(person, now);
+    const legacyCrossing = person.t1 > now && !person.route?.length && overlap(
+      { x: Math.min(position.x, person.tx), y: Math.min(position.y, person.ty), w: Math.abs(position.x - person.tx) + .001, h: Math.abs(position.y - person.ty) + .001 },
+      { x: previous.plan.x, y: previous.plan.y, ...extent });
+    if (inOldSite(position.x, position.y) || legacyCrossing || person.route?.some((point: any) => point.at >= now && inOldSite(point.x, point.y))) throw new Error('Clear all citizens and active routes from the home before remodeling.');
+  }
+  if (citizen.drivenUntil > now || citizen.activeBuildId && citizen.buildingUntil > now) throw new Error('Release owner control and finish the current builder commitment before remodeling.');
+  const jobs = await ctx.db.query('creations').withIndex('state_updated', (q: any) => q.eq('state', 'building')).collect();
+  if (jobs.some((job: any) => job.ownerAgentId === agent.agentId)) throw new Error('Finish or pause the other active creation first.');
+  const switches = { ...previous.switches }, signals = evaluateSignals(plan, switches, now);
+  const newWalls = new Set(creationCollision({ plan, signals, progress: plan.parts.length }).map(cell => `${cell.x},${cell.y}`));
+  const walkable = await loadWorldWalkability(ctx, checked.world), from = currentPosition(citizen, now);
+  // Stand outside BOTH envelopes. The new approach was part of the old
+  // front wall; an unchanged route must never send the builder through it.
+  const staging = { x: previous.plan.x + Math.floor(extent.w / 2), y: previous.plan.y + extent.h };
+  const routeWalkable = (x: number, y: number) => walkable(x, y) && !newWalls.has(`${x},${y}`);
+  const path = Math.floor(from.x) === staging.x && Math.floor(from.y) === staging.y && routeWalkable(staging.x, staging.y)
+    ? [staging] : findRoute(from.x, from.y, staging.x, staging.y, checked.world, routeWalkable);
+  if (!path?.length) throw new Error('No safe route reaches the exterior remodeling site.');
+  let at = now + 900; const route = [{ ...from, at }];
+  for (const point of path.slice(1)) { const before = route[route.length - 1]; at += Math.hypot(point.x - before.x, point.y - before.y) / 2.2 * 1000; route.push({ ...point, at }); }
+  await ctx.db.patch(previous._id, { plan, progress: 0, state: 'building', requestId, revision: previous.revision + 1,
+    switches, signals, consent: 'explicit', ownerPaused: false, pauseReason: undefined, completedAt: undefined,
+    startsAt: at, lastStepAt: at, updatedAt: now });
+  await ctx.db.insert('creationRequests', { ownerAgentId: agent.agentId, requestId, digest, creationId: previous.creationId });
+  await ctx.db.patch(citizen._id, { route, recentRoutes: appendRouteHistory(citizen, route, now), fx: from.x, fy: from.y, tx: staging.x, ty: staging.y, t0: route[0].at, t1: at,
+    activeBuildId: previous.creationId, activeTool: 'hammer', buildingStartsAt: at, buildingUntil: at + plan.parts.length * 1000 + 15000, activity: `walking to compact ${previous.name}` });
+  await ctx.db.insert('events', { kind: 'creation_remodel_started', actorId: agent.agentId,
+    payload: { creationId: previous.creationId, from: extent, to: creationExtent(plan), reusedMaterials: true },
+    gloss: `${citizen.name}'s owner authorized a compact home remodel using its already-paid materials. The owned parcel is unchanged.` });
+  return { ok: true, ...publicCreation(await ctx.db.get(previous._id)), reusedMaterials: true };
 }
 
 /** Kernel-owned recipe is editable data, not a fake AI inference or a second home grant. */

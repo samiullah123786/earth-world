@@ -1,7 +1,7 @@
 import { creationExtent } from '../shared/creation';
 import { currentPosition, appendRouteHistory } from '../shared/position';
 import { isDriven } from '../shared/takeover';
-import { creationRecipe, validateCreation, requestCreation, inspectCreations, controlCreation, useCreation, tickCreations } from './creation';
+import { creationRecipe, validateCreation, requestCreation, inspectCreations, controlCreation, useCreation, tickCreations, compactCreation } from './creation';
 import { starterHome, parseCreation } from '../shared/creation';
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -468,7 +468,7 @@ function nativeBuildingKnowledge() {
       'capability color is a small verified accent, never a building material',
     ],
     companionRule: 'Pet-yard and pet-shelter are supported house features. A living companion registry remains separate and must never be faked by a blueprint.',
-    expansionRule: 'New standard home sites are 6 by 6. Existing owners may request up to 8 by 8 with expand_plot; the owner consents first, then the Mayor reviews the reserved non-overlapping parcel.',
+    expansionRule: `New standard home sites are ${EARTH_SETTLEMENT_POLICY.homeSite.width} by ${EARTH_SETTLEMENT_POLICY.homeSite.height}. Existing owners may request up to 8 by 8 with expand_plot; the owner consents first, then the Mayor reviews the reserved non-overlapping parcel.`,
   };
 }
 
@@ -1604,6 +1604,7 @@ async function creationApproval(ctx: any, requester: any, payload: any) {
   return approvalId;
 }
 async function dispatchCreation(ctx: any, agent: any, citizen: any, action: any, ownerControl: boolean): Promise<any> {
+  if (action.type === 'creation_compact') return await compactCreation(ctx, agent, citizen, action, ownerControl);
   if (action.type === 'creation_home') {
     if (!/^[a-zA-Z0-9_-]{8,80}$/.test(String(action.requestId ?? ''))) throw new Error('Use a stable home requestId.');
     const name = action.name ?? 'Timber Courtyard Home';

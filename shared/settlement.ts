@@ -1,6 +1,6 @@
 export const EARTH_SETTLEMENT_POLICY = {
-  version: 'earth-settlement-v1',
-  homeSite: { width: 6, height: 6, entrySide: 'south', roadSearchDepth: 6 },
+  version: 'earth-settlement-v2',
+  homeSite: { width: 5, height: 5, entrySide: 'south', roadSearchDepth: 6 },
   reserveHomeSites: 5,
   claimedExpansionRatio: 0.75,
   plotBufferTiles: 1,
