@@ -15,6 +15,7 @@ import type * as bankSearch from "../bankSearch.js";
 import type * as chronicler from "../chronicler.js";
 import type * as committee from "../committee.js";
 import type * as community from "../community.js";
+import type * as creation from "../creation.js";
 import type * as crons from "../crons.js";
 import type * as earthMapData from "../earthMapData.js";
 import type * as economy from "../economy.js";
@@ -58,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   chronicler: typeof chronicler;
   committee: typeof committee;
   community: typeof community;
+  creation: typeof creation;
   crons: typeof crons;
   earthMapData: typeof earthMapData;
   economy: typeof economy;
