@@ -421,7 +421,7 @@ body.embed .view-toggle, body.embed .viewpanel { display: none !important; }
 }
 
 /* Observation tools leave the town visible; incumbent Earth HUD tokens remain authoritative. */
-:root { --observer-gap: 8px; --observer-pad: 12px; --observer-control-height: 44px; --observer-status-top: 100px; --observer-actor-top: 148px; }
+:root { --observer-gap: 8px; --observer-pad: 12px; --observer-control-height: 44px; --observer-status-top: 100px; --observer-actor-top: 148px; --observer-stack-reserve: 144px; --observer-mobile-stack-reserve: 444px; --observer-short-embed-top: 164px; --observer-short-embed-reserve: 312px; }
 .observer-controls { left: var(--observer-pad); bottom: calc(64px + env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; gap: var(--observer-gap); padding: 4px; max-width: calc(100vw - 24px); background: var(--cream); }
 .observer-controls button { min-height: var(--observer-control-height); border: 2px solid var(--ink); padding: 8px; background: var(--cream); color: var(--ink); font: 700 12px/1.4 var(--mono); cursor: pointer; }
 .observer-controls button:disabled { opacity: .55; cursor: default; }
@@ -437,7 +437,7 @@ body.embed .view-toggle, body.embed .viewpanel { display: none !important; }
 .profile-actions { flex-wrap: wrap; }
 .profile-actions button { min-height: var(--observer-control-height); font-size: 12px; }
 .view-toggle { bottom: 196px; }
-body.embed .observer-controls { bottom: 12px; }
+body.embed .observer-controls { bottom: calc(var(--observer-pad) + var(--observer-control-height) + var(--observer-gap) + env(safe-area-inset-bottom)); }
 @media (max-width: 768px) {
   .observer-controls { left: var(--observer-pad); bottom: calc(64px + env(safe-area-inset-bottom)); }
   .observer-controls button { flex: 1; }
@@ -453,10 +453,15 @@ body.embed .observer-controls { bottom: 12px; }
 }
 .creation-panel[hidden] { display: none; }
 .creation-content [hidden] { display: none !important; }
-body.world-panels-open #rightstack { overflow-y: auto; max-height: calc(100dvh - 144px); }
+body.world-panels-open #rightstack { overflow-y: auto; max-height: calc(100dvh - var(--observer-stack-reserve)); }
 body.world-panels-open #rightstack > * { flex-shrink: 0; }
 @media (max-width: 768px) {
-  body.world-panels-open #rightstack { max-height: calc(100dvh - 444px); }
+  body.world-panels-open #rightstack { max-height: calc(100dvh - var(--observer-mobile-stack-reserve)); }
+}
+@media (max-width: 768px) and (max-height: 640px) {
+  body.embed .view-toggle { top: var(--observer-pad); bottom: auto; }
+  body.embed #rightstack { top: var(--observer-short-embed-top); }
+  body.embed.world-panels-open #rightstack { max-height: calc(100dvh - var(--observer-short-embed-reserve)); }
 }
 .creation-content { padding: var(--observer-pad); overflow-y: auto; max-height: 40dvh; font: 12px/1.5 var(--mono); }
 .creation-content label { display: block; margin-bottom: 4px; }
