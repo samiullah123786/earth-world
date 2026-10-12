@@ -467,6 +467,7 @@ body.world-panels-open #rightstack > * { flex-shrink: 0; }
 .creation-content :is(button,select):focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
 @media (hover: hover) { .creation-content button:hover:not(:disabled) { background: var(--moss); } }
 .creation-panel .panel-min { min-height: var(--observer-control-height); min-width: var(--observer-control-height); }
+.creation-panel .panel-min:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
 @media (max-width: 768px) { .view-toggle { bottom: 196px; } }
 /* Keep desktop view settings clear of the right-hand citizen/activity stack. */
 @media (min-width: 769px) {
