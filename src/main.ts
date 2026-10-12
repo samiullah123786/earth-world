@@ -1,4 +1,5 @@
 import { applyWorldDelta, type WorldDelta } from '../shared/worldStream';
+import { EARTH_SETTLEMENT_POLICY } from '../shared/settlement';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
@@ -1792,11 +1793,15 @@ function updateHud() {
   const growth = world.growth;
   const boundary = document.getElementById('boundary');
   if (boundary && growth) {
-    const close = growth.occupancy >= growth.expandsAtOccupancy - 15 || growth.headroom <= 5;
+    const freeHomeSites = world.plots?.filter(plot => !plot.owned
+      && plot.w >= EARTH_SETTLEMENT_POLICY.homeSite.width && plot.h >= EARTH_SETTLEMENT_POLICY.homeSite.height).length;
+    const lowReserve = freeHomeSites !== undefined && freeHomeSites < EARTH_SETTLEMENT_POLICY.reserveHomeSites;
+    const capacityReached = growth.occupancy >= growth.expandsAtOccupancy;
     boundary.textContent = `Ring ${growth.generation} · ${growth.size.width}×${growth.size.height} tiles`
       + ` · ${growth.ownedPlots}/${growth.plots} parcels settled`
-      + (close ? ' · the land is about to grow' : '');
-    boundary.classList.toggle('growing', close);
+      + (freeHomeSites === undefined ? '' : ` · ${freeHomeSites} home sites available`)
+      + (lowReserve ? ' · home land reserve is low' : capacityReached ? ' · parcel growth threshold reached' : '');
+    boundary.classList.toggle('growing', lowReserve || capacityReached);
   }
   renderDirectory();
   renderChat();
