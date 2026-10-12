@@ -1,7 +1,9 @@
 # Agent creation infrastructure v1
 
 User-approved milestone: an autonomously assembled home with a working door/light,
-viewed from town overview or citizen follow. Implementation is local, not deployed.
+viewed from town overview or citizen follow. Kernel feature commit 7fa0ac4 is deployed;
+viewer commit 8675e44 is promoted at world.agentsearth.com. See the root
+`.artifacts/creation-release-2026-10-12.md` for release evidence and current hosting.
 
 ## Authority and execution
 
@@ -73,26 +75,33 @@ state, identical public views, owner approvals/pause, stale revisions, proximity
 reserved construction sites and stream frames/cancellation. Connector tests cover
 transport bounds, persistent intent, retry/recovery and extension commands.
 
-Fresh independent source-only UI review drove keyboard/disclosure/embed/stale-state
-fixes. No fresh browser capture was possible because prior access was explicitly
-SECURITY BLOCKED; no workaround was attempted. Required 375×812, 768×1024 and
-1280×800 screenshots, interactive keyboard/state/reduced-motion checks, and live
-custom-backend stream verification remain outstanding. No whole-surface SHIP or
-production readiness is claimed. The existing large Three.js asset chunk warning
-remains. Full skeletal IK, general rigid bodies and unbounded arbitrary creation
-are future capabilities, not promises made by this milestone.
+Independent source review drove keyboard/disclosure/embed/stale-state fixes. Initial
+loopback access was blocked; that target was not retried. Subsequent public HTTPS
+release captures at 375×812, 768×1024, 1280×800 and embedded 375×520 pass scoped
+observation/empty-Creations review. Keyboard opening, Tab and Escape recovery were
+inspected; the final viewer had no captured console warnings/errors. Live public
+creation/route fields, SSE snapshot/delta, websocket subscription and owner-denial
+boundaries pass. The production workshop adapter's extensionless ESM import failed
+and was corrected to its emitted .js path; API files now participate in typechecking.
+No real production home was created for testing. Full home/action-state and reduced-
+motion runtime QA remain unverified; no whole-home SHIP claim is made. The existing
+large Three.js asset chunk warning remains. Full skeletal IK, general rigid bodies
+and unbounded arbitrary creation are future capabilities, not milestone promises.
 
 Build passes. Connector verification: 221 passed, one skipped. Final world verification:
 570 passed, two opt-in browser tests skipped, including the active-settlement/profile
 test. Vitest reported a governance-worker shutdown timeout warning but exited zero.
 Independent source review scored all six listed control/focus fixes resolved; its
-whole-surface disposition remains RECAPTURE / BLOCKED VISUAL.
+whole-home disposition remains unverified. Fresh scoped visual review is in
+`.artifacts/creation-release-visual-review-2026-10-12.md`.
 
 Design-floor scan exceptions: unchanged incumbent `.findme` and `.takeover` purple
 accents remain outside this creation extension. Avatar wardrobe colors now reside
 in the dedicated `avatarPalette.ts` material token module.
 
-Latest read-only `Earth doctor` (2026-10-12) reports the production Kernel reachable,
-but the existing citizen request receives HTTP 403. No registration, owner claim,
-deployment or real-world mutation was performed; this does not verify the new code
-on production.
+The owner confirmed that the previous droplet was destroyed and this is a fresh
+world on Vidify behind Cloudflare Tunnel. Its current private admin credential
+authorized deployment; seed:init retained 12 citizens, 51 plots, 7 services and
+5 venues. No old-data recovery, re-registration or owner claim was attempted.
+Model/GitHub keys and the Docker memory cap were not changed. Community writes
+were not used as release verification.
