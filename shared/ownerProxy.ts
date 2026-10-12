@@ -3,6 +3,7 @@ const routes: Record<string, readonly [string, string]> = {
   propose: ['POST', '/v1/owner/construction'],
   approvals: ['GET', '/v1/owner/approvals'],
   decide: ['POST', '/v1/owner/approval'],
+  creation: ['POST', '/v1/owner/creation'],
 };
 const reply = (status: number, why: string) => Response.json({ ok: false, why }, { status, headers: { 'cache-control': 'no-store' } });
 
@@ -26,7 +27,7 @@ export async function workshopProxy(request: Request, kernel = 'https://kernel.a
     let body: string | undefined;
     if (request.method === 'POST') {
       body = await request.text();
-      if (body.length > 16_384) return reply(413, 'Construction request is too large.');
+      if (body.length > 32_768) return reply(413, 'Construction request is too large.');
       JSON.parse(body);
     }
     const result = await transport(kernel.replace(/\/$/, '') + route[1], {

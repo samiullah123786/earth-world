@@ -119,6 +119,7 @@ export function harvest(source: THREE.Object3D, joint: Joint, into: RigPart[]): 
       matrix: mesh.matrixWorld.clone(),
       color: material.color?.clone?.() ?? new THREE.Color(0xffffff),
       style: styleOf(material),
+      geometry: mesh.geometry.type === 'BoxGeometry' ? undefined : mesh.geometry,
     });
   });
   return into;
@@ -238,6 +239,7 @@ export type Pose = {
   leftArm: number; rightArm: number; leftLeg: number; rightLeg: number;
   /** A forward lean, for work that deserves one. */
   lean: number;
+  headYaw?: number; headPitch?: number;
   scale: number;
 };
 
@@ -367,11 +369,13 @@ export class CitizenBatch {
             : part.joint === 'leftLeg' ? pose.leftLeg
               : part.joint === 'rightLeg' ? pose.rightLeg
                 : 0;
-        if (angle !== 0) {
+        if (angle !== 0 || (part.joint === 'head' && (pose.headYaw || pose.headPitch))) {
           const pivot = rig.pivots?.[part.joint] ?? PIVOTS[part.joint];
           this.pivotOut.makeTranslation(pivot.x, pivot.y, pivot.z);
           this.pivotBack.makeTranslation(-pivot.x, -pivot.y, -pivot.z);
-          this.rotation.makeRotationX(angle);
+          if (part.joint === 'head') this.rotation.makeRotationFromEuler(new THREE.Euler(
+            Math.max(-.3, Math.min(.3, pose.headPitch ?? 0)), Math.max(-.65, Math.min(.65, pose.headYaw ?? 0)), 0, 'YXZ'));
+          else this.rotation.makeRotationX(angle);
           this.jointMatrix.copy(this.pivotOut).multiply(this.rotation).multiply(this.pivotBack);
           this.partMatrix.copy(this.bodyMatrix).multiply(this.jointMatrix).multiply(part.matrix);
         } else {

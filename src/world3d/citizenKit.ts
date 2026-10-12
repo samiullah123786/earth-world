@@ -15,8 +15,11 @@
  */
 
 import * as THREE from 'three';
+import type { PublicAvatarSpec } from '../../shared/avatar-identity';
+import { AVATAR_HAIR, AVATAR_CLOTH, AVATAR_EYES } from './avatarPalette';
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
+const TIER_GEOMETRY = new THREE.OctahedronGeometry(0.07, 0);
 
 export type KitPalette = {
   wood: THREE.Material; iron: THREE.Material; copper: THREE.Material;
@@ -119,7 +122,7 @@ export function makeTierMark(tier: string | undefined, palette: KitPalette): THR
   const group = new THREE.Group();
   const material = tier === 'polymath' ? palette.gold : palette.iron;
   for (let index = 0; index < marks; index++) {
-    const mark = new THREE.Mesh(new THREE.OctahedronGeometry(0.07, 0), material);
+    const mark = new THREE.Mesh(TIER_GEOMETRY, material);
     mark.position.set((index - (marks - 1) / 2) * 0.17, 2.16, 0);
     group.add(mark);
   }
@@ -268,6 +271,7 @@ export function makeInsignia(look: AuthorityLook, palette: KitPalette): THREE.Gr
 export type Look = {
   skin: number; hair: number; hairStyle: 'crop' | 'long' | 'topknot' | 'cap' | 'bald';
   build: 'slight' | 'average' | 'broad'; height: number;
+  canonicalHair?: string; headWidth?: number; eye?: number;
   cloth: number; trim: number; hasBeard: boolean; hasGlasses: boolean;
 };
 
@@ -310,6 +314,19 @@ export function lookFor(agentId: string, family: number): Look {
   };
 }
 
+/** Canonical public wardrobe colors. Authority clothing is applied separately. */
+export function lookFromAvatar(agentId: string, family: number, avatar?: PublicAvatarSpec): Look {
+  const look = lookFor(agentId, family);
+  if (!avatar) return look;
+  return { ...look, hair: AVATAR_HAIR[avatar.hairColor] ?? look.hair,
+    cloth: AVATAR_CLOTH[avatar.outfitColor] ?? look.cloth,
+    trim: tint(AVATAR_CLOTH[avatar.outfitColor] ?? look.cloth,.72),
+    canonicalHair: avatar.hairStyle, hairStyle: avatar.hairStyle === 'long' ? 'long' : 'crop',
+    headWidth: /plump/.test(avatar.headShape) ? 1.12 : /gaunt|small/.test(avatar.headShape) ? .88 : 1,
+    eye: AVATAR_EYES[avatar.eyeColor], hasGlasses: avatar.archetype === 'scholar',
+  };
+}
+
 function tint(color: number, factor: number) {
   const r = Math.min(255, Math.round(((color >> 16) & 255) * factor));
   const g = Math.min(255, Math.round(((color >> 8) & 255) * factor));
@@ -321,6 +338,21 @@ function tint(color: number, factor: number) {
 export function makeHair(look: Look): THREE.Group {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ color: look.hair, roughness: .92 });
+  if (look.canonicalHair) {
+    const style = look.canonicalHair;
+    const crown = /afro|natural|curly_short/.test(style) ? .24 : style === 'buzzcut' ? .06 : .13;
+    part(group, material, 0, 1.9, -.01, .47 * (look.headWidth ?? 1), crown, .41);
+    if (/long|bob|dreadlocks_short/.test(style)) {
+      const length = style === 'long' ? .48 : .26;
+      part(group, material, 0, 1.72, .19, .44, length, .07);
+      part(group, material, -.22, 1.72, 0, .06, length, .34);
+      part(group, material, .22, 1.72, 0, .06, length, .34);
+    }
+    if (/bangs|curtains/.test(style)) part(group, material, 0, 1.84, -.205, .43, .14, .06);
+    if (/parted|pixie/.test(style)) part(group, material, -.12, 1.95, 0, .24, .14, .4);
+    if (style === 'spiked') for (const x of [-.16,0,.16]) part(group,material,x,2.03,0,.1,.2,.15);
+    return group;
+  }
   if (look.hairStyle === 'bald') return group;
   if (look.hairStyle === 'cap') {
     part(group, material, 0, 1.93, -.01, .48, .14, .42);
@@ -340,6 +372,11 @@ export function makeHair(look: Look): THREE.Group {
 /** The rest of a face: not everyone has these, which is the point. */
 export function makeFace(look: Look): THREE.Group {
   const group = new THREE.Group();
+  if (look.eye !== undefined) {
+    const eyes = new THREE.MeshStandardMaterial({ color: look.eye, roughness: .8 });
+    part(group,eyes,-.1,1.73,-.2,.05,.05,.025);
+    part(group,eyes,.1,1.73,-.2,.05,.05,.025);
+  }
   if (look.hasBeard) {
     part(group, new THREE.MeshStandardMaterial({ color: look.hair, roughness: .95 }),
       0, 1.55, -.2, .3, .16, .04);

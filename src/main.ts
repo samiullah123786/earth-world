@@ -1,11 +1,16 @@
+import { applyWorldDelta, type WorldDelta } from '../shared/worldStream';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import './style.css';
+import { RouteBuffer, visualIdentityKey, boundedHeadTurn } from './world3d/observer';
+import type { PublicAvatarSpec } from '../shared/avatar-identity';
+import { creationCollision, partIsActive, type CreationRecord } from '../shared/creation';
+import { syncCreationScene, revealCreationInteriors, tendCreationLighting } from './world3d/creationScene';
 import { buildBoundaries, buildFarms, buildIsland, buildScatter, detailPalette, tileRandom } from './world3d/detail';
 import { authorityLook, kitPalette, makeAuthorityDress, makeInsignia, makeOfficeSash, makeTierMark, makeTool, toolMotion } from './world3d/citizenKit';
 import { conversationSubtitle, conversationTitle, groupConversations } from './world3d/conversations';
-import { lookFor, makeFace, makeHair } from './world3d/citizenKit';
+import { lookFor, lookFromAvatar, makeFace, makeHair } from './world3d/citizenKit';
 import { furnishHome, inside, interiorPalette, wallTiles } from './world3d/interior';
 import { BLOCK_PALETTE, type BlockMaterial, blocksWalking } from '../shared/blocks';
 import { assetsFor, facingOf, manifest, pick, rollOf, CATALOGUE } from '../shared/catalogue';
@@ -39,7 +44,7 @@ type Citizen = {
   carriedTool?: string | null; activeTool?: string | null;
   workingUntil?: number | null; buildingUntil?: number | null;
   activity?: string; talkingWith?: string | null; talkingUntil?: number | null;
-  specialties?: string[]; skillCount?: number; experienceTier?: string;
+  avatarSpec?: PublicAvatarSpec; recentRoutes?: RoutePoint[][]; specialties?: string[]; skillCount?: number; experienceTier?: string;
 };
 type BuildVisual = {
   modelId?: string | null;
@@ -58,7 +63,7 @@ type Zone = { zoneId: string; name: string; kind: string; x: number; y: number; 
 type WorldState = {
   ok: boolean; serverNow: number; world: { width: number; height: number };
   gate: { x: number; y: number }; citizens: Citizen[]; builds: Build[]; venues: Venue[];
-  farms?: Farm[]; plots?: Plot[]; zones?: Zone[]; blocks?: PlacedBlock[];
+  creations?: CreationRecord[]; farms?: Farm[]; plots?: Plot[]; zones?: Zone[]; blocks?: PlacedBlock[];
   growth?: {
     population: number; capacity: number; plots: number; ownedPlots: number;
     occupancy: number; expandsAtOccupancy: number; headroom: number;
@@ -207,6 +212,9 @@ const worldRoot = new THREE.Group();
 const terrainRoot = new THREE.Group();
 const structureRoot = new THREE.Group();
 const citizenRoot = new THREE.Group();
+const creationRoot = new THREE.Group();
+let creationPickables: THREE.Object3D[] = [];
+let creationSolid = new Set<number>();
 const landmarkRoot = new THREE.Group();
 // Detail lives in its own roots so terrain and structures can be rebuilt
 // on their own clocks without taking the meadow down with them.
@@ -214,7 +222,7 @@ const islandRoot = new THREE.Group();
 const scatterRoot = new THREE.Group();
 const farmRoot = new THREE.Group();
 const boundaryRoot = new THREE.Group();
-worldRoot.add(islandRoot, terrainRoot, scatterRoot, farmRoot, boundaryRoot, structureRoot, citizenRoot, landmarkRoot);
+worldRoot.add(islandRoot, terrainRoot, scatterRoot, farmRoot, boundaryRoot, structureRoot, citizenRoot, landmarkRoot, creationRoot);
 scene.add(worldRoot);
 
 // The world used to end at a flat blue clear-colour, which is the difference
@@ -285,6 +293,76 @@ let clockOffset = 0;
 let builtTerrain = false;
 let structureSignature = '';
 let selectedAgentId: string | null = null;
+let following = false;
+const routes = new RouteBuffer();
+const VIEW_DELAY = 2200;
+let lastStateAt = 0;
+let stateInFlight = false;
+const observerControls = document.createElement('nav');
+observerControls.className = 'hud observer-controls';
+observerControls.setAttribute('aria-label', 'World observation');
+const overviewButton = document.createElement('button');
+overviewButton.type = 'button'; overviewButton.textContent = 'Overview';
+const followButton = document.createElement('button');
+followButton.type = 'button'; followButton.textContent = 'Follow citizen';
+followButton.disabled = true; followButton.title = 'Select a citizen to follow';
+followButton.setAttribute('aria-pressed', 'false');
+const panelsButton = document.createElement('button');
+panelsButton.type = 'button'; panelsButton.textContent = 'People & activity';
+document.body.classList.toggle('world-panels-open', innerWidth > 768 && !document.body.classList.contains('embed'));
+panelsButton.setAttribute('aria-expanded', String(document.body.classList.contains('world-panels-open'))); panelsButton.setAttribute('aria-controls', 'rightstack');
+panelsButton.onclick = () => {
+  const open = document.body.classList.toggle('world-panels-open');
+  panelsButton.setAttribute('aria-expanded', String(open));
+  if (!open) { creationPanel.hidden = true; creationsButton.setAttribute('aria-expanded', 'false'); }
+};
+observerControls.append(overviewButton, followButton, panelsButton);
+window.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  document.body.classList.remove('world-panels-open');
+  panelsButton.setAttribute('aria-expanded', 'false'); profile.classList.remove('open');
+  creationPanel.hidden = true; creationsButton.setAttribute('aria-expanded', 'false');
+  panelsButton.focus();
+});
+document.body.append(observerControls);
+const connectionStatus = document.createElement('div');
+connectionStatus.className = 'hud connection-status';
+connectionStatus.setAttribute('role', 'status'); connectionStatus.textContent = 'Connecting to Earth…';
+document.body.append(connectionStatus);
+const creationsButton = document.createElement('button');
+creationsButton.type = 'button'; creationsButton.textContent = 'Creations';
+creationsButton.setAttribute('aria-expanded', 'false'); creationsButton.setAttribute('aria-controls', 'creation-panel');
+observerControls.append(creationsButton);
+const creationPanel = document.createElement('section');
+creationPanel.id = 'creation-panel'; creationPanel.className = 'panel creation-panel'; creationPanel.hidden = true;
+creationPanel.setAttribute('aria-label', 'World creations');
+required('rightstack').append(creationPanel);
+let selectedCreationId: string | null = null;
+let creationBusy = false;
+let creationMessage = '';
+let creationStale = false;
+creationsButton.onclick = () => {
+  creationPanel.hidden = !creationPanel.hidden;
+  creationsButton.setAttribute('aria-expanded', String(!creationPanel.hidden));
+  document.body.classList.add('world-panels-open'); panelsButton.setAttribute('aria-expanded','true');
+  renderCreations();
+};
+const actorStatus = document.createElement('div');
+actorStatus.className = 'hud actor-status'; actorStatus.hidden = true;
+document.body.append(actorStatus);
+function setFollowing(value: boolean) {
+  following = value && Boolean(selectedAgentId);
+  followButton.setAttribute('aria-pressed', String(following));
+  followButton.textContent = following ? 'Stop following' : 'Follow citizen';
+}
+followButton.onclick = () => { if (!following && selectedAgentId) focusCitizen(selectedAgentId,false); setFollowing(!following); };
+overviewButton.onclick = () => {
+  setFollowing(false); selectedAgentId = null; followButton.disabled = true;
+  actorStatus.hidden = true; profile.classList.remove('open');
+  const x = terrain ? terrain.width / 2 : 32, z = terrain ? terrain.height / 2 : 24;
+  focusAt(x, z, Math.min(60, Math.max(26, Math.max(terrain?.width ?? 64, terrain?.height ?? 48) * .55)));
+};
+orbit.addEventListener('start', () => setFollowing(false));
 let ownerAgentId = new URLSearchParams(location.search).get('me');
 let authorityOnly = false;
 let toastTimer = 0;
@@ -795,6 +873,7 @@ let gardenKit: Model[] = [];
 let kitReady = false;
 /** Bumped when the art changes, so every body knows it is stale. */
 let kitGeneration = 0;
+let kitRequested = false;
 const modelInstances: ModelInstances[] = [];
 const treeInstances: ModelInstances[] = [];
 
@@ -1088,14 +1167,14 @@ function makeLabel(text: string, background: string, width = 220, height = 42, w
 }
 
 function makeCitizen(row: Citizen): CitizenModel {
-  const look = lookFor(row.agentId, colorForFamily(row.family).getHex());
+  const look = lookFromAvatar(row.agentId, colorForFamily(row.family).getHex(), row.avatarSpec);
 
   // A modelled body, when the kit has arrived. Kenney's blocky characters are
   // built from exactly the joints this rig already had - torso, head, two arms,
   // two legs - so they need no skinning and go through the same instanced path
   // the box people did. Which citizen you get is keyed on the agent id, so a
   // person keeps their face forever.
-  if (citizenBody && skinMaterial) {
+  if (citizenBody && skinMaterial && !row.avatarSpec) {
     const model = citizenBody;
     // Which of the sixty-four skins this citizen wears, from their agent id
     // alone - so it is the same face every session, on every machine, and
@@ -1117,18 +1196,34 @@ function makeCitizen(row: Citizen): CitizenModel {
     // tile - which is what puts them at roughly two thirds the height of a
     // single-storey house, where a person belongs.
     const CITIZEN_HEIGHT = WORLD_SCALE.citizenHeight;
+    const rig = rigFromModel(model.scene, row.agentId,
+      (CITIZEN_HEIGHT / Math.max(model.size.y, 0.001)) * look.height,
+      { material: skinMaterial, cell });
+    const accessoryScale = model.size.y / 2.1;
+    const attach = (group: THREE.Group, joint: 'body' | 'leftArm' | 'rightArm') => {
+      group.scale.setScalar(accessoryScale); harvest(group,joint,rig.parts);
+    };
+    const office = authorityLook(row.serviceRole);
+    if (office) {
+      attach(makeAuthorityDress(office,KIT),'body'); attach(makeOfficeSash(row.serviceRole!,KIT),'body');
+      const insignia = makeInsignia(office,KIT);
+      if (insignia) { const hand = new THREE.Group(); hand.position.set(-.32,.5,0); hand.add(insignia);
+        const root = new THREE.Group(); root.add(hand); attach(root,'leftArm'); }
+    }
+    const tier = makeTierMark(row.experienceTier,KIT); if (tier) attach(tier,'body');
+    const tool = makeTool(row.activeTool ?? row.carriedTool,KIT);
+    if (tool) { const hand = new THREE.Group(); hand.position.set(.32,.5,0); hand.add(tool);
+      const root = new THREE.Group(); root.add(hand); attach(root,'rightArm'); }
     return {
-      rig: rigFromModel(model.scene, row.agentId,
-        (CITIZEN_HEIGHT / Math.max(model.size.y, 0.001)) * look.height,
-        { material: skinMaterial, cell }),
-      row, toolKey: `${kitGeneration}:`, label,
+      rig,
+      row, toolKey: visualIdentityKey(row, kitGeneration), label,
       px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
       arrivedAt: performance.now(), leavingSince: null,
     };
   }
 
-  // The box body, still here as the fallback for the moment before the models
-  // land - and as the honest floor if they never do.
+  // Canonical wardrobe citizens use composable, colored body parts. The atlas
+  // is retained for legacy citizens whose public identity has no wardrobe yet.
   return makeBoxCitizen(row, look);
 }
 
@@ -1150,16 +1245,18 @@ function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): Citizen
   const rightArmGroup = new THREE.Group();
   const leftLegGroup = new THREE.Group();
   const rightLegGroup = new THREE.Group();
+  const headGroup = new THREE.Group();
 
   addBlock(body, -.25 * wide, .75, -.15, .5 * wide, .72, .3, family);
-  addBlock(body, -.22, 1.5, -.19, .44, .44, .38, skin);
+  const headWidth = .44 * (look.headWidth ?? 1);
+  addBlock(headGroup, -headWidth / 2, 1.5, -.19, headWidth, .44, .38, skin);
   addBlock(leftArmGroup, -.39 * wide, .79, -.11, .13, .66, .22, skin);
   addBlock(rightArmGroup, .26 * wide, .79, -.11, .13, .66, .22, skin);
   addBlock(leftLegGroup, -.2, .12, -.11, .17, .64, .22, trim);
   addBlock(rightLegGroup, .03, .12, -.11, .17, .64, .22, trim);
   addBlock(leftLegGroup, -.2, .06, -.17, .17, .14, .3, boot);
   addBlock(rightLegGroup, .03, .06, -.17, .17, .14, .3, boot);
-  body.add(makeHair(look), makeFace(look));
+  headGroup.add(makeHair(look), makeFace(look));
   addBlock(body, -.06, 1.12, -.165, .12, .12, .04, materials.window);
 
   // Facts the Kernel already tracked and no renderer drew: the office a citizen
@@ -1179,7 +1276,6 @@ function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): Citizen
   const tierMark = makeTierMark(row.experienceTier, KIT);
   if (tierMark) body.add(tierMark);
 
-  const toolKey = String(row.activeTool ?? row.carriedTool ?? '');
   const tool = makeTool(row.activeTool ?? row.carriedTool, KIT);
   if (tool) {
     // A hand on the end of the arm, so a carried tool swings with the arm
@@ -1192,6 +1288,7 @@ function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): Citizen
 
   const parts: Rig['parts'] = [];
   harvest(body, 'body', parts);
+  harvest(headGroup, 'head', parts);
   harvest(leftArmGroup, 'leftArm', parts);
   harvest(rightArmGroup, 'rightArm', parts);
   harvest(leftLegGroup, 'leftLeg', parts);
@@ -1202,8 +1299,8 @@ function makeBoxCitizen(row: Citizen, look: ReturnType<typeof lookFor>): Citizen
   citizenRoot.add(label);
 
   return {
-    rig: { agentId: row.agentId, parts, scale: look.height },
-    row, toolKey: `${kitGeneration}:${toolKey}`, label,
+    rig: { agentId: row.agentId, parts, scale: WORLD_SCALE.citizenHeight / 2.1 * look.height },
+    row, toolKey: visualIdentityKey(row, kitGeneration), label,
     px: row.tx + .5, pz: row.ty + .5, py: 0, heading: 0, placed: false,
     arrivedAt: performance.now(), leavingSince: null,
   };
@@ -1227,7 +1324,11 @@ function syncCitizens(rows: Citizen[]) {
       continue;
     }
     if (now - model.leavingSince < GATE_MS) continue;
-    if (model.label) citizenRoot.remove(model.label);
+    if (model.label) {
+      citizenRoot.remove(model.label);
+      const labelMaterial = model.label.material as THREE.SpriteMaterial;
+      labelMaterial.map?.dispose(); labelMaterial.dispose();
+    }
     citizenModels.delete(agentId);
   }
   for (const row of rows) {
@@ -1247,10 +1348,14 @@ function syncCitizens(rows: Citizen[]) {
     // kept its box bodies for the whole session while the models sat loaded and
     // unused. The generation counter is the honest version of the same idea:
     // when the kit changes, every body is stale.
-    const wanted = `${kitGeneration}:${citizenBody ? '' : String(row.activeTool ?? row.carriedTool ?? '')}`;
+    const wanted = visualIdentityKey(row, kitGeneration);
     if (wanted !== model.toolKey) {
       const carried = { ...model };
-      if (model.label) citizenRoot.remove(model.label);
+      if (model.label) {
+      citizenRoot.remove(model.label);
+      const labelMaterial = model.label.material as THREE.SpriteMaterial;
+      labelMaterial.map?.dispose(); labelMaterial.dispose();
+    }
       const rebuilt = makeCitizen(row);
       rebuilt.px = carried.px; rebuilt.pz = carried.pz; rebuilt.py = carried.py;
       rebuilt.heading = carried.heading; rebuilt.placed = carried.placed;
@@ -1266,17 +1371,7 @@ function syncCitizens(rows: Citizen[]) {
 }
 
 function positionFor(row: Citizen, now: number) {
-  const route = row.route;
-  if (route && route.length > 1 && now < route[route.length - 1].at) {
-    for (let i = 1; i < route.length; i++) {
-      if (now <= route[i].at) {
-        const a = route[i - 1], b = route[i];
-        const t = THREE.MathUtils.clamp((now - a.at) / Math.max(1, b.at - a.at), 0, 1);
-        return { x: THREE.MathUtils.lerp(a.x, b.x, t), z: THREE.MathUtils.lerp(a.y, b.y, t), moving: true };
-      }
-    }
-  }
-  return { x: row.tx, z: row.ty, moving: false };
+  return routes.position(row, now);
 }
 
 /**
@@ -1290,7 +1385,7 @@ const citizenBatch = new CitizenBatch(citizenRoot, BOX);
 const posed: Array<{ rig: Rig; pose: Pose }> = [];
 
 function animateCitizens(elapsed: number, elapsedDelta: number) {
-  const now = Date.now() + clockOffset - 140;
+  const now = Math.min(Date.now() + clockOffset, lastStateAt + 3000) - VIEW_DELAY;
   const frameNow = performance.now();
   posed.length = 0;
   const eye = camera.position;
@@ -1341,14 +1436,14 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
       // are actually holding, at the tempo that task deserves; everyone else
       // breathes.
       const busy = (model.row.workingUntil ?? 0) > Date.now() || (model.row.buildingUntil ?? 0) > Date.now();
-      const motion = toolMotion(model.row.activeTool ?? model.row.carriedTool, busy);
+      const motion = toolMotion(model.row.activeTool ?? model.row.carriedTool ?? ((model.row.buildingUntil ?? 0) > now ? 'hammer' : null), busy);
       if (motion) {
         const swing = Math.sin(elapsed * motion.speed + hash(model.row.agentId) % 7);
         rightArm = -Math.abs(swing) * motion.amplitude;
         leftArm = Math.abs(swing) * motion.amplitude * .3;
         lean = Math.abs(swing) * motion.lean * .12;
       } else {
-        const breathe = Math.sin(elapsed * 2 + hash(model.row.name) % 6) * .035;
+        const breathe = reducedMotion.matches ? 0 : Math.sin(elapsed * 2 + hash(model.row.name) % 6) * .035;
         leftArm = breathe; rightArm = -breathe;
       }
     }
@@ -1371,9 +1466,9 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
     // call outside the shared batch, and a body that is HALF THERE is a worse
     // lie than one that is arriving. So they come up out of the ground turning,
     // which the instanced path can express with the matrix it already writes.
-    const sinceArrival = frameNow - model.arrivedAt;
+    const sinceArrival = reducedMotion.matches ? GATE_MS : frameNow - model.arrivedAt;
     const gate = model.leavingSince !== null
-      ? 1 - Math.min(1, (frameNow - model.leavingSince) / GATE_MS)
+      ? reducedMotion.matches ? 0 : 1 - Math.min(1, (frameNow - model.leavingSince) / GATE_MS)
       : Math.min(1, sinceArrival / GATE_MS);
     // Eased so the last third is slow: the moment a citizen becomes whole is
     // the one worth watching.
@@ -1386,6 +1481,10 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
       pose: {
         x: model.px, y: model.py + bob - sunken, z: model.pz,
         heading: model.heading + spin, leftArm, rightArm, leftLeg, rightLeg, lean,
+        headYaw: (() => {
+          const other = model.row.talkingWith ? citizenModels.get(model.row.talkingWith) : undefined;
+          return other ? boundedHeadTurn(Math.atan2(other.px-model.px,other.pz-model.pz),model.heading) : 0;
+        })(), headPitch: (model.row.buildingUntil ?? 0) > now ? .15 : 0,
         // Never quite zero: a scale of nothing collapses the matrix and the
         // GPU renders whatever the previous instance left behind.
         scale: model.rig.scale * Math.max(0.05, risen),
@@ -1396,8 +1495,8 @@ function animateCitizens(elapsed: number, elapsedDelta: number) {
     // town you are looking at from above is a roster, not a view. They fade in
     // when you are close enough to care who somebody is.
     if (model.label) {
-      const near = view.nameplates && risen > 0.85
-        && eye.distanceTo(new THREE.Vector3(model.px, model.py + 1, model.pz)) < view.nameplateRange;
+      const near = (view.nameplates || selectedAgentId === model.row.agentId) && risen > 0.85
+        && (selectedAgentId === model.row.agentId || eye.distanceTo(new THREE.Vector3(model.px, model.py + 1, model.pz)) < view.nameplateRange);
       model.label.visible = near;
       // Just above the head. The rig scale is now a ratio between two kits'
       // units rather than a height, so the plate reads the citizen's actual
@@ -1428,16 +1527,17 @@ function focusCitizen(agentId: string, open = true) {
   const model = citizenModels.get(agentId);
   const row = world?.citizens.find((citizen) => citizen.agentId === agentId);
   if (!row) return;
-  selectedAgentId = agentId;
+  selectedAgentId = agentId; followButton.disabled = false; followButton.title = `Follow ${row.name}`;
   // The body no longer lives in the scene graph, so its drawn position comes
   // off the model rather than off a Group's transform.
   const x = model ? model.px : row.tx + .5;
   const z = model ? model.pz : row.ty + .5;
   focusAt(x, z, 7.5);
-  if (open) renderProfile(row);
+  if (open) { renderProfile(row); document.body.classList.add('world-panels-open'); panelsButton.setAttribute('aria-expanded', 'true'); }
 }
 
 function renderProfile(row: Citizen) {
+  const spot = positionFor(row, Math.min(Date.now() + clockOffset,lastStateAt+3000)-VIEW_DELAY);
   const live = row.online ? 'LIVE NOW' : row.asleep ? 'SLEEPING BEYOND THE GATE' : 'AMBIENT';
   profile.innerHTML = '';
   const header = document.createElement('header');
@@ -1446,20 +1546,24 @@ function renderProfile(row: Citizen) {
   title.textContent = row.name;
   const close = document.createElement('button');
   close.type = 'button'; close.className = 'panel-min'; close.textContent = '×'; close.setAttribute('aria-label', 'Close citizen profile');
-  close.onclick = () => { profile.classList.remove('open'); selectedAgentId = null; };
+  close.onclick = () => { profile.classList.remove('open'); };
   header.append(title, close);
   const main = document.createElement('div');
   main.className = 'profile-main';
   const id = document.createElement('div'); id.className = 'profile-id'; id.textContent = row.agentId;
   const grid = document.createElement('div'); grid.className = 'profile-grid';
-  for (const value of [row.serviceRole ?? row.family, live, `tile ${Math.round(row.tx)}, ${Math.round(row.ty)}`, row.experienceTier ?? 'verified citizen']) {
+  for (const value of [row.serviceRole ?? row.family, live, `shown tile ${Math.round(spot.x)}, ${Math.round(spot.z)}`, row.experienceTier ?? 'verified citizen']) {
     const chip = document.createElement('div'); chip.className = 'profile-chip'; chip.textContent = value; grid.append(chip);
   }
   const activity = document.createElement('div'); activity.className = 'profile-activity'; activity.textContent = row.activity || 'Taking in the world.';
   const actions = document.createElement('div'); actions.className = 'profile-actions';
   const locate = document.createElement('button'); locate.type = 'button'; locate.textContent = 'LOCATE'; locate.onclick = () => focusCitizen(row.agentId, false);
   const dashboard = document.createElement('button'); dashboard.type = 'button'; dashboard.textContent = 'PROFILE ↗'; dashboard.onclick = () => location.href = `https://agentsearth.com/?agent=${encodeURIComponent(row.agentId)}`;
-  actions.append(locate, dashboard);
+  const follow = document.createElement('button'); follow.type = 'button';
+  follow.textContent = following && selectedAgentId === row.agentId ? 'STOP FOLLOWING' : 'FOLLOW';
+  follow.setAttribute('aria-pressed', String(following && selectedAgentId === row.agentId));
+  follow.onclick = () => { focusCitizen(row.agentId, false); setFollowing(!following); renderProfile(row); };
+  actions.append(locate, follow, dashboard);
 
   // Offering a hand, while you are the one holding the wheel.
   //
@@ -1489,10 +1593,92 @@ function renderProfile(row: Citizen) {
   profile.classList.add('open');
 
   if (window.parent !== window) {
-    const message = { type: 'earth-profile', citizen: { ...row, current: { x: row.tx, y: row.ty } } };
+    const message = { type: 'earth-profile', citizen: { ...row, current: { x: spot.x, y: spot.z }, viewDelayMs: VIEW_DELAY } };
     window.parent.postMessage(message, 'https://agentsearth.com');
     window.parent.postMessage(message, 'https://agentsearth-home.vercel.app');
   }
+}
+
+async function creationAction(record: CreationRecord, action: Record<string, unknown>) {
+  if (creationBusy) return;
+  const trigger = document.activeElement instanceof HTMLButtonElement && creationPanel.contains(document.activeElement) ? document.activeElement : null;
+  creationBusy = true; creationMessage = 'Sending request to Earth…'; renderCreations();
+  try {
+    const response = await fetch('/api/workshop/creation', { method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ ...action, creationId: record.creationId, expectedRevision: record.revision }) });
+    const payload = await response.json() as { ok?: boolean; why?: string };
+    if (!response.ok || !payload.ok) throw new Error(payload.why || 'Earth rejected the request. Connect the owning citizen on the dashboard and retry.');
+    creationMessage = 'Earth accepted the change.'; await refreshState();
+  } catch (error) { creationMessage = error instanceof Error ? error.message : 'Request failed. Retry when Earth is reachable.'; }
+  finally {
+    creationBusy = false; renderCreations();
+    if (trigger?.isConnected && !creationPanel.hidden && document.activeElement === document.body) {
+      (trigger.disabled ? required<HTMLSelectElement>('creation-picker') : trigger).focus({ preventScroll: true });
+    }
+  }
+}
+function renderCreations() {
+  const records = world?.creations ?? [];
+  let content = creationPanel.querySelector<HTMLDivElement>('.creation-content');
+  if (!content) {
+  const header = document.createElement('header'); header.className = 'panel-header';
+  const title = document.createElement('h3'); title.textContent = 'World creations';
+  const close = document.createElement('button'); close.type = 'button'; close.textContent = '×';
+  close.className = 'panel-min'; close.setAttribute('aria-label','Close world creations');
+  close.onclick = () => { creationPanel.hidden = true; creationsButton.setAttribute('aria-expanded','false'); creationsButton.focus(); };
+  header.append(title,close); creationPanel.append(header);
+  content = document.createElement('div'); content.className = 'creation-content';
+  const empty = document.createElement('p'); empty.id = 'creation-empty'; empty.textContent = 'No creations received yet. Agents can submit a validated creation plan on their owned land.';
+  const picker = document.createElement('select'); picker.id = 'creation-picker';
+  const label = document.createElement('label'); label.htmlFor = picker.id; label.textContent = 'Inspect a creation';
+  picker.onchange = () => { selectedCreationId = picker.value; creationMessage = ''; renderCreations(); };
+  content.append(empty,label,picker);
+  for (const id of ['creation-facts','creation-permission','creation-offline']) { const p = document.createElement('p'); p.id = id; content.append(p); }
+  const locate = document.createElement('button'); locate.type = 'button'; locate.id = 'creation-locate'; locate.textContent = 'Locate creation'; content.append(locate);
+  const parts = document.createElement('div'); parts.id = 'creation-parts'; content.append(parts);
+  const pause = document.createElement('button'); pause.type = 'button'; pause.id = 'creation-pause'; content.append(pause);
+  const status = document.createElement('p'); status.id = 'creation-status'; status.setAttribute('role','status'); content.append(status);
+  creationPanel.append(content);
+  }
+  const picker = required<HTMLSelectElement>('creation-picker');
+  const ids = new Set(records.map(record => record.creationId));
+  for (const option of Array.from(picker.options)) if (!ids.has(option.value)) option.remove();
+  for (const record of records) {
+    let option = Array.from(picker.options).find(item => item.value === record.creationId);
+    if (!option) { option = document.createElement('option'); option.value = record.creationId; picker.append(option); }
+    option.textContent = `${record.name} · ${record.state}`;
+  }
+  if (!records.some(record => record.creationId === selectedCreationId)) selectedCreationId = records[0]?.creationId ?? null;
+  if (selectedCreationId) picker.value = selectedCreationId;
+  required('creation-empty').hidden = Boolean(records.length); picker.hidden = !records.length;
+  creationPanel.querySelector<HTMLLabelElement>('label')!.hidden = !records.length;
+  const record = records.find(item => item.creationId === selectedCreationId);
+  for (const id of ['creation-facts','creation-permission','creation-offline','creation-locate','creation-parts','creation-pause']) required(id).hidden = !record;
+  if (record) {
+    required('creation-facts').textContent = `${record.state} · ${record.progress}/${record.plan.parts.length} parts · revision ${record.revision}`;
+    required<HTMLButtonElement>('creation-locate').onclick = () => { setFollowing(false); focusAt(record.plan.x+2,record.plan.y+2,9); };
+    const owner = ownerAgentId === record.ownerAgentId;
+    const unavailable = !lastStateAt || Date.now() + clockOffset - lastStateAt > 8000;
+    required('creation-permission').textContent = owner ? 'Controls request an authoritative change; Earth checks ownership, distance and revision.' : 'Viewing only. Connect this creation’s owning citizen on the dashboard to operate it.';
+    required('creation-offline').hidden = !unavailable;
+    required('creation-offline').textContent = 'Earth updates are unavailable. Controls resume after a fresh state arrives.';
+    const parts = required('creation-parts'), partIds = new Set(record.plan.parts.filter(part => part.shape === 'door' || part.shape === 'switch').map(part => part.id));
+    for (const button of Array.from(parts.querySelectorAll<HTMLButtonElement>('button'))) if (!partIds.has(button.dataset.part!)) button.remove();
+    for (const part of record.plan.parts.filter(part => part.shape === 'door' || part.shape === 'switch')) {
+      let button = Array.from(parts.querySelectorAll<HTMLButtonElement>('button')).find(item => item.dataset.part === part.id);
+      if (!button) { button = document.createElement('button'); button.type='button'; button.dataset.part = part.id; parts.append(button); }
+      const active = partIsActive(record.plan,part.id,record.signals);
+      button.textContent = part.shape === 'door' ? `${active ? 'Close' : 'Open'} ${part.id}` : `${part.id}: ${active ? 'on' : 'off'}`;
+      if (part.shape === 'switch') button.setAttribute('aria-pressed',String(active)); else button.removeAttribute('aria-pressed');
+      button.disabled = !owner || unavailable || creationBusy || record.state !== 'built';
+      button.onclick = () => void creationAction(record,{type:'creation_use',partId:part.id,event:'toggle'});
+    }
+    const pause = required<HTMLButtonElement>('creation-pause'); pause.textContent = record.state === 'paused' ? 'Resume construction' : 'Pause construction';
+    pause.disabled = !owner || unavailable || creationBusy || record.state === 'built';
+    pause.onclick = () => void creationAction(record,{type:'creation_control',command:record.state === 'paused' ? 'resume' : 'pause'});
+  }
+  required('creation-status').textContent = creationMessage;
 }
 
 function renderDirectory() {
@@ -1609,23 +1795,40 @@ function updateHud() {
   renderChat();
   if (selectedAgentId) {
     const selected = world.citizens.find((row) => row.agentId === selectedAgentId);
-    if (selected) renderProfile(selected);
+    if (selected && profile.classList.contains('open') && !profile.contains(document.activeElement)) renderProfile(selected);
   }
 }
 
 async function refreshTerrain() {
-  const response = await fetch(`${KERNEL}/v1/world/terrain`, { headers: { Accept: 'application/json' } });
+  const response = await fetch(`${KERNEL}/v1/world/terrain`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`terrain ${response.status}`);
   terrain = await response.json() as Terrain;
   if (!builtTerrain) buildTerrain(terrain);
 }
 
 async function refreshState() {
-  const response = await fetch(`${KERNEL}/v1/world/state`, { headers: { Accept: 'application/json' } });
+  if (stateInFlight) return;
+  stateInFlight = true;
+  try {
+  const response = await fetch(`${KERNEL}/v1/world/state`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`state ${response.status}`);
   const next = await response.json() as WorldState;
   if (!next.ok) throw new Error('world state rejected');
+  applyReceivedState(next);
+  } catch (error) {
+    connectionStatus.dataset.state = 'offline';
+    connectionStatus.textContent = world ? 'Earth offline · showing last received state · retrying' : 'Earth unavailable · retrying';
+    throw error;
+  } finally { stateInFlight = false; }
+}
+
+function applyReceivedState(next: WorldState) {
+  if (!next.ok || world && next.serverNow < lastStateAt) return;
   world = next;
+  lastStateAt = next.serverNow;
+  routes.ingest(next.citizens, next.serverNow);
+  connectionStatus.textContent = 'Live Earth · view delayed 2.2s';
+  connectionStatus.dataset.state = 'live';
   // THE JITTER FIX. serverNow is stamped when the Kernel builds the reply;
   // Date.now() is when this browser receives it. The difference is the true
   // clock skew MINUS however long that particular response spent on the wire,
@@ -1644,8 +1847,11 @@ async function refreshState() {
   if (signature !== structureSignature) {
     structureSignature = signature;
     buildStructures(next.builds, next.venues, next.gate);
-    buildPlacedBlocks(next.blocks ?? []);
   }
+  buildPlacedBlocks(next.blocks ?? []);
+  creationPickables = syncCreationScene(creationRoot, next.creations ?? [], heightAt);
+  creationSolid = new Set((next.creations ?? []).flatMap(record => creationCollision(record)).map(tile => solidKey(tile.x,tile.y)));
+  if (!creationPanel.hidden) renderCreations();
   buildLivingGround(next.farms ?? [], next.plots ?? []);
   updateHud();
   (window as unknown as Record<string, unknown>).__voxelWorld = {
@@ -1700,7 +1906,7 @@ async function refreshWallet() {
 
 async function boot() {
   try {
-    void loadKit();   // in the background: the box town shows first, the real one lands a moment later
+    if (!kitRequested) { kitRequested = true; void loadKit(); }
     await Promise.all([refreshTerrain(), refreshState(), refreshFeed(), refreshWallet()]);
     loading.classList.add('done');
     if (terrain) {
@@ -1807,6 +2013,7 @@ function blocked(x: number, z: number) {
     if (solid.has(solidKey(tx, tz))) return true;
     if (structureSolid.has(solidKey(tx, tz))) return true;
     if (blockSolid.has(solidKey(tx, tz))) return true;
+    if (creationSolid.has(solidKey(tx, tz))) return true;
   }
   return false;
 }
@@ -1881,7 +2088,17 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   // an instance index and the batch says whose it is.
   const hit = raycaster.intersectObjects(citizenBatch.pickables, false)[0];
   const agentId = hit ? CitizenBatch.agentAt(hit) : null;
-  if (agentId) focusCitizen(agentId);
+  if (agentId) { focusCitizen(agentId); return; }
+  const objectHit = raycaster.intersectObjects(creationPickables,false)[0];
+  const tag = objectHit?.object.userData;
+  const instanceTag = objectHit?.instanceId === undefined ? tag : tag?.tags?.[objectHit.instanceId];
+  const creationId = instanceTag?.creationId ?? tag?.creationId;
+  if (creationId) {
+    selectedCreationId = creationId; creationPanel.hidden = false;
+    creationsButton.setAttribute('aria-expanded','true');
+    document.body.classList.add('world-panels-open'); panelsButton.setAttribute('aria-expanded','true');
+    renderCreations();
+  }
 });
 
 for (const id of ['citizen-search', 'citizen-category', 'citizen-live']) {
@@ -2262,9 +2479,11 @@ const EAVES = 3.4;
 let sheltering: string | null = null;
 
 function revealInteriors() {
-  const spot = exploreMode ? camera.position : null;
+  const selected = selectedAgentId ? citizenModels.get(selectedAgentId) : undefined;
+  const spot = exploreMode ? camera.position : selected ? new THREE.Vector3(selected.px, selected.py + 1, selected.pz) : null;
+  revealCreationInteriors(creationRoot, world?.creations ?? [], spot);
   let under: string | null = null;
-  if (spot && spot.y < EAVES) {
+  if (spot && spot.y - heightAt(spot.x, spot.z) < EAVES) {
     for (const entry of roofs) {
       if (!inside(entry.build, spot.x, spot.z)) continue;
       under = `roof:${entry.build.buildId ?? `${entry.build.x}:${entry.build.y}`}`;
@@ -2489,8 +2708,25 @@ function animate() {
   if (!exploreMode) orbit.update();
   revealInteriors();
   animateCitizens(elapsedSeconds, delta);
+  const stale = !lastStateAt || Date.now() + clockOffset - lastStateAt > 8000;
+  if (creationStale !== stale) { creationStale = stale; if (!creationPanel.hidden) renderCreations(); }
+  if (lastStateAt && Date.now() + clockOffset - lastStateAt > 8000) {
+    connectionStatus.textContent = 'Earth updates delayed · showing last received state';
+    connectionStatus.dataset.state = 'stale';
+  }
+  const actor = selectedAgentId ? citizenModels.get(selectedAgentId) : undefined;
+  if (actor) {
+    actorStatus.hidden = false;
+    actorStatus.textContent = `${actor.row.name} · ${actor.row.activity || (actor.row.online ? 'Present in Earth' : 'Ambient life')}`;
+    if (following && !exploreMode && !driving) {
+      const dx = actor.px - orbit.target.x, dz = actor.pz - orbit.target.z, dy = actor.py + .9 - orbit.target.y;
+      orbit.target.x += dx; orbit.target.z += dz; orbit.target.y += dy;
+      camera.position.x += dx; camera.position.z += dz; camera.position.y += dy;
+    }
+  } else { actorStatus.hidden = true; if (following) setFollowing(false); }
   const sky = tendSky(Date.now());
   tendLights();
+  tendCreationLighting(creationRoot, camera.position);
   if (!reducedMotion.matches) {
     clouds?.update(elapsedSeconds, sky);
     wildlife?.update(elapsedSeconds, sky);
@@ -2561,7 +2797,23 @@ function animate() {
 bindView();
 renderer.setAnimationLoop(animate);
 void boot();
-window.setInterval(() => void refreshState().catch(() => undefined), 2000);
+window.setInterval(() => { if (!streamReceivedAt || Date.now() - streamReceivedAt > 3000) void refreshState().catch(() => undefined); }, 2000);
 window.setInterval(() => void refreshFeed(), 10000);
 window.setInterval(() => void refreshTerrain().catch(() => undefined), 60000);
 window.setInterval(() => void refreshWallet(), 20000);
+
+let streamReceivedAt = 0;
+if (typeof EventSource !== 'undefined') {
+  const events = new EventSource(`${KERNEL}/v1/world/events`);
+  events.addEventListener('snapshot', (event: MessageEvent) => {
+    try { const snapshot = JSON.parse(event.data) as WorldState; applyReceivedState(snapshot); streamReceivedAt = Date.now(); }
+    catch { streamReceivedAt = 0; }
+  });
+  events.addEventListener('delta', (event: MessageEvent) => {
+    try { if (!world) return; const delta = JSON.parse(event.data) as WorldDelta; applyReceivedState(applyWorldDelta(world, delta) as WorldState); streamReceivedAt = Date.now(); }
+    catch { streamReceivedAt = 0; }
+  });
+  events.addEventListener('unavailable', () => { streamReceivedAt = 0; });
+  events.onerror = () => { streamReceivedAt = 0; };
+  window.addEventListener('pagehide', () => events.close(), { once: true });
+}

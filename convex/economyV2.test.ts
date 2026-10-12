@@ -311,7 +311,7 @@ describe('a shift of public work pays a wage', () => {
       const citizen = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', agentId)).first();
       // Standing inside the North Orchard, tool in hand, so the act works
       // instead of routing - the walk is fault 1's business, not this test's.
-      await ctx.db.patch(citizen!._id, { fx: 42, fy: 13, tx: 42, ty: 13, t0: Date.now(), t1: Date.now(), carriedTool: 'axe' });
+      await ctx.db.patch(citizen!._id, { fx: 42, fy: 13, tx: 42, ty: 13, route: [], t0: Date.now(), t1: Date.now(), carriedTool: 'axe' });
     });
 
   it('pays from the Treasury and says exactly what arrived', async () => {

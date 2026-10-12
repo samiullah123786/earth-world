@@ -1,10 +1,11 @@
-import { H, W } from './tiledFounding';
+import { creationCollision } from '../shared/creation';
 import { walkableInWorld, type WorldBounds } from './pathfinding';
 import { WORLD_CHUNK_SIZE } from '../shared/wfc';
 import { normalizeTiledChunk } from '../shared/tiled-world';
 import { EARTHFORGE_ASSETS, earthForgeAssetFor, earthForgeSiteContract } from '../shared/earthforge';
 import { encodeChunkRows } from '../shared/voxel';
 import { EARTH_MAP } from './earthMapData';
+import { BLOCK_PALETTE, isBlockMaterial } from '../shared/blocks';
 
 /**
  * Terrain chunks, cached per isolate and keyed by the world's own size.
@@ -60,10 +61,10 @@ export async function loadTerrainLetters(ctx: any, bounds: WorldBounds) {
   };
 }
 
-export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
+export async function loadWorldSpatialContext(ctx: any, bounds: WorldBounds, terrainChunks?: any[]) {
   const chunkKey = `${bounds.width}x${bounds.height}`;
-  const [chunks, builds, plots] = await Promise.all([
-    cachedChunks?.key === chunkKey
+  const [chunks, builds, plots, placedBlocks] = await Promise.all([
+    terrainChunks ? Promise.resolve(terrainChunks) : cachedChunks?.key === chunkKey
       ? Promise.resolve(cachedChunks.rows)
       : ctx.db.query('worldChunks').collect().then((rows: any[]) => {
           cachedChunks = { key: chunkKey, rows };
@@ -71,9 +72,19 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
         }),
     ctx.db.query('builds').collect(),
     ctx.db.query('plots').collect(),
+    ctx.db.query('placedBlocks').collect(),
   ]);
   const chunkMap = new Map(chunks.map((chunk: any) => [`${chunk.chunkX},${chunk.chunkY}`, chunk]));
   const dynamicBlocked = new Set<string>();
+  for (const block of placedBlocks) {
+    // Cosmetic paths/flowers/lanterns never become invisible navigation walls.
+    const kind: unknown = block.kind;
+    if (isBlockMaterial(kind) && BLOCK_PALETTE[kind].hard) {
+      dynamicBlocked.add(`${block.x},${block.y}`);
+    }
+  }
+  const creations = await ctx.db.query('creations').collect();
+  for (const creation of creations) for (const cell of creationCollision(creation)) dynamicBlocked.add(`${cell.x},${cell.y}`);
   const plotsById = new Map(plots.map((plot: any) => [plot.plotId, plot]));
   for (const build of builds) {
     // Only a structure that actually stands can block a tile. Asking which
@@ -102,10 +113,9 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
       if (Number.isInteger(x) && Number.isInteger(y)) dynamicBlocked.add(`${x},${y}`);
     }
   }
-  return (x: number, y: number) => {
+  const walkable = (x: number, y: number) => {
     const tx = Math.floor(x), ty = Math.floor(y);
     if (tx < 0 || ty < 0 || tx >= bounds.width || ty >= bounds.height || dynamicBlocked.has(`${tx},${ty}`)) return false;
-    if (tx < W && ty < H) return walkableInWorld(tx, ty, bounds);
     const chunkX = Math.floor(tx / WORLD_CHUNK_SIZE), chunkY = Math.floor(ty / WORLD_CHUNK_SIZE);
     const chunk: any = chunkMap.get(`${chunkX},${chunkY}`);
     if (!chunk) return walkableInWorld(tx, ty, bounds);
@@ -113,4 +123,9 @@ export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
     const tiled = normalizeTiledChunk(chunk);
     return tiled.layers.CollisionLayer[localY * chunk.size + localX] === 0;
   };
+  return { walkable, dynamicBlocked, placedBlocks };
+}
+
+export async function loadWorldWalkability(ctx: any, bounds: WorldBounds) {
+  return (await loadWorldSpatialContext(ctx, bounds)).walkable;
 }

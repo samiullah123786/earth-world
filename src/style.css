@@ -289,6 +289,8 @@ canvas.grabbing:active { cursor: grabbing; }
 body.embed .backhome, body.embed .brand, body.embed .metrics, body.embed #rightstack,
 body.embed .findme { display: none !important; }
 body.embed .grab-toggle { display: none !important; }
+body #rightstack { display: none; }
+body.world-panels-open #rightstack { display: flex !important; }
 body.embed .controls { bottom: 12px; }
 
 @media (max-width: 1040px) {
@@ -416,4 +418,52 @@ body.embed .view-toggle, body.embed .viewpanel { display: none !important; }
     outline: 2px solid var(--cream);
     outline-offset: 2px;
   }
+}
+
+/* Observation tools leave the town visible; incumbent Earth HUD tokens remain authoritative. */
+:root { --observer-gap: 8px; --observer-pad: 12px; --observer-control-height: 44px; --observer-status-top: 100px; --observer-actor-top: 148px; }
+.observer-controls { left: var(--observer-pad); bottom: calc(64px + env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; gap: var(--observer-gap); padding: 4px; max-width: calc(100vw - 24px); background: var(--cream); }
+.observer-controls button { min-height: var(--observer-control-height); border: 2px solid var(--ink); padding: 8px; background: var(--cream); color: var(--ink); font: 700 12px/1.4 var(--mono); cursor: pointer; }
+.observer-controls button:disabled { opacity: .55; cursor: default; }
+.observer-controls button[aria-pressed="true"] { background: var(--moss); }
+.observer-controls button:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+.observer-controls button:active { background: var(--moss); }
+@media (hover: hover) { .observer-controls button:hover:not(:disabled) { background: var(--moss); } }
+.connection-status, .actor-status { left: var(--observer-pad); max-width: min(480px, calc(100vw - 24px)); background: var(--cream); color: var(--ink); padding: 8px; font: 12px/1.5 var(--mono); overflow-wrap: anywhere; pointer-events: none; }
+.connection-status { top: var(--observer-status-top); }
+.connection-status[data-state="offline"], .connection-status[data-state="stale"] { border-style: dashed; }
+.actor-status { top: var(--observer-actor-top); }
+.actor-status[hidden] { display: none; }
+.profile-actions { flex-wrap: wrap; }
+.profile-actions button { min-height: var(--observer-control-height); font-size: 12px; }
+.view-toggle { bottom: 196px; }
+body.embed .observer-controls { bottom: 12px; }
+@media (max-width: 768px) {
+  .observer-controls { left: var(--observer-pad); bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .observer-controls button { flex: 1; }
+  #rightstack { display: none; top: 196px; max-height: calc(100dvh - 328px); }
+  body.world-panels-open #rightstack { display: flex; }
+  .wallet, .metrics { display: none; }
+  .connection-status { top: 64px; }
+  .actor-status { top: 112px; }
+  .view-toggle { right: 12px; bottom: 148px; min-height: var(--observer-control-height); }
+  .grab-toggle { bottom: 12px; right: 112px; }
+  .mode-toggle { min-height: var(--observer-control-height); }
+  .profile-main { max-height: 40dvh; overflow-y: auto; }
+}
+.creation-panel[hidden] { display: none; }
+.creation-content { padding: var(--observer-pad); overflow-y: auto; max-height: 40dvh; font: 12px/1.5 var(--mono); }
+.creation-content label { display: block; margin-bottom: 4px; }
+.creation-content select, .creation-content button { width: 100%; min-height: var(--observer-control-height); margin-bottom: var(--observer-gap); background: var(--cream); color: var(--ink); border: 2px solid var(--ink); padding: 8px; font: inherit; }
+.creation-content button { cursor: pointer; }
+.creation-content button:disabled { opacity: .55; cursor: default; }
+.creation-content button:active { background: var(--moss); }
+.creation-content :is(button,select):focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+@media (hover: hover) { .creation-content button:hover:not(:disabled) { background: var(--moss); } }
+.creation-panel .panel-min { min-height: var(--observer-control-height); min-width: var(--observer-control-height); }
+@media (max-width: 768px) { .view-toggle { bottom: 196px; } }
+/* Keep desktop view settings clear of the right-hand citizen/activity stack. */
+@media (min-width: 769px) {
+  .view-toggle { left: var(--observer-pad); right: auto; bottom: 128px; }
+  .viewpanel { left: var(--observer-pad); right: auto; bottom: 176px; }
 }

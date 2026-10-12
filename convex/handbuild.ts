@@ -15,6 +15,8 @@ import { BLOCK_PALETTE, type BlockMaterial, placementVerdict, removalVerdict } f
 import { loadTerrainLetters } from './worldGrid';
 import { balanceOf, payToTreasury } from './economy';
 import { ensureWorldState } from './planning';
+import { currentPosition } from '../shared/position';
+import { creationExtent, type CreationPlan } from '../shared/creation';
 
 /**
  * How far a citizen can reach to set a block down.
@@ -35,19 +37,31 @@ export async function tileFactsFor(
   ctx: any, agentId: string, x: number, y: number,
   bounds: { width: number; height: number },
 ) {
-  const [plots, builds, column, letterAt] = await Promise.all([
+  const [plots, builds, column, letterAt, creations] = await Promise.all([
     ctx.db.query('plots').collect(),
     ctx.db.query('builds').collect(),
     ctx.db.query('placedBlocks').withIndex('column', (q: any) => q.eq('x', x).eq('y', y)).collect(),
     loadTerrainLetters(ctx, bounds),
+    ctx.db.query('creations').collect(),
   ]);
   const plot = plots.find((row: any) =>
     x >= row.x && x < row.x + row.w && y >= row.y && y < row.y + row.h);
   const letter = letterAt(x, y);
   const standing = builds.filter((build: any) =>
     (build.state === 'built' || build.state === 'building') && typeof build.x === 'number');
+  const reservedCreations = creations.filter((creation: any) =>
+    ['building', 'paused', 'built'].includes(creation.state));
+  const creationSites = reservedCreations.map((creation: any) => {
+    const plan = creation.plan as CreationPlan;
+    return { plan, ...creationExtent(plan) };
+  });
+  // Paid construction reserves the complete envelope immediately. Checking
+  // progress or present collision would let loose blocks occupy future walls
+  // while the builder is walking over, or while an owner pauses the job.
   const structure = standing.some((build: any) =>
-    x >= build.x && x < build.x + (build.w ?? 1) && y >= build.y && y < build.y + (build.h ?? 1));
+    x >= build.x && x < build.x + (build.w ?? 1) && y >= build.y && y < build.y + (build.h ?? 1))
+    || creationSites.some(({ plan, w, h }: { plan: CreationPlan; w: number; h: number }) =>
+      x >= plan.x && x < plan.x + w && y >= plan.y && y < plan.y + h);
 
   // Doorways stay open. Both the threshold itself and the tile you step
   // through it from, because sealing either one entombs whoever lives there -
@@ -59,6 +73,15 @@ export async function tileFactsFor(
     const ex = build.x + Number(entry?.x ?? Math.floor((build.w ?? 1) / 2));
     const ey = build.y + Number(entry?.y ?? Math.max(0, (build.h ?? 1) - 1));
     if (x === ex && (y === ey || y === ey + 1)) { reserved = true; break; }
+  }
+  for (const { plan, w, h } of creationSites) {
+    // This is the south work approach selected by the creation authority.
+    if (x === plan.x + Math.floor(w / 2) && y === plan.y + h) reserved = true;
+    for (const door of plan.parts.filter((part: any) => part.shape === 'door')) {
+      const west = Math.floor(plan.x + door.x), east = Math.ceil(plan.x + door.x + door.w);
+      const north = Math.floor(plan.y + door.z), south = Math.ceil(plan.y + door.z + door.d);
+      if (x >= west && x < east && y >= north && y <= south) reserved = true;
+    }
   }
 
   return {
@@ -86,13 +109,7 @@ async function approach(ctx: any, citizen: any, x: number, y: number) {
     throw new Error('that is beyond the edge of the world');
   }
   // Where the body actually is right now, not where its route ends.
-  const now = Date.now();
-  const span = Math.max(1, (citizen.t1 ?? now) - (citizen.t0 ?? now));
-  const progress = Math.min(1, Math.max(0, (now - (citizen.t0 ?? now)) / span));
-  const at = {
-    x: (citizen.fx ?? citizen.tx) + ((citizen.tx - (citizen.fx ?? citizen.tx)) * progress),
-    y: (citizen.fy ?? citizen.ty) + ((citizen.ty - (citizen.fy ?? citizen.ty)) * progress),
-  };
+  const at = currentPosition(citizen, Date.now());
   if (Math.hypot(at.x - x, at.y - y) > BUILD_REACH) {
     throw new Error(`walk closer; you can build within ${BUILD_REACH} tiles of where you stand`);
   }

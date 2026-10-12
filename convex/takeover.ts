@@ -17,6 +17,7 @@ import { loadWorldWalkability } from './worldGrid';
 import { placeBlock, removeBlock } from './handbuild';
 import { greetCitizen } from './greet';
 import { ensureWorldState } from './planning';
+import { currentPosition, appendRouteHistory } from '../shared/position';
 
 /** The owner session behind this token, and the citizen it owns. */
 async function ownedCitizen(ctx: any, tokenHash: string) {
@@ -40,25 +41,29 @@ export const take = internalMutation({
     if (citizen.asleepSince) {
       throw new Error('this citizen is asleep beyond the gate; connect the agent first');
     }
-    const renewing = citizen.drivenBy === session.agentId;
+    if (citizen.activeBuildId && (citizen.buildingUntil ?? 0) > now) {
+      throw new Error('this citizen is physically committed to an active construction route');
+    }
+    const renewing = isDriven(citizen, now) && citizen.drivenBy === session.agentId;
+    const here = currentPosition(citizen, now);
     await ctx.db.patch(citizen._id, {
       drivenBy: session.agentId,
       drivenUntil: now + TAKEOVER_LEASE_MS,
       // Stop whatever the agent was doing mid-stride: two things steering one
       // body is how a citizen ends up twitching between two destinations.
-      route: undefined, fx: citizen.tx, fy: citizen.ty, t0: now, t1: now,
+      ...(renewing ? {} : { route: undefined, recentRoutes: appendRouteHistory(citizen, undefined, now), fx: here.x, fy: here.y, tx: here.x, ty: here.y, t0: now, t1: now }),
       activity: drivenActivity(),
     });
     if (!renewing) {
       await ctx.db.insert('events', {
         kind: 'move', actorId: citizen.agentId,
-        payload: { x: citizen.tx, y: citizen.ty, driven: true },
+        payload: { x: here.x, y: here.y, driven: true },
         gloss: `🎮 ${citizen.name}'s owner stepped in and is walking them in person.`,
       });
     }
     return {
       ok: true, agentId: citizen.agentId, name: citizen.name,
-      x: citizen.tx, y: citizen.ty, until: now + TAKEOVER_LEASE_MS, renewing,
+      x: here.x, y: here.y, until: now + TAKEOVER_LEASE_MS, renewing,
     };
   },
 });
@@ -75,7 +80,7 @@ export const release = internalMutation({
     });
     await ctx.db.insert('events', {
       kind: 'move', actorId: citizen.agentId,
-      payload: { x: citizen.tx, y: citizen.ty, released: true },
+      payload: { ...currentPosition(citizen, Date.now()), released: true },
       gloss: `🎮 ${citizen.name} has the wheel again.`,
     });
     return { ok: true, agentId: citizen.agentId };
@@ -98,22 +103,28 @@ export const step = internalMutation({
       || citizen.drivenBy !== session.agentId) {
       throw new Error('take the wheel before walking');
     }
+    if (citizen.t1 > now) throw new Error('finish the current step before taking another');
     const world = await ensureWorldState(ctx);
     const bounds = { width: world.width, height: world.height };
     const isWalkable = await loadWorldWalkability(ctx, bounds);
-    const verdict = stepVerdict(
-      { x: citizen.tx, y: citizen.ty }, { x, y }, bounds, isWalkable);
+    const here = currentPosition(citizen, now);
+    const verdict = stepVerdict(here, { x, y }, bounds, isWalkable);
     if (!verdict.ok) throw new Error(verdict.why);
+    if (x !== here.x && y !== here.y
+      && (!isWalkable(x, here.y) || !isWalkable(here.x, y))) {
+      throw new Error('something solid blocks the corner');
+    }
 
     // A step is a short walk, not a teleport: giving it a duration means every
     // watcher interpolates it the same way they interpolate any other walk.
     const STEP_MS = 320;
     const facing = x > citizen.tx ? 'right' : x < citizen.tx ? 'left'
       : y > citizen.ty ? 'front' : 'back';
+    const route = [{ x: here.x, y: here.y, at: now }, { x, y, at: now + STEP_MS }];
     await ctx.db.patch(citizen._id, {
-      fx: citizen.tx, fy: citizen.ty, tx: x, ty: y,
+      fx: here.x, fy: here.y, tx: x, ty: y,
       t0: now, t1: now + STEP_MS, facing: facing as any,
-      route: [{ x: citizen.tx, y: citizen.ty, at: now }, { x, y, at: now + STEP_MS }],
+      route, recentRoutes: appendRouteHistory(citizen, route, now),
       drivenUntil: now + TAKEOVER_LEASE_MS,
       activity: drivenActivity(),
     });
@@ -194,7 +205,9 @@ export const status = internalQuery({
   handler: async (ctx, { tokenHash }) => {
     const session = await ctx.db.query('sessions')
       .withIndex('tokenHash', (q: any) => q.eq('tokenHash', tokenHash)).first();
-    if (!session || session.kind !== 'owner') return { ok: false as const };
+    if (!session || session.kind !== 'owner' || session.revokedAt || session.expiresAt <= Date.now()) {
+      return { ok: false as const };
+    }
     const citizen = await ctx.db.query('citizens')
       .withIndex('agentId', (q: any) => q.eq('agentId', session.agentId)).first();
     if (!citizen) return { ok: false as const };
@@ -202,7 +215,7 @@ export const status = internalQuery({
     return {
       ok: true as const,
       agentId: citizen.agentId, name: citizen.name,
-      x: citizen.tx, y: citizen.ty,
+      ...currentPosition(citizen, now),
       driving: isDriven({ drivenBy: citizen.drivenBy, drivenUntil: citizen.drivenUntil }, now)
         && citizen.drivenBy === session.agentId,
       asleep: Boolean(citizen.asleepSince),

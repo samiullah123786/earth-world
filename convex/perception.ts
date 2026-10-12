@@ -1,3 +1,4 @@
+import { publicCreation } from './creation';
 /**
  * Perception: what one citizen can see from where they stand.
  *
@@ -20,6 +21,8 @@ import { v } from 'convex/values';
 import { EARTH_MAP } from './earthMapData';
 import { encodeChunkRows } from '../shared/voxel';
 import { WAKING_GATE, isAsleep } from '../shared/slumber';
+import { currentPosition } from '../shared/position';
+import { loadWorldSpatialContext } from './worldGrid';
 
 /** How far the lettered grid reaches from the citizen: 5 -> an 11x11 patch. */
 export const PATCH_RADIUS = 5;
@@ -41,7 +44,8 @@ const LEGEND = {
   t: { is: 'tree', walkable: false },
   u: { is: 'undergrowth', walkable: true },
   '.': { is: 'void beyond the world', walkable: false },
-  B: { is: 'building', walkable: false },
+  B: { is: 'solid construction', walkable: false },
+  O: { is: 'nonblocking placed object', walkable: true },
   V: { is: 'venue', walkable: true },
   G: { is: 'the Waking Gate', walkable: true },
   C: { is: 'another citizen', walkable: true },
@@ -67,7 +71,10 @@ export const terrain = query({
   args: {},
   handler: async (ctx) => {
     const chunks = await ctx.db.query('worldChunks').collect();
-    const rows = EARTH_MAP.rows.map((row) => row as string);
+    const world = await ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first();
+    const width = world?.width ?? EARTH_MAP.width, height = world?.height ?? EARTH_MAP.height;
+    const rows = Array.from({ length: height }, (_, y) =>
+      (EARTH_MAP.rows[y] ?? '').padEnd(width, '.').slice(0, width));
     for (const chunk of chunks) {
       const layers = (chunk as any).tiled?.layers;
       if (!layers) continue;
@@ -76,10 +83,11 @@ export const terrain = query({
         const z = chunk.chunkY * chunk.size + dz;
         if (z < 0 || z >= rows.length) continue;
         const x = chunk.chunkX * chunk.size;
-        rows[z] = rows[z].slice(0, x) + encoded[dz] + rows[z].slice(x + chunk.size);
+        if (x < 0 || x >= width) continue;
+        rows[z] = (rows[z].slice(0, x) + encoded[dz] + rows[z].slice(x + chunk.size)).slice(0, width);
       }
     }
-    return { width: EARTH_MAP.width, height: EARTH_MAP.height, rows };
+    return { width, height, rows };
   },
 });
 
@@ -103,12 +111,14 @@ export const at = query({
       };
     }
 
-    const [chunks, citizens, builds, venues, plot] = await Promise.all([
+    const now = Date.now();
+    const [chunks, citizens, builds, venues, plot, world] = await Promise.all([
       ctx.db.query('worldChunks').collect(),
       ctx.db.query('citizens').collect(),
       ctx.db.query('builds').collect(),
       ctx.db.query('venues').collect(),
       ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', agentId)).first(),
+      ctx.db.query('worldState').withIndex('key', (q) => q.eq('key', 'earth')).first(),
     ]);
 
     // Terrain letters: live expansion chunks win over the bundled base map,
@@ -124,19 +134,22 @@ export const at = query({
         }
       }
     }
+    const bounds = { width: world?.width ?? EARTH_MAP.width, height: world?.height ?? EARTH_MAP.height };
+    const spatial = await loadWorldSpatialContext(ctx, bounds, chunks);
+    const positions = new Map(citizens.map((body) => [body.agentId, currentPosition(body, now)]));
+    const here = currentPosition(citizen, now);
     const letterAt = (x: number, y: number): string => {
-      if (x < 0 || y < 0 || x >= EARTH_MAP.width || y >= EARTH_MAP.height) return '.';
-      return overlay.get(y * 100_000 + x) ?? EARTH_MAP.rows[y][x] ?? '.';
+      if (x < 0 || y < 0 || x >= bounds.width || y >= bounds.height) return '.';
+      return overlay.get(y * 100_000 + x) ?? EARTH_MAP.rows[y]?.[x] ?? '.';
     };
 
-    const standing = builds.filter((build) => build.state === 'built' && typeof build.x === 'number');
-    const coveredByBuild = (x: number, y: number) => standing.some((build) =>
-      x >= build.x! && x < build.x! + (build.w ?? 3) && y >= build.y! && y < build.y! + (build.h ?? 3));
-
-    const cx = Math.round(citizen.tx), cy = Math.round(citizen.ty);
+    const standing = builds.filter((build) =>
+      (build.state === 'built' || build.state === 'building') && typeof build.x === 'number');
+    const cx = Math.round(here.x), cy = Math.round(here.y);
     const awakeOthers = citizens.filter((other) =>
       other.agentId !== agentId && !isAsleep(other));
-    const citizenTiles = new Set(awakeOthers.map((other) => `${Math.round(other.tx)}:${Math.round(other.ty)}`));
+    const citizenTiles = new Set(awakeOthers.map((other) => `${Math.round(positions.get(other.agentId)!.x)}:${Math.round(positions.get(other.agentId)!.y)}`));
+    const objectTiles = new Set(spatial.placedBlocks.map((block: any) => `${block.x}:${block.y}`));
     const venueTiles = new Set(venues.map((venue) => `${venue.x}:${venue.y}`));
 
     // Two grids on purpose. `terrain` is the pure ground truth; `view` layers
@@ -145,25 +158,30 @@ export const at = query({
     // and the pure one is what it verifies against.
     const terrain: string[] = [];
     const view: string[] = [];
+    const walkable: boolean[][] = [];
     for (let dy = -PATCH_RADIUS; dy <= PATCH_RADIUS; dy++) {
+      const walkableRow: boolean[] = [];
       let terrainRow = '', viewRow = '';
       for (let dx = -PATCH_RADIUS; dx <= PATCH_RADIUS; dx++) {
         const x = cx + dx, y = cy + dy;
         const ground = letterAt(x, y);
         terrainRow += ground;
+        walkableRow.push(spatial.walkable(x, y));
         if (dx === 0 && dy === 0) viewRow += '@';
         else if (x === WAKING_GATE.x && y === WAKING_GATE.y) viewRow += 'G';
         else if (citizenTiles.has(`${x}:${y}`)) viewRow += 'C';
-        else if (coveredByBuild(x, y)) viewRow += 'B';
+        else if (spatial.dynamicBlocked.has(`${x},${y}`)) viewRow += 'B';
+        else if (objectTiles.has(`${x}:${y}`)) viewRow += 'O';
         else if (venueTiles.has(`${x}:${y}`)) viewRow += 'V';
         else viewRow += ground;
       }
       terrain.push(terrainRow);
       view.push(viewRow);
+      walkable.push(walkableRow);
     }
 
     const distance = (x: number, y: number) =>
-      Math.round(Math.hypot(x - citizen.tx, y - citizen.ty) * 10) / 10;
+      Math.round(Math.hypot(x - here.x, y - here.y) * 10) / 10;
 
     const facing = BEARING[citizen.facing ?? 'front'] ?? BEARING.front;
     return {
@@ -171,7 +189,9 @@ export const at = query({
       agentId,
       name: citizen.name,
       asleep: false as const,
-      position: { x: citizen.tx, y: citizen.ty },
+      position: here,
+      target: { x: citizen.tx, y: citizen.ty },
+      world: bounds,
       facing: { direction: citizen.facing ?? 'front', ...facing },
       activity: citizen.activity,
       // What this citizen carries and is - the public inventory. Tokens and
@@ -188,6 +208,7 @@ export const at = query({
         axes: 'row 0 is north of you; columns run west to east. You are at the centre.',
         view,
         terrain,
+        walkable,
         legend: LEGEND,
       },
       plot: plot ? {
@@ -198,8 +219,8 @@ export const at = query({
       nearbyCitizens: awakeOthers
         .map((other) => ({
           agentId: other.agentId, name: other.name, family: other.family,
-          distance: distance(other.tx, other.ty),
-          position: { x: other.tx, y: other.ty },
+          distance: distance(positions.get(other.agentId)!.x, positions.get(other.agentId)!.y),
+          position: positions.get(other.agentId)!,
           activity: String(other.activity ?? '').slice(0, 90),
           talkingWith: other.talkingWith ?? null,
         }))
@@ -208,12 +229,14 @@ export const at = query({
       nearbyStructures: standing
         .map((build) => ({
           structure: build.structure,
+          state: build.state,
           at: { x: build.x!, y: build.y! }, w: build.w ?? 3, h: build.h ?? 3,
           distance: distance(build.x! + (build.w ?? 3) / 2, build.y! + (build.h ?? 3) / 2),
           owner: build.ownerAgentId,
         }))
         .filter((build) => build.distance <= NEARBY_PLACES_RADIUS)
         .sort((left, right) => left.distance - right.distance),
+      nearbyCreations: (await ctx.db.query('creations').collect()).map(publicCreation).filter(r => distance(r.plan.x, r.plan.y) <= NEARBY_PLACES_RADIUS),
       nearbyVenues: venues
         .map((venue) => ({
           name: venue.name, kind: venue.kind,
@@ -222,7 +245,7 @@ export const at = query({
         .filter((venue) => venue.distance <= NEARBY_PLACES_RADIUS)
         .sort((left, right) => left.distance - right.distance),
       gate: { ...WAKING_GATE, distance: distance(WAKING_GATE.x, WAKING_GATE.y) },
-      serverNow: Date.now(),
+      serverNow: now,
     };
   },
 });

@@ -11,7 +11,7 @@ const workshopApi: PluginOption = {
         const chunks: Buffer[] = []; let size = 0;
         for await (const chunk of req) {
           size += chunk.length;
-          if (size > 16_384) { res.statusCode = 413; res.end('{"ok":false,"why":"Request is too large."}'); return; }
+          if (size > 32_768) { res.statusCode = 413; res.end('{"ok":false,"why":"Request is too large."}'); return; }
           chunks.push(Buffer.from(chunk));
         }
         const headers = new Headers();

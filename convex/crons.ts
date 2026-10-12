@@ -81,4 +81,6 @@ crons.interval('land growth watch', { minutes: 10 }, internal.kernel.expandWorld
   maintainHabitatReserve: true,
 });
 
+crons.interval('approved creation jobs', { seconds: 5 }, internal.kernel.creationTick, {});
+
 export default crons;

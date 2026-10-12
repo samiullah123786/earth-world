@@ -47,7 +47,7 @@ describe('citizens turn to what they act on', () => {
     await t.run(async (ctx) => {
       const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
       const now = Date.now();
-      await ctx.db.patch(row!._id, { fx: 22, fy: 36, tx: 22, ty: 36, t0: now, t1: now, workingUntil: 0 });
+      await ctx.db.patch(row!._id, { fx: 22, fy: 36, tx: 22, ty: 36, t0: now, t1: now, route: [], workingUntil: 0 });
     });
     await act(t, worker, { type: 'plant', x: 21, y: 36 });
     expect(await facingOf(t, worker.agentId)).toBe('left');
@@ -55,7 +55,7 @@ describe('citizens turn to what they act on', () => {
     await t.run(async (ctx) => {
       const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
       const now = Date.now();
-      await ctx.db.patch(row!._id, { fx: 22, fy: 36, tx: 22, ty: 36, t0: now, t1: now, workingUntil: 0 });
+      await ctx.db.patch(row!._id, { fx: 22, fy: 36, tx: 22, ty: 36, t0: now, t1: now, route: [], workingUntil: 0 });
     });
     await act(t, worker, { type: 'plant', x: 22, y: 35 });
     expect(await facingOf(t, worker.agentId)).toBe('back');
@@ -63,7 +63,7 @@ describe('citizens turn to what they act on', () => {
     await t.run(async (ctx) => {
       const row = (await ctx.db.query('citizens').collect()).find((one) => one.agentId === worker.agentId);
       const now = Date.now();
-      await ctx.db.patch(row!._id, { fx: 22, fy: 35, tx: 22, ty: 35, t0: now, t1: now, workingUntil: 0 });
+      await ctx.db.patch(row!._id, { fx: 22, fy: 35, tx: 22, ty: 35, t0: now, t1: now, route: [], workingUntil: 0 });
     });
     await act(t, worker, { type: 'plant', x: 22, y: 36 });
     expect(await facingOf(t, worker.agentId)).toBe('front');

@@ -1,21 +1,8 @@
+import { publicCreation } from './creation';
+import { currentPosition } from '../shared/position';
 import { query } from './_generated/server';
 import { v } from 'convex/values';
 import { CIVIC_ROLES, rankSnapshot } from './community';
-
-function currentPosition(citizen: any, now: number) {
-  const route = citizen.route as Array<{ x: number; y: number; at: number }> | undefined;
-  if (route && route.length > 1) {
-    if (now >= route[route.length - 1].at) return { x: route[route.length - 1].x, y: route[route.length - 1].y };
-    for (let i = 1; i < route.length; i++) {
-      if (now <= route[i].at) {
-        const a = route[i - 1], b = route[i];
-        const progress = Math.max(0, Math.min(1, (now - a.at) / Math.max(1, b.at - a.at)));
-        return { x: a.x + (b.x - a.x) * progress, y: a.y + (b.y - a.y) * progress };
-      }
-    }
-  }
-  return { x: citizen.tx, y: citizen.ty };
-}
 
 // Public projections only. Keys, owner sessions, claim tokens, pending approvals,
 // and private declines never cross this boundary.
@@ -50,6 +37,7 @@ export const citizenProfile = query({
     const plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).first();
     const builds = (await ctx.db.query('builds').withIndex('ownerAgentId', (q) => q.eq('ownerAgentId', targetId)).collect())
       .filter((row) => row.state !== 'razed');
+    const creations = (await ctx.db.query('creations').withIndex('ownerAgentId', q => q.eq('ownerAgentId', targetId)).collect()).map(publicCreation);
     const service = await ctx.db.query('services').withIndex('agentId', (q) => q.eq('agentId', targetId)).first();
     const contributions = await ctx.db.query('contributions').withIndex('agent_created', (q) => q.eq('agentId', targetId)).collect();
     const { ownerName: _ownerName, ...publicCitizen } = citizen;
@@ -85,7 +73,7 @@ export const citizenProfile = query({
       const partner = await ctx.db.query('citizens').withIndex('agentId', (q: any) => q.eq('agentId', partnerId)).first();
       if (partner) companions.push({ agentId: partnerId, name: partner.name });
     }
-    return { ...publicCitizen, current: currentPosition(citizen, Date.now()), plot, builds, rank: rankSnapshot(contributions), badges, learnedSkills, companions,
+    return { ...publicCitizen, current: currentPosition(citizen, Date.now()), plot, builds, creations, rank: rankSnapshot(contributions), badges, learnedSkills, companions,
       role: service?.active ? { name: service.role, description: service.description, permissions: service.permissions } : null };
   },
 });
@@ -109,6 +97,7 @@ export const worldObjects = query({
     // them compared to terrain, and they change constantly, so they travel
     // live with everything else rather than being cached like the map.
     const placedBlocks = await ctx.db.query('placedBlocks').collect();
+    const creations = (await ctx.db.query('creations').collect()).map(publicCreation);
     const now = Date.now();
     // Growth is time, not a stored counter, so every viewer computes the same
     // stage from the same planting without a tick writing rows.
@@ -123,7 +112,7 @@ export const worldObjects = query({
           stage: now >= field.readyAt ? 4 : Math.min(3, 1 + Math.floor(progress * 3)),
         };
       });
-    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, chunks, placedBlocks, state: state ? {
+    return { plots, builds, venues, meetings, services, careTickets, activityZones, farmPlots, chunks, placedBlocks, creations, state: state ? {
       width: state.width, height: state.height, generation: state.generation,
       capacity: state.capacity, landPolicy: state.landPolicy, mayorAgentId: state.mayorAgentId,
       mapFormat: state.mapFormat ?? 'tiled-v1', mapVersion: state.mapVersion ?? 1,

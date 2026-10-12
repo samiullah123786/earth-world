@@ -4,6 +4,8 @@ import { ensureWorldState } from './planning';
 import { loadWorldWalkability } from './worldGrid';
 import { intersectingZoneIds, spatialTransitionKey } from '../shared/tiled-world';
 import { isAsleep } from '../shared/slumber';
+import { currentPosition, appendRouteHistory } from '../shared/position';
+import { isDriven } from '../shared/takeover';
 
 const SPEED = 2.2;
 const STROLLS = [
@@ -35,25 +37,6 @@ function timedRoute(path: Array<{ x: number; y: number }>, now: number) {
     route.push({ ...path[i], at });
   }
   return route;
-}
-
-function currentPosition(citizen: any, now: number) {
-  const route = Array.isArray(citizen.route) ? citizen.route : [];
-  if (route.length) {
-    if (now <= route[0].at) return { x: route[0].x, y: route[0].y };
-    for (let index = 1; index < route.length; index++) {
-      if (now > route[index].at) continue;
-      const previous = route[index - 1];
-      const span = Math.max(1, route[index].at - previous.at);
-      const progress = Math.max(0, Math.min(1, (now - previous.at) / span));
-      return {
-        x: previous.x + (route[index].x - previous.x) * progress,
-        y: previous.y + (route[index].y - previous.y) * progress,
-      };
-    }
-    return { x: route[route.length - 1].x, y: route[route.length - 1].y };
-  }
-  return { x: citizen.tx, y: citizen.ty };
 }
 
 // Ambient life only chooses intentions. The same server-side A* routing and
@@ -227,7 +210,7 @@ export const ambientTick = internalMutation({
         await ctx.db.patch(citizen._id, { trainingActivity: undefined, trainingTeam: undefined, trainingStartsAt: undefined, trainingUntil: undefined });
       } else if (citizen.trainingActivity && (citizen.trainingStartsAt ?? Infinity) <= now && (citizen.trainingUntil ?? 0) > now) {
         const venue = allVenues.find((item: any) => item.kind === 'training_ground');
-        const position = { x: citizen.tx, y: citizen.ty };
+        const position = currentPosition(citizen, now);
         if (venue && Math.hypot(position.x - venue.x, position.y - venue.y) <= 2.5) {
           const day = new Date(now).toISOString().slice(0, 10);
           const sourceId = `training:${citizen.agentId}:${day}`;
@@ -260,14 +243,16 @@ export const ambientTick = internalMutation({
     // collected six tables here and scheduled settlements per route - the
     // read-set conflicts and scheduler flood saturated the backend, citizens
     // froze mid-walk, and states flickered. Needs must never slow the world.
-    for (const citizen of citizens) {
+    const movementOffset = citizens.length ? Math.floor(now / 5000) % citizens.length : 0;
+    const movementCitizens = [...citizens.slice(movementOffset), ...citizens.slice(0, movementOffset)];
+    for (const citizen of movementCitizens) {
       const isService = Boolean(citizen.serviceRole);
       // A sleeping citizen is not animated at all. Their owner's connector has
       // stopped answering, so there is no mind behind them - and walking a body
       // nobody is home in was both the largest standing load on this tick and
       // the least honest thing in the world. Nothing about them is changed by
       // being skipped; they are simply still, and unseen, until they return.
-      if (isAsleep(citizen)) continue;
+      if (isAsleep(citizen) || isDriven(citizen, now)) continue;
       if ((citizen.online && !isService) || talking.has(citizen.agentId) || (citizen.attendingUntil ?? 0) > now
         || (citizen.buildingUntil ?? 0) > now
         || (citizen.workingUntil ?? 0) > now
@@ -314,7 +299,6 @@ export const ambientTick = internalMutation({
         const stepDue = plan.createdAt + (plan.stepIndex * 86_400_000) / plan.steps.length;
         if (now >= stepDue) {
           planStep = plan.steps[plan.stepIndex];
-          await ctx.db.patch(plan._id, { stepIndex: plan.stepIndex + 1 });
           const KIND_TO_DRIVE: Record<string, string> = { work: 'industry', study: 'curiosity', social: 'social', rest: 'rest', civic: 'civic' };
           if (typeof planStep.x === 'number' && typeof planStep.y === 'number') {
             goal = { x: Math.round(planStep.x), y: Math.round(planStep.y), why: `following their day plan: ${planStep.why}` };
@@ -331,7 +315,8 @@ export const ambientTick = internalMutation({
         const pool = companions.length && (bucket % 3 !== 0) ? companions : others;
         const friend = pool[Math.abs(citizen.agentId.charCodeAt(7) + bucket) % pool.length];
         const isCompanion = partnerIds.includes(friend.agentId);
-        goal = { x: Math.round(friend.tx), y: Math.round(friend.ty),
+        const friendPosition = currentPosition(friend, now);
+        goal = { x: Math.round(friendPosition.x), y: Math.round(friendPosition.y),
           why: isCompanion ? `walking over to visit their companion ${friend.name}` : `walking over to see ${friend.name}` };
       } else if (!goal && (drive === 'curiosity' || drive === 'industry' || (drive === 'civic' && !citizen.serviceRole))) {
         const venues = allVenues;
@@ -369,8 +354,9 @@ export const ambientTick = internalMutation({
         const wasDoing = citizen.activity;
         await ctx.db.patch(citizen._id, {
           fx: citizen.tx, fy: citizen.ty, tx: nx, ty: ny, t0: route[0].at,
-          t1: route[route.length - 1].at, route, state: 'ambient', activity,
+          t1: route[route.length - 1].at, route, recentRoutes: appendRouteHistory(citizen, route, now), state: 'ambient', activity,
         });
+        if (planStep && plan) await ctx.db.patch(plan._id, { stepIndex: plan.stepIndex + 1 });
         // A walk is news when it is a NEW thing to be doing, and not otherwise.
         //
         // This used to narrate one purposeful move in five, chosen at random -
@@ -405,6 +391,7 @@ export const ambientTick = internalMutation({
       for (let j = i + 1; !conversationStarted && j < citizens.length; j++) {
         const a = citizens[i], b = citizens[j];
         if (a.serviceRole && b.serviceRole && !talking.has(a.agentId) && !talking.has(b.agentId)
+          && a.t1 <= now && b.t1 <= now && !isDriven(a, now) && !isDriven(b, now)
           && (a.attendingUntil ?? 0) <= now && (b.attendingUntil ?? 0) <= now
           && Math.hypot(a.tx - b.tx, a.ty - b.ty) < 3 && Math.random() < 0.08) {
           const recentForA = await ctx.db.query('conversations').withIndex('a', (q) => q.eq('a', a.agentId)).order('desc').take(12);
@@ -414,6 +401,7 @@ export const ambientTick = internalMutation({
           const c = Math.random() < 0.35 ? citizens.find((candidate) => candidate.serviceRole
             && candidate.agentId !== a.agentId && candidate.agentId !== b.agentId
             && !talking.has(candidate.agentId)
+            && candidate.t1 <= now && !isDriven(candidate, now)
             && Math.hypot(candidate.tx - a.tx, candidate.ty - a.ty) < 3.5
             && Math.hypot(candidate.tx - b.tx, candidate.ty - b.ty) < 3.5) : undefined;
           // Knowledge-gap pairing: the conversation opens on something B

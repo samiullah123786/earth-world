@@ -1,3 +1,8 @@
+import { creationExtent } from '../shared/creation';
+import { currentPosition, appendRouteHistory } from '../shared/position';
+import { isDriven } from '../shared/takeover';
+import { creationRecipe, validateCreation, requestCreation, inspectCreations, controlCreation, useCreation, tickCreations } from './creation';
+import { starterHome, parseCreation } from '../shared/creation';
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
@@ -183,22 +188,6 @@ async function rateLimit(ctx: any, agentId: string) {
   return count > 30 ? 'soft rate limit exceeded; slow down' : undefined;
 }
 
-function currentPosition(citizen: any, now: number) {
-  const route = citizen.route as Array<{ x: number; y: number; at: number }> | undefined;
-  if (route && route.length > 1) {
-    if (now >= route[route.length - 1].at) return { x: route[route.length - 1].x, y: route[route.length - 1].y };
-    for (let i = 1; i < route.length; i++) {
-      if (now <= route[i].at) {
-        const a = route[i - 1], b = route[i];
-        const p = Math.max(0, Math.min(1, (now - a.at) / Math.max(1, b.at - a.at)));
-        return { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p };
-      }
-    }
-  }
-  const p = Math.max(0, Math.min(1, (now - citizen.t0) / Math.max(1, citizen.t1 - citizen.t0)));
-  return { x: citizen.fx + (citizen.tx - citizen.fx) * p, y: citizen.fy + (citizen.ty - citizen.fy) * p };
-}
-
 /**
  * Every route is announced BEFORE it begins.
  *
@@ -225,7 +214,7 @@ function timedRoute(start: { x: number; y: number }, path: Array<{ x: number; y:
   return route;
 }
 
-type ApprovalKind = 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report' | 'bank_liquidity';
+type ApprovalKind = 'creation_build' | 'claim' | 'build' | 'meeting_request' | 'meeting_invite' | 'land_claim' | 'land_build' | 'world_expand' | 'plot_expansion' | 'mayor_appointment' | 'skill_install' | 'civic_role' | 'commission_offer' | 'event_proposal' | 'package_install' | 'package_release' | 'token_transfer' | 'bank_flag' | 'free_grant' | 'marriage' | 'bug_report' | 'bank_liquidity';
 type ApprovalRisk = 'routine' | 'review' | 'strict';
 
 /**
@@ -714,11 +703,14 @@ async function validateBuild(ctx: any, requesterId: string, payload: any) {
   const standing = builds
     .filter((build: any) => typeof build.x === 'number')
     .map((build: any) => ({ x: build.x, y: build.y, w: build.w ?? 1, h: build.h ?? 1 }));
+  const creations = await ctx.db.query('creations').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', requesterId)).collect();
+  standing.push(...creations.map((r: any) => ({ x: r.plan.x, y: r.plan.y, ...creationExtent(r.plan) })));
   const footprint = buildFootprint(plot, payload, standing);
   const isHome = footprint.structure === 'home' || footprint.blueprint?.kind === 'home';
-  if (isHome && builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home')) {
+  if (isHome && (builds.some((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home') || creations.some((r: any) => r.kind === 'home'))) {
     throw new Error('a home already stands on this plot');
   }
+  if (creations.some((r: any) => { const e = creationExtent(r.plan); return footprint.x < r.plan.x + e.w && r.plan.x < footprint.x + footprint.w && footprint.y < r.plan.y + e.h && r.plan.y < footprint.y + footprint.h; })) throw new Error('A creation reserves this construction site.');
   const targetCells = footprintCells({ width: footprint.w, height: footprint.h })
     .map((cell) => ({ x: footprint.x + cell.x, y: footprint.y + cell.y }));
   const isWalkable = await loadWorldWalkability(ctx, { width: world.width, height: world.height });
@@ -1031,7 +1023,7 @@ async function routeCitizenNear(ctx: any, citizen: any, x: number, y: number, ac
     const route = timedRoute(start, path, now);
     await ctx.db.patch(citizen._id, {
       fx: start.x, fy: start.y, tx, ty, t0: now, t1: route[route.length - 1].at,
-      route, state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient', activity,
+      route, recentRoutes: appendRouteHistory(citizen, route, now), state: citizen.serviceRole ? 'service' : citizen.online ? 'live' : 'ambient', activity,
     });
     return route;
   }
@@ -1110,10 +1102,10 @@ async function directorySnapshot(ctx: any, viewerId: string) {
   };
 }
 
-async function findRecommendedPlot(ctx: any, primaryCategory: string) {
+async function findRecommendedPlot(ctx: any, primaryCategory: string, allowExpansion = true) {
   let plots = await ctx.db.query('plots').collect();
   const district = districtForCategory(primaryCategory);
-  if (!rankHomePlots(plots, district).length) {
+  if (allowExpansion && !rankHomePlots(plots, district).length) {
     // Deliberately synchronous, unlike the other growth sites: Terra must
     // recommend a plot in THIS mutation, so the ground has to exist before
     // the next line runs. A deferred expansion here answered every
@@ -1128,7 +1120,9 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
   let plot = await ctx.db.query('plots').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agent.agentId)).first();
   const autonomy = agent.autonomy ?? 'light';
   if (!plot) {
-    const recommended = await findRecommendedPlot(ctx, agent.primaryCategory ?? agent.family);
+    const world = await ensureWorldState(ctx);
+    if (agent.homeStyle === 'assembly' && world.landPolicy === 'founder_review') throw new Error('Claim a plot through civic review before requesting your assembled home.');
+    const recommended = await findRecommendedPlot(ctx, agent.primaryCategory ?? agent.family, agent.homeStyle !== 'assembly' || autonomy === 'active');
     if (!recommended) throw new Error('Terra could not find a safe free plot');
     if (autonomy === 'active') {
       await commitClaim(ctx, agent.agentId, recommended.plotId, now);
@@ -1147,9 +1141,16 @@ async function settleCitizen(ctx: any, agent: any, citizen: any, now: number) {
     }
   }
 
+  const assemblyHome = (await ctx.db.query('creations').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agent.agentId)).collect()).find((r: any) => r.kind === 'home');
+  if (assemblyHome) return { state: assemblyHome.state === 'built' ? 'settled' : assemblyHome.state, creationId: assemblyHome.creationId, plotId: plot.plotId, autonomy };
   const builds = (await ctx.db.query('builds').withIndex('plotId', (q: any) => q.eq('plotId', plot.plotId)).collect())
     .filter((build: any) => build.state !== 'razed');
   let home = builds.find((build: any) => build.structure === 'home' || build.blueprint?.kind === 'home');
+  if (!home && agent.homeStyle === 'assembly') {
+    const plan = starterHome(plot.x, plot.y, agent.homeName ?? 'Timber Courtyard Home');
+    const result = await requestCreation(ctx, agent, citizen, { type: 'creation_build', plan, requestId: agent.homeRequestId ?? `settlement_${agent.agentId.replace(/[^a-zA-Z0-9_-]/g, '_')}` }, payload => creationApproval(ctx, agent, payload));
+    return { ...result, plotId: plot.plotId, autonomy };
+  }
   if (!home && autonomy === 'active') {
     home = await commitBuild(ctx, agent.agentId, { plotId: plot.plotId, structure: 'home' }, now);
   } else if (!home && autonomy === 'light') {
@@ -1583,6 +1584,51 @@ async function proposeConstruction(ctx: any, agent: any, citizen: any, action: a
     buildGuide: nativeBuildingKnowledge(), warning };
 }
 
+async function creationApproval(ctx: any, requester: any, payload: any) {
+  const targetId = payload.approvalFor ?? requester.agentId;
+  const { approvalFor: _privateTarget, ...safePayload } = payload;
+  const approvalId = await insertApproval(ctx, targetId, 'creation_build', `Build ${payload.plan.name}`,
+    `Review ${payload.plan.parts.length} supported parts, material cost, circuits and safe south entry.`, safePayload, payload.stage === 'founder' ? 'strict' : 'routine');
+  await notifyOwner(ctx, targetId, 'approval', 'An agent creation is ready for review', `${payload.plan.name} is a plan, not a finished building.`, approvalId);
+  return approvalId;
+}
+async function dispatchCreation(ctx: any, agent: any, citizen: any, action: any, ownerControl: boolean): Promise<any> {
+  if (action.type === 'creation_home') {
+    if (!/^[a-zA-Z0-9_-]{8,80}$/.test(String(action.requestId ?? ''))) throw new Error('Use a stable home requestId.');
+    const name = action.name ?? 'Timber Courtyard Home';
+    parseCreation(starterHome(0, 0, name));
+    if (agent.homeRequestId && (agent.homeRequestId !== action.requestId || agent.homeName !== name)) throw new Error('An assembled settlement is already registered; inspect it instead.');
+    const oldHomes = await ctx.db.query('builds').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agent.agentId)).collect();
+    if (oldHomes.some((b: any) => b.state !== 'razed' && (b.structure === 'home' || b.blueprint?.kind === 'home'))) throw new Error('An existing home needs an explicit migration; another home will not be created.');
+    await ctx.db.patch(agent._id, { homeStyle: 'assembly', homeName: name, homeRequestId: action.requestId });
+    return { ok: true, ...(await settleCitizen(ctx, { ...agent, homeStyle: 'assembly', homeName: name, homeRequestId: action.requestId }, citizen, Date.now())) };
+  }
+  if (action.type === 'creation_recipe') return await creationRecipe(ctx, agent, action);
+  if (action.type === 'creation_preview') {
+    const checked = await validateCreation(ctx, agent, action.plan, action.creationId, action.expectedRevision);
+    return { ok: true, valid: true, cost: checked.cost, issues: [], plan: checked.plan };
+  }
+  if (action.type === 'creation_build') return await requestCreation(ctx, agent, citizen, action, payload => creationApproval(ctx, agent, payload), false);
+  if (action.type === 'creation_inspect') return await inspectCreations(ctx, agent.agentId, action.creationId);
+  if (action.type === 'creation_control') return await controlCreation(ctx, agent.agentId, action, ownerControl);
+  if (action.type === 'creation_use') return await useCreation(ctx, citizen, action);
+  throw new Error('Unsupported creation action.');
+}
+
+export const creationTick = internalMutation({ args: {}, handler: async ctx => await tickCreations(ctx) });
+export const ownerCreation = internalMutation({
+  args: { tokenHash: v.string(), action: v.any() },
+  handler: async (ctx, { tokenHash, action }) => {
+    const session = await requireSession(ctx, tokenHash, 'owner');
+    const agent = await ctx.db.query('agents').withIndex('agentId', q => q.eq('agentId', session.agentId)).first();
+    const citizen = await ctx.db.query('citizens').withIndex('agentId', q => q.eq('agentId', session.agentId)).first();
+    if (!agent || !citizen) throw new Error('Connect your existing citizen.');
+    const governance = await ctx.db.query('governanceConfig').withIndex('key', q => q.eq('key', 'earth')).first();
+    if (governance?.townPaused && !(action.type === 'creation_control' && action.command === 'pause')) throw new Error('The town is paused by the Mayor.');
+    return await dispatchCreation(ctx, agent, citizen, action, true);
+  },
+});
+
 export const act = internalMutation({
   args: { agentId: v.string(), tokenHash: v.string(), nonce: v.string(), action: v.any() },
   handler: async (ctx, { agentId, tokenHash, nonce, action }) => {
@@ -1623,6 +1669,12 @@ export const act = internalMutation({
       throw new Error('this citizen is physically committed to an active construction route');
     }
 
+    if (isDriven(citizen, Date.now()) && ['settle', 'move_to', 'visit', 'place_block', 'remove_block', 'build', 'construct_structure', 'creation_home', 'creation_build', 'creation_use'].includes(String(action?.type))) {
+      throw new Error('The owner is holding the wheel. Release owner control before the agent acts.');
+    }
+    if (String(action?.type ?? '').startsWith('creation_')) {
+      return await dispatchCreation(ctx, agent, citizen, action, false);
+    }
     if (action?.type === 'settle') {
       return { ok: true, ...(await settleCitizen(ctx, agent, citizen, Date.now())), warning };
     }
@@ -1692,7 +1744,7 @@ export const act = internalMutation({
       const end = route[route.length - 1];
       await ctx.db.patch(citizen._id, {
         fx: start.x, fy: start.y, tx: x, ty: y, t0: now, t1: end.at,
-        route, state: 'live', activity: 'walking along a safe route',
+        route, recentRoutes: appendRouteHistory(citizen, route, now), state: 'live', activity: 'walking along a safe route',
       });
       await ctx.db.insert('events', { kind: 'move', actorId: agentId, payload: { x, y, steps: path.length }, gloss: `${citizen.name} is walking through the village.` });
       return { ok: true, route, warning };
@@ -3868,7 +3920,7 @@ export const ownerSession = internalQuery({
       specialties: agent.specialties ?? [agent.family], primaryCategory: agent.primaryCategory ?? agent.family,
       skillCount: agent.skillCount ?? 0, experienceTier: agent.experienceTier ?? 'emerging', autonomy: agent.autonomy ?? 'light',
       skillPolicy: agent.skillPolicy ?? 'safe_auto',
-      plot: plot ?? null, builds, isFounder: world.founderAgentId === agent.agentId,
+      plot: plot ?? null, builds, creations: (await inspectCreations(ctx, agent.agentId)).creations, isFounder: world.founderAgentId === agent.agentId,
       isMayor: world.mayorAgentId === agent.agentId,
       unreadNotifications: notifications.filter((notification: any) => !notification.readAt).length,
       rank: rankSnapshot(contributions), quests: dailyQuests(contributions), civicApplications, skillShares,
@@ -4248,6 +4300,25 @@ export const decideApproval = internalMutation({
     }
     if (approval.kind === 'land_build') {
       await commitBuild(ctx, approval.payload.requesterId, approval.payload, now);
+      landHandled = true;
+    }
+    if (approval.kind === 'creation_build') {
+      const requesterId = approval.payload.requesterId ?? approval.agentId;
+      const requester = await ctx.db.query('agents').withIndex('agentId', q => q.eq('agentId', requesterId)).first();
+      const builder = await ctx.db.query('citizens').withIndex('agentId', q => q.eq('agentId', requesterId)).first();
+      if (!requester || !builder) throw new Error('The creation requester is unavailable.');
+      const world = await ensureWorldState(ctx);
+      if (approval.payload.stage !== 'founder' && world.landPolicy === 'founder_review') {
+        const authorityId = world.founderAgentId ?? world.mayorAgentId;
+        if (!authorityId) throw new Error('Founder review is unavailable.');
+        await validateCreation(ctx, requester, approval.payload.plan, approval.payload.creationId, approval.payload.expectedRevision);
+        const nextId = await creationApproval(ctx, requester, { ...approval.payload, stage: 'founder', approvalFor: authorityId });
+        const request = await ctx.db.query('creationRequests').withIndex('owner_request', q => q.eq('ownerAgentId', requesterId).eq('requestId', approval.payload.requestId)).first();
+        if (request) await ctx.db.patch(request._id, { approvalId: nextId });
+        landResult = { awaitingFounder: true, approvalId: nextId };
+      } else {
+        landResult = await requestCreation(ctx, requester, builder, approval.payload, payload => creationApproval(ctx, requester, payload), true);
+      }
       landHandled = true;
     }
     if (approval.kind === 'world_expand') {
@@ -6916,6 +6987,8 @@ export const ambientSettle = internalMutation({
     const agent = await ctx.db.query('agents').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
     const citizen = await ctx.db.query('citizens').withIndex('agentId', (q) => q.eq('agentId', agentId)).first();
     if (!agent || !citizen || citizen.state === 'awaiting_owner') return { ok: false };
+    const assemblyHome = (await ctx.db.query('creations').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agentId)).collect()).find((r: any) => r.kind === 'home');
+    if (assemblyHome) return { ok: true, already: true, creationId: assemblyHome.creationId };
     const builds = await ctx.db.query('builds').withIndex('ownerAgentId', (q: any) => q.eq('ownerAgentId', agentId)).collect();
     if (builds.some((build: any) => build.state !== 'razed'
       && (build.structure === 'home' || build.blueprint?.kind === 'home'))) {
@@ -7403,6 +7476,8 @@ export const aspirationTick = internalMutation({
     ]);
     const homes = new Set(builds.filter((row) => row.state !== 'razed'
       && (row.structure === 'home' || row.blueprint?.kind === 'home')).map((row) => row.ownerAgentId));
+    const assemblyHomes = await ctx.db.query('creations').collect();
+    for (const r of assemblyHomes) if (r.kind === 'home') homes.add(r.ownerAgentId);
     const civic = new Map<string, number>();
     for (const row of contributions) {
       if (row.dimension === 'civic') civic.set(row.agentId, (civic.get(row.agentId) ?? 0) + row.points);

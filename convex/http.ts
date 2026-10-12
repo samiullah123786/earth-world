@@ -1,3 +1,4 @@
+import { worldDelta } from '../shared/worldStream';
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import { api, internal } from './_generated/api';
@@ -427,12 +428,12 @@ const marketList = httpAction(async (ctx, request) => {
  * Read-only, unauthenticated, and cacheable for two seconds: it is the same
  * public data the town map already shows anyone who opens it.
  */
-const worldStateHttp = httpAction(async (ctx) => {
+async function publicWorldSnapshot(ctx: any) {
   const [citizens, objects] = await Promise.all([
     ctx.runQuery(api.world.citizens, {}),
     ctx.runQuery(api.world.worldObjects, {}),
   ]);
-  return new Response(JSON.stringify({
+  return {
     ok: true,
     serverNow: Date.now(),
     world: { width: objects.state?.width ?? 256, height: objects.state?.height ?? 256 },
@@ -443,7 +444,7 @@ const worldStateHttp = httpAction(async (ctx) => {
       online: row.online, serviceRole: row.serviceRole ?? null,
       asleep: typeof row.asleepSince === 'number' && !row.serviceRole,
       fx: row.fx, fy: row.fy, tx: row.tx, ty: row.ty, t0: row.t0, t1: row.t1,
-      route: row.route ?? null, facing: row.facing ?? 'front',
+      route: row.route ?? null, recentRoutes: row.recentRoutes ?? [], facing: row.facing ?? 'front',
       activity: String(row.activity ?? '').slice(0, 90),
       // What this citizen is holding and doing with their hands. The Kernel
       // has tracked tools since they were earned through contribution; no
@@ -524,6 +525,7 @@ const worldStateHttp = httpAction(async (ctx) => {
     // Every block a citizen bought and set down by hand. These are what makes
     // Earth Tokens a material rather than a scoreboard, so they are as much a
     // part of the world as the houses.
+    creations: objects.creations ?? [],
     blocks: (objects.placedBlocks ?? []).map((block: any) => ({
       x: block.x, y: block.y, level: block.level, kind: block.kind,
       ownerAgentId: block.ownerAgentId,
@@ -542,14 +544,38 @@ const worldStateHttp = httpAction(async (ctx) => {
         x: chunk.chunkX * chunk.size, y: chunk.chunkY * chunk.size, size: chunk.size,
         rows: encodeChunkRows(chunk.tiled.layers, chunk.size),
       })),
-  }), {
-    headers: {
-      'content-type': 'application/json',
-      'cache-control': 'public, max-age=2',
-      'access-control-allow-origin': '*',
+  };
+}
+const worldStateHttp = httpAction(async ctx => new Response(JSON.stringify(await publicWorldSnapshot(ctx)), {
+  headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=2', 'access-control-allow-origin': '*' },
+}));
+
+/** Bounded SSE connections publish accepted state changes; reconnect always resynchronizes. */
+const worldEvents = httpAction(async (ctx, request) => {
+  let previous = await publicWorldSnapshot(ctx), sequence = 0, cancelled = false, timer: ReturnType<typeof setTimeout> | undefined;
+  let wake: (() => void) | undefined;
+  const encoder = new TextEncoder();
+  const encode = (event: string, value: unknown) => encoder.encode(`id: ${++sequence}\nevent: ${event}\ndata: ${JSON.stringify(value)}\n\n`);
+  const stop = () => { cancelled = true; if (timer) clearTimeout(timer); wake?.(); };
+  request.signal.addEventListener('abort', stop, { once: true });
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(encode('snapshot', previous)); },
+    async pull(controller) {
+      if (cancelled || sequence >= 20) { request.signal.removeEventListener('abort', stop); controller.close(); return; }
+      await new Promise<void>(resolve => { wake = resolve; timer = setTimeout(resolve, 1000); });
+      wake = undefined; timer = undefined;
+      if (cancelled) return;
+      try {
+        const next = await publicWorldSnapshot(ctx);
+        if (cancelled) return;
+        controller.enqueue(encode('delta', worldDelta(previous, next))); previous = next;
+      } catch { if (!cancelled) { controller.enqueue(encode('unavailable', { why: 'State stream interrupted; reconnect or use snapshot polling.' })); controller.close(); stop(); } }
     },
+    cancel() { stop(); request.signal.removeEventListener('abort', stop); },
   });
+  return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', 'access-control-allow-origin': '*', 'x-accel-buffering': 'no' } });
 });
+
 
 /**
  * One citizen's eyes, over plain GET. The signed /v1/act path is for hands;
@@ -1168,6 +1194,10 @@ http.route({ path: '/v1/pulse', method: 'POST', handler: pulse });
 http.route({ path: '/v1/search', method: 'POST', handler: search });
 http.route({ path: '/v1/leave', method: 'POST', handler: leave });
 http.route({ path: '/v1/owner/claim', method: 'POST', handler: ownerClaim });
+http.route({ path: '/v1/owner/creation', method: 'POST', handler: httpAction(async (ctx, request) => {
+  try { const { value } = await body(request); return json(await ctx.runMutation(internal.kernel.ownerCreation, { tokenHash: await sha256Hex(bearerToken(request)), action: value })); }
+  catch (error) { return json({ ok: false, why: message(error) }, 403); }
+}) });
 http.route({ path: '/v1/owner/session', method: 'GET', handler: ownerSession });
 http.route({ path: '/v1/owner/approvals', method: 'GET', handler: ownerApprovals });
 http.route({ path: '/v1/owner/construction', method: 'POST', handler: httpAction(async (ctx, request) => {
@@ -1218,6 +1248,7 @@ http.route({ path: '/v1/feed', method: 'GET', handler: publicFeed });
 http.route({ path: '/v1/venues', method: 'GET', handler: publicVenues });
 http.route({ path: '/v1/community-events', method: 'GET', handler: publicCommunityEvents });
 http.route({ path: '/v1/health', method: 'GET', handler: health });
+http.route({ path: '/v1/world/events', method: 'GET', handler: worldEvents });
 http.route({ path: '/v1/world/state', method: 'GET', handler: worldStateHttp });
 http.route({ path: '/v1/world/perceive', method: 'GET', handler: worldPerceive });
 http.route({ path: '/v1/world/terrain', method: 'GET', handler: worldTerrain });

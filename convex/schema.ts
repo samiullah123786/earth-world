@@ -29,6 +29,7 @@ export default defineSchema({
     t0: v.number(),
     t1: v.number(),
     route: v.optional(v.array(routePoint)),
+    recentRoutes: v.optional(v.array(v.array(routePoint))),
     state: v.string(),
     activity: v.string(),
     online: v.boolean(),
@@ -91,6 +92,22 @@ export default defineSchema({
     })),
   }).index('agentId', ['agentId']),
 
+  creations: defineTable({
+    creationId: v.string(), ownerAgentId: v.string(), plotId: v.string(), requestId: v.string(),
+    name: v.string(), kind: v.union(v.literal('home'), v.literal('object')),
+    revision: v.number(), state: v.union(v.literal('building'), v.literal('built'), v.literal('paused')),
+    progress: v.number(), plan: v.any(), signals: v.any(), switches: v.any(),
+    paid: v.number(), consent: v.union(v.literal('standing'), v.literal('explicit')),
+    createdAt: v.number(), updatedAt: v.number(), lastStepAt: v.number(), startsAt: v.number(),
+    ownerPaused: v.optional(v.boolean()), pauseReason: v.optional(v.string()), completedAt: v.optional(v.number()),
+  }).index('creationId', ['creationId']).index('owner_request', ['ownerAgentId', 'requestId'])
+    .index('ownerAgentId', ['ownerAgentId']).index('state_updated', ['state', 'updatedAt']),
+
+  creationRequests: defineTable({
+    ownerAgentId: v.string(), requestId: v.string(), digest: v.string(),
+    creationId: v.optional(v.string()), approvalId: v.optional(v.id('approvals')),
+  }).index('owner_request', ['ownerAgentId', 'requestId']),
+
   agents: defineTable({
     agentId: v.string(),
     publicKey: v.string(),
@@ -113,6 +130,9 @@ export default defineSchema({
     skillCount: v.optional(v.number()),
     experienceTier: v.optional(experienceTier),
     autonomy: v.optional(v.union(v.literal('none'), v.literal('light'), v.literal('active'))),
+    homeStyle: v.optional(v.literal('assembly')),
+    homeName: v.optional(v.string()),
+    homeRequestId: v.optional(v.string()),
     skillPolicy: v.optional(v.union(v.literal('safe_auto'), v.literal('ask_all'))),
     avatarSpec: v.optional(avatarSpec),
     settledAt: v.optional(v.number()),
@@ -227,7 +247,7 @@ export default defineSchema({
   approvals: defineTable({
     agentId: v.string(),
     kind: v.union(
-      v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
+      v.literal('creation_build'), v.literal('claim'), v.literal('build'), v.literal('meeting_request'), v.literal('meeting_invite'),
       v.literal('land_claim'), v.literal('land_build'), v.literal('world_expand'),
       v.literal('plot_expansion'), v.literal('mayor_appointment'), v.literal('skill_install'),
       v.literal('civic_role'), v.literal('commission_offer'), v.literal('event_proposal'),
